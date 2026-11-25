@@ -820,7 +820,8 @@ pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Resul
 pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Result<Written, Failure> {
     let machines = crate::around::reachable_each(node, acting, Purpose::Look);
     let heard =
-        crate::around::ask_known(machines, |_| RemoteCall::Find { resident: to.clone() }, crate::around::SEARCHED).await;
+        crate::around::ask_known(machines, |_| RemoteCall::Find { resident: to.clone() }, crate::around::SEARCHED)
+            .await;
     let mut found = Vec::new();
     let mut unanswered = Vec::new();
     for answers in fastctx_net::around::answers::collect(heard) {

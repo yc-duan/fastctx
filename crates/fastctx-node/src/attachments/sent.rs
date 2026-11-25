@@ -428,10 +428,11 @@ pub(super) async fn upload(
         check_project(node, acting, &target).await?;
     }
     let (scope, resident) = (composer.clone(), resident_of(&target));
-    let mut prepared = match prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await {
-        Ok(prepared) => prepared,
-        Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
-    };
+    let mut prepared =
+        match prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await {
+            Ok(prepared) => prepared,
+            Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
+        };
     if prepared.arriving.is_none() {
         return complete_sent(node, &from, prepared, scope.as_ref()).await;
     }
@@ -538,7 +539,8 @@ pub(super) async fn receive(
         return Err(failure("a device uploads to the conversation's machine"));
     }
     let (scope, resident) = (composer.clone(), resident_of(&target));
-    let mut prepared = match prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await {
+    let mut prepared = match prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await
+    {
         Ok(prepared) => prepared,
         Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
     };

@@ -479,11 +479,7 @@ fn still_deleting() -> Still {
             let marked = [INTENT, "host-deleted"]
                 .iter()
                 .any(|file| fastctx_platform::disk::exists(directory.path().join(file)).unwrap_or(true));
-            if marked || row_pending(&node, id.as_str()) {
-                Ok(())
-            } else {
-                Err("it is no longer being deleted".into())
-            }
+            if marked || row_pending(&node, id.as_str()) { Ok(()) } else { Err("it is no longer being deleted".into()) }
         })
     })
 }
@@ -577,7 +573,8 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
             }
             Ok(Gone { finishing: Some(why), .. }) => {
                 unfinished += 1;
-                node.log.line(format_args!("went on deleting {name}, which a stopped node began; still to clear: {why}"))
+                node.log
+                    .line(format_args!("went on deleting {name}, which a stopped node began; still to clear: {why}"))
             }
             Err(Stop::Nothing(_)) => {
                 if let Err(error) = crate::record_migration::archive::delete_conversation(node.world.path(), &name)

@@ -27,8 +27,11 @@ fn call_facts_kept_before_are_given_the_calls_versions() {
     for column in ["since", "last"] {
         assert!(super::super::column(&db, "run_versions", column).unwrap(), "{column}");
     }
-    let kept: (i64, Option<i64>) =
-        db.query_row("SELECT version, last FROM run_versions WHERE conversation='c'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    let kept: (i64, Option<i64>) = db
+        .query_row("SELECT version, last FROM run_versions WHERE conversation='c'", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap();
     assert_eq!(kept, (5, None));
     let version: u32 = db
         .query_row("SELECT version FROM storage_versions WHERE component='node.run-facts'", [], |row| row.get(0))

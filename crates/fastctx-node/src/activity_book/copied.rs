@@ -104,16 +104,18 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
                 let began = deed.began.as_millisecond();
                 let at = began - began.rem_euclid(HOUR);
                 let agent = deed.agent.as_ref().map(|agent| agent.to_string()).unwrap_or_default();
-                let hour = hours.entry((at, deed.session.clone().unwrap_or_default(), agent, deed.held)).or_insert_with(|| Hour {
-                    at: jiff::Timestamp::from_millisecond(at).unwrap_or_default(),
-                    session: deed.session.clone(),
-                    agent: deed.agent.clone(),
-                    held: deed.held,
-                    runs: 0,
-                    failed: 0,
-                    busy: 0,
-                    files: 0,
-                });
+                let hour = hours
+                    .entry((at, deed.session.clone().unwrap_or_default(), agent, deed.held))
+                    .or_insert_with(|| Hour {
+                        at: jiff::Timestamp::from_millisecond(at).unwrap_or_default(),
+                        session: deed.session.clone(),
+                        agent: deed.agent.clone(),
+                        held: deed.held,
+                        runs: 0,
+                        failed: 0,
+                        busy: 0,
+                        files: 0,
+                    });
                 hour.runs += 1;
                 if matches!(deed.outcome, Outcome::Failed | Outcome::Lost) {
                     hour.failed += 1;
@@ -177,7 +179,9 @@ fn deed_of(value: &serde_json::Value) -> Option<Deed> {
         touched: value
             .get("touched")
             .and_then(serde_json::Value::as_array)
-            .map(|touched| touched.iter().filter_map(|one| serde_json::from_value::<Touched>(one.clone()).ok()).collect())
+            .map(|touched| {
+                touched.iter().filter_map(|one| serde_json::from_value::<Touched>(one.clone()).ok()).collect()
+            })
             .unwrap_or_default(),
         account: text("account").and_then(|key| key.split_once('/')).and_then(|(_, name)| name.parse().ok()),
     })

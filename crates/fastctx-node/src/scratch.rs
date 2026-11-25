@@ -36,7 +36,10 @@ static KNOWN: std::sync::LazyLock<std::sync::Mutex<Known>> = std::sync::LazyLock
 
 fn known(id: &ResidentId, machine: &str) -> Option<String> {
     let known = KNOWN.lock().expect("never poisoned");
-    known.get(&(id.clone(), machine.to_string())).filter(|(_, at)| at.elapsed() < KNOWN_FOR).map(|(path, _)| path.clone())
+    known
+        .get(&(id.clone(), machine.to_string()))
+        .filter(|(_, at)| at.elapsed() < KNOWN_FOR)
+        .map(|(path, _)| path.clone())
 }
 
 /// How long one machine is given to say, waiting for its turn to be asked

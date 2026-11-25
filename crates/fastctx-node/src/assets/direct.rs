@@ -178,7 +178,11 @@ impl Direct {
     /// Whether the frames of `stream` of `scope` from `at` took it nowhere
     /// before: asked for again, one frame comes, not a line's worth.
     pub(super) fn stalled_before(&self, scope: &str, stream: &str, at: u64) -> bool {
-        self.stalled.lock().expect("stalled").get(&(scope.to_string(), stream.to_string())).is_some_and(|stall| stall.from == at)
+        self.stalled
+            .lock()
+            .expect("stalled")
+            .get(&(scope.to_string(), stream.to_string()))
+            .is_some_and(|stall| stall.from == at)
     }
 
     /// `stream` of `scope` took nothing from `at`.
@@ -262,7 +266,8 @@ pub(crate) fn stays(link: &Link, scope: &str, stream: &str) -> bool {
 /// knows, where that is another machine of the hub's roster.
 async fn orderer(assets: &Assets, link: &Link, scope: &str, stream: &str) -> Result<Option<MachineName>, String> {
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
-    let Some(device) = blocking(&assets.library, move |library| library.orderer(&scope_text, &stream_text)).await? else {
+    let Some(device) = blocking(&assets.library, move |library| library.orderer(&scope_text, &stream_text)).await?
+    else {
         return Ok(None);
     };
     if device == assets.device() {
@@ -282,7 +287,13 @@ async fn keeper(assets: &Assets, link: &Link, scope: &str, stream: &str) -> Opti
 
 /// The machine `stream` of `scope` is taken from: the one that keeps it,
 /// where that machine is not left alone now.
-pub(super) async fn source(assets: &Assets, hub: &HubId, link: &Link, scope: &str, stream: &str) -> Option<MachineName> {
+pub(super) async fn source(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Link,
+    scope: &str,
+    stream: &str,
+) -> Option<MachineName> {
     let machine = keeper(assets, link, scope, stream).await?;
     (!assets.direct.is_left_alone(hub, &machine)).then_some(machine)
 }
@@ -392,9 +403,22 @@ fn moves(moving: &Moving) {
 
 /// One exchange asked on a line, and where its answer goes.
 enum Job {
-    Heads { ask: Ask, moving: Moving, answer: oneshot::Sender<Result<Vec<Head>, String>> },
-    Frames { ask: Ask, moving: Moving, answer: oneshot::Sender<Result<Vec<wire::Frame>, String>> },
-    Objects { ask: Ask, wanted: Vec<wire::ObjectRef>, moving: Moving, answer: oneshot::Sender<Result<Vec<Option<Vec<u8>>>, String>> },
+    Heads {
+        ask: Ask,
+        moving: Moving,
+        answer: oneshot::Sender<Result<Vec<Head>, String>>,
+    },
+    Frames {
+        ask: Ask,
+        moving: Moving,
+        answer: oneshot::Sender<Result<Vec<wire::Frame>, String>>,
+    },
+    Objects {
+        ask: Ask,
+        wanted: Vec<wire::ObjectRef>,
+        moving: Moving,
+        answer: oneshot::Sender<Result<Vec<Option<Vec<u8>>>, String>>,
+    },
 }
 
 /// What a machine said where an answer of another kind was due.
@@ -458,7 +482,8 @@ async fn objects_on(
                 let mut bytes = Vec::with_capacity(object.size as usize);
                 while (bytes.len() as u64) < object.size {
                     moves(moving);
-                    let run = stream.given(RUN_BYTES.min(object.size - bytes.len() as u64), "an object's bytes").await?;
+                    let run =
+                        stream.given(RUN_BYTES.min(object.size - bytes.len() as u64), "an object's bytes").await?;
                     if run.is_empty() {
                         return Err("an object's bytes ended before its length".into());
                     }
@@ -537,7 +562,8 @@ fn line(assets: &Assets, hub: &HubId, link: &Arc<Link>, to: &MachineName) -> Res
     if let Some(kept) = kept {
         return Ok((kept, true));
     }
-    let account = speaker(link, to).ok_or_else(|| format!("no account logged in here may ask {to} of its conversations"))?;
+    let account =
+        speaker(link, to).ok_or_else(|| format!("no account logged in here may ask {to} of its conversations"))?;
     let (jobs, taken) = mpsc::channel::<Job>(1);
     let feed: Feed = Box::new(move |stream| Box::pin(carry(stream, taken)));
     let (link, to) = (link.clone(), to.clone());
@@ -594,7 +620,9 @@ async fn exchange<T>(
         let began = Instant::now();
         let done = asked_on(&line, to, quiet, &job).await;
         match &done {
-            Ok(_) => assets.direct.lines.lock().expect("lines").entry((hub.clone(), to.clone())).or_default().push(line),
+            Ok(_) => {
+                assets.direct.lines.lock().expect("lines").entry((hub.clone(), to.clone())).or_default().push(line)
+            }
             // One that refused this ask answers others: only one that did
             // not answer, or is busy, is left alone a while.
             Err(why) if why.starts_with(REFUSED) => {}
@@ -614,7 +642,13 @@ async fn exchange<T>(
 
 /// Where the streams `machine` orders of `scopes` stand, of those the hub
 /// says this machine holds.
-pub(super) async fn heads(assets: &Assets, hub: &HubId, link: &Arc<Link>, machine: &MachineName, scopes: Vec<String>) -> Result<Vec<Head>, String> {
+pub(super) async fn heads(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    machine: &MachineName,
+    scopes: Vec<String>,
+) -> Result<Vec<Head>, String> {
     let mut heads = Vec::new();
     for some in scopes.chunks(SCOPES) {
         // One word for one scope is kept and used again; for several, asked.
@@ -628,7 +662,12 @@ pub(super) async fn heads(assets: &Assets, hub: &HubId, link: &Arc<Link>, machin
             continue;
         }
         let ask = Ask::Heads { permit: (*permit).clone(), scopes: asked.clone() };
-        let told = exchange(assets, hub, link, machine, HEADS_WITHIN, |moving, answer| Job::Heads { ask: ask.clone(), moving, answer }).await;
+        let told = exchange(assets, hub, link, machine, HEADS_WITHIN, |moving, answer| Job::Heads {
+            ask: ask.clone(),
+            moving,
+            answer,
+        })
+        .await;
         let told = match told {
             Ok(told) => told,
             Err(why) => {
@@ -668,7 +707,9 @@ pub(super) async fn frames(
     };
     // The frames' bodies come as one run, whole or not at all.
     let quiet = QUIET_FOR + Duration::from_secs((FRAME_BYTES as u64 + APART_FRAME_BYTES) / SLOWEST);
-    let given = exchange(assets, hub, link, machine, quiet, |moving, answer| Job::Frames { ask: ask.clone(), moving, answer }).await;
+    let given =
+        exchange(assets, hub, link, machine, quiet, |moving, answer| Job::Frames { ask: ask.clone(), moving, answer })
+            .await;
     if let Err(why) = &given {
         word_refused(assets, hub, scope, why);
     }
@@ -705,7 +746,13 @@ pub(super) async fn objects(
 /// that orders a stream it is read through here, where that stream stays
 /// on its machine — and whether it is asked now: not while it is left
 /// alone.
-pub(super) async fn object_source(assets: &Assets, hub: &HubId, link: &Link, scope: &str, hash: [u8; 32]) -> Option<(MachineName, bool)> {
+pub(super) async fn object_source(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Link,
+    scope: &str,
+    hash: [u8; 32],
+) -> Option<(MachineName, bool)> {
     if !kept_by_machines(link, scope) {
         return None;
     }
@@ -729,7 +776,14 @@ pub(super) async fn object_source(assets: &Assets, hub: &HubId, link: &Link, sco
 /// first epoch, or the one it orders in already — and keeps the hub's word
 /// here: what a machine keeps of a stream known here for its own by the
 /// hub's word is never taken for written in vain (`Library::unaccepted`).
-async fn begin(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str) -> Result<(), String> {
+async fn begin(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+) -> Result<(), String> {
     let request = Request::Begin { scope: scope.to_string(), stream: stream.to_string() };
     let Reply::Epoch { descriptor } = ask(assets, link, request).await? else {
         return Err("the hub did not begin the stream".into());
@@ -771,14 +825,24 @@ async fn begin(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
 /// was put back to before it — is begun there first. What could not be told
 /// is said, so the scope goes up again the next pass: the machines that
 /// hold copies hear of a stream through the hub alone.
-pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str) -> Result<(), String> {
+pub(super) async fn announce(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+) -> Result<(), String> {
     if !kept_by_machines(link, scope) {
         return Ok(());
     }
     let (scope_text, device) = (scope.to_string(), assets.device());
     let own = blocking(&assets.library, move |library| {
         let own: HashSet<String> = library.own_streams(&scope_text, &device)?.into_iter().collect();
-        Ok(library.streams(&scope_text)?.into_iter().filter(|(stream, next)| *next > 0 && own.contains(stream)).collect::<Vec<_>>())
+        Ok(library
+            .streams(&scope_text)?
+            .into_iter()
+            .filter(|(stream, next)| *next > 0 && own.contains(stream))
+            .collect::<Vec<_>>())
     })
     .await?;
     let mut failed: Option<String> = None;
@@ -798,7 +862,13 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
         };
         let epoch_now = in_force().await?.map(|fact| fact.epoch);
         if let Some(epoch) = epoch_now
-            && assets.direct.told.lock().expect("told").get(&place).is_some_and(|(said, in_epoch)| *said >= next && *in_epoch == epoch)
+            && assets
+                .direct
+                .told
+                .lock()
+                .expect("told")
+                .get(&place)
+                .is_some_and(|(said, in_epoch)| *said >= next && *in_epoch == epoch)
         {
             continue;
         }
@@ -806,7 +876,11 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
             scope: scope.to_string(),
             stream: stream.clone(),
             next,
-            epoch: Some(wire::StirredIn { epoch: fact.epoch, start: fact.start, follows: wire::Bytes::from(fact.follows) }),
+            epoch: Some(wire::StirredIn {
+                epoch: fact.epoch,
+                start: fact.start,
+                follows: wire::Bytes::from(fact.follows),
+            }),
         };
         let mut said = match in_force().await? {
             Some(fact) => ask(assets, link, stirred(fact)).await,

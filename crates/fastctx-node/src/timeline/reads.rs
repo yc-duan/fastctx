@@ -119,7 +119,8 @@ pub(crate) async fn moved(
             if waited {
                 return super::local::moved(&held, 0, Duration::ZERO).await;
             }
-            return super::local::moved(&held, after, until.saturating_duration_since(tokio::time::Instant::now())).await;
+            return super::local::moved(&held, after, until.saturating_duration_since(tokio::time::Instant::now()))
+                .await;
         }
         let left = until.saturating_duration_since(tokio::time::Instant::now());
         // While its asset timeline is being made, the content timeline is not

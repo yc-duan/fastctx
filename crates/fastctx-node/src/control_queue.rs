@@ -651,7 +651,11 @@ pub(crate) fn register(node: &Arc<Node>) {
 
 /// Whether words handed to the host (before `before`, where given) have not
 /// been taken into a turn yet: a control waits for that turn.
-pub(crate) async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
+pub(crate) async fn words_ahead(
+    node: &Node,
+    id: &ResidentId,
+    before: Option<jiff::Timestamp>,
+) -> Result<bool, Failure> {
     let directory = node.world.conversation(id);
     fastctx_platform::task::spawn_blocking(move || {
         let mut ahead = false;

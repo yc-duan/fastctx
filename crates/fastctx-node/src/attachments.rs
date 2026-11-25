@@ -103,8 +103,17 @@ pub async fn upload(
             // The file as it is described, not its bytes alone: the same
             // bytes under another name are another upload.
             let described = serde_json::to_vec(&file).map_err(failure)?;
-            let operation = format!("upload-{resident}-{}", crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)]));
-            let sent = UploadTarget::Sent { machine: found, target: Box::new(target), operation, account: None, files_on: None };
+            let operation = format!(
+                "upload-{resident}-{}",
+                crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)])
+            );
+            let sent = UploadTarget::Sent {
+                machine: found,
+                target: Box::new(target),
+                operation,
+                account: None,
+                files_on: None,
+            };
             return Box::pin(upload(node, sent, None, file, composer, source)).await;
         }
     }
@@ -133,7 +142,8 @@ pub async fn upload(
         if !node.is_here(&machine) {
             node.settled(&machine).await;
             let (link, account_name) = node.speaking(&uploader, &machine, Purpose::Agents).await.map_err(failure)?;
-            let supported = facts_of(node, &link, &machine.name, &account_name).await?.is_some_and(|facts| facts.attachment_places);
+            let supported =
+                facts_of(node, &link, &machine.name, &account_name).await?.is_some_and(|facts| facts.attachment_places);
             if supported {
                 let sent = UploadTarget::Sent { machine: machine.clone(), target, operation, account, files_on };
                 return relay(node, &uploader, &machine, sent, file, composer, source).await;
@@ -238,7 +248,9 @@ async fn relay(
     if !file.media_type.starts_with("image/")
         && !facts_of(node, &link, &machine, &account).await?.is_some_and(|facts| facts.attachment_places)
     {
-        return Err(Failure::not_run("upgrade the conversation machine to keep assisted files on this account's machines"));
+        return Err(Failure::not_run(
+            "upgrade the conversation machine to keep assisted files on this account's machines",
+        ));
     }
     let resumes = composer.is_some() && resumes_there(node, &link, &machine, &account).await?;
     let size = file.size;

@@ -47,7 +47,8 @@ pub(crate) fn fresh_plan(
     account: &fastctx_types::AccountName,
 ) -> Option<Page> {
     let scope = copy_of(node, resident, machine, Some(hub), Some(account))?;
-    let record = fresh_record(node, &scope, ConversationPlan::STREAM, "plan", fastctx_types::plan::KIND, resident.as_str())?;
+    let record =
+        fresh_record(node, &scope, ConversationPlan::STREAM, "plan", fastctx_types::plan::KIND, resident.as_str())?;
     told(node, hub, account, resident, Some(record))
 }
 

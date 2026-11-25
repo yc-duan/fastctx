@@ -3,9 +3,9 @@
 //! (`expire`), once its output is kept for good where its conversation lives.
 
 use fastctx_platform::disk as fs;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

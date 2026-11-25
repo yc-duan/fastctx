@@ -7,7 +7,8 @@ use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::usage::Usd;
 use fastctx_types::usage_calls::{
-    CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery, UsageCallsSum,
+    CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery,
+    UsageCallsSum,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -212,15 +213,19 @@ struct Shown<'a> {
 impl Shown<'_> {
     /// Filtering after redaction cannot be used to discover another conversation.
     fn selected(&self, query: &UsageCallsQuery) -> bool {
-        !(query.person.as_ref().is_some_and(|p| p.account.as_ref() != self.who && !(p.with_machine && self.who.is_none()))
+        !(query
+            .person
+            .as_ref()
+            .is_some_and(|p| p.account.as_ref() != self.who && !(p.with_machine && self.who.is_none()))
             || query.model.as_ref().is_some_and(|m| self.model != Some(m.as_str()))
             || query.source.is_some_and(|s| s != self.source)
             || query.outcome.is_some_and(|s| s != self.outcome)
             || query.conversation.as_ref().is_some_and(|c| self.conversation != Some(c))
             || query.turn.as_ref().is_some_and(|t| self.turn != Some(t.as_str()))
-            || query.before.as_ref().is_some_and(|before| {
-                self.at.cmp(&before.at).then_with(|| hex(self.key).cmp(&before.key)).is_ge()
-            }))
+            || query
+                .before
+                .as_ref()
+                .is_some_and(|before| self.at.cmp(&before.at).then_with(|| hex(self.key).cmp(&before.key)).is_ge()))
     }
 }
 
@@ -332,7 +337,11 @@ pub(super) fn calls_in(
                     };
                     if shown.selected(query) {
                         tally(&mut sum, call.usd, call.fable, call.observed.then_some((call.input, call.output)));
-                        found.push((call.at, call.key, Found::Kept { file: at_file, line: call.line, item: call.item }));
+                        found.push((
+                            call.at,
+                            call.key,
+                            Found::Kept { file: at_file, line: call.line, item: call.item },
+                        ));
                     }
                 }
             }
@@ -368,8 +377,16 @@ pub(super) fn calls_in(
                         turn: made.turn.as_deref(),
                     };
                     if shown.selected(query) {
-                        let tokens = made.tokens.as_ref().map(|tokens| (tokens.input + tokens.cache_read + tokens.cache_write, tokens.output));
-                        tally(&mut sum, made.usd.map_or(0, |usd| usd.0), made.model.as_deref().is_some_and(fastctx_hosts::claude::pricing::is_fable), tokens);
+                        let tokens = made
+                            .tokens
+                            .as_ref()
+                            .map(|tokens| (tokens.input + tokens.cache_read + tokens.cache_write, tokens.output));
+                        tally(
+                            &mut sum,
+                            made.usd.map_or(0, |usd| usd.0),
+                            made.model.as_deref().is_some_and(fastctx_hosts::claude::pricing::is_fable),
+                            tokens,
+                        );
                         found.push((made.cursor.at, key, Found::Made(Box::new(made))));
                     }
                 }
@@ -398,7 +415,8 @@ pub(super) fn calls_in(
                     reader.seek(SeekFrom::Start(line))?;
                     let mut bytes = Vec::new();
                     reader.read_until(b'\n', &mut bytes)?;
-                    let entry: ledger::Entry = serde_json::from_slice(bytes.trim_ascii_end()).map_err(io::Error::other)?;
+                    let entry: ledger::Entry =
+                        serde_json::from_slice(bytes.trim_ascii_end()).map_err(io::Error::other)?;
                     let changed = || io::Error::other(format!("{} changed while it was read", files[file].display()));
                     let (who, usage) = entry.uses().into_iter().nth(item as usize).ok_or_else(changed)?;
                     let detail = usage.call.clone().ok_or_else(changed)?;
@@ -493,7 +511,10 @@ mod tests {
         // As the ledger appends: the torn tail cut, a row written after it.
         let whole = fastctx_platform::disk::read(&file).unwrap();
         let read = whole.iter().rposition(|b| *b == b'\n').unwrap() as u64 + 1;
-        fastctx_platform::disk::open_with(std::fs::OpenOptions::new().write(true), &file).unwrap().set_len(read).unwrap();
+        fastctx_platform::disk::open_with(std::fs::OpenOptions::new().write(true), &file)
+            .unwrap()
+            .set_len(read)
+            .unwrap();
         append(&file, &[tokens(at, "c")], b"");
         index.refresh(&file).unwrap();
         assert_eq!(turns(&index, &file), ["a", "b", "c"]);

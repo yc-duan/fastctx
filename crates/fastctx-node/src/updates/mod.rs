@@ -170,16 +170,71 @@ pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
         let settled = tokio::time::Instant::now() + Duration::from_secs(90);
+        // Watched before the first look, so a change during it is not missed.
+        let mut moved = node.topics.watch();
         loop {
-            let due = fastctx_update::github::wait(&node.updates.held.lock().expect("never poisoned").looked).is_zero();
-            if due && tokio::time::Instant::now() >= settled {
+            let seen = node.topics.revision(fastctx_types::topics::UPDATE);
+            let due = fastctx_update::github::wait(&node.updates.held.lock().expect("never poisoned").looked);
+            let now = tokio::time::Instant::now();
+            if due.is_zero() && now >= settled {
                 look(&node);
             }
             auto(&node);
             report(&node);
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            // What is under way is followed closely, as it always was. Else
+            // nothing here moves until the state of updates changes (every
+            // change of it says so on the UPDATE topic: a hub's news of
+            // versions, a download, the application opening or closing, a
+            // repair, a choice), GitHub falls due, or the long safety net.
+            let next = if under_way(&node) {
+                UNDER_WAY
+            } else {
+                let (github, retry) = {
+                    let held = node.updates.held.lock().expect("never poisoned");
+                    (fastctx_update::github::wait(&held.looked), held.attempt.delay.next)
+                };
+                let github = if now < settled { github.max(settled - now) } else { github };
+                // A failed attempt is tried again when its delay ends.
+                let retry = retry.map(|next| {
+                    Duration::from_millis(next.duration_since(jiff::Timestamp::now()).as_millis().max(0) as u64)
+                });
+                retry.map_or(github, |retry| github.min(retry)).clamp(UNDER_WAY, QUIET)
+            };
+            let deadline = tokio::time::Instant::now() + next;
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep_until(deadline) => break,
+                    changed = moved.changed() => {
+                        if changed.is_err() || node.topics.revision(fastctx_types::topics::UPDATE) != seen {
+                            break;
+                        }
+                    }
+                }
+            }
         }
     });
+}
+
+/// How often an update under way is followed.
+const UNDER_WAY: Duration = Duration::from_secs(2);
+/// The longest the loop sleeps with nothing under way and no change told.
+const QUIET: Duration = Duration::from_secs(10 * 60);
+
+/// Whether something of updates is under way here, which the loop follows
+/// every `UNDER_WAY`: a download or repair, a release the application is to
+/// take, one a hub has due for this machine, or a look at GitHub.
+fn under_way(node: &Node) -> bool {
+    {
+        let held = node.updates.held.lock().expect("never poisoned");
+        if held.fetching.is_some() || held.take.is_some() || held.activity.is_some() || held.looked.checking {
+            return true;
+        }
+    }
+    if application::busy() || node.updates.repair_launching.load(std::sync::atomic::Ordering::Acquire) {
+        return true;
+    }
+    let me = node.machine();
+    node.links().iter().any(|link| link.versions().is_some_and(|versions| versions.due.contains_key(&me)))
 }
 
 /// Looks on GitHub now, and keeps what it found.
@@ -395,7 +450,8 @@ pub(crate) fn report(node: &Node) {
 /// An interface here asks.
 pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, String> {
     submission::allowed(&call)?;
-    let _changed = (!matches!(&call, UpdateCall::State)).then(|| node.topics.writing(fastctx_types::topics::UPDATE.into()));
+    let _changed =
+        (!matches!(&call, UpdateCall::State)).then(|| node.topics.writing(fastctx_types::topics::UPDATE.into()));
     match call {
         UpdateCall::Progress { stage } => {
             if let Stage::Installing { version } = &stage {
@@ -850,7 +906,10 @@ pub(crate) async fn machine(
     if node.is_here(&machine) {
         return call(node, update).await.map_err(Failure::new);
     }
-    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) {
+    if matches!(
+        update,
+        UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }
+    ) {
         return Err(Failure::new("only an interface on that machine says what it is or brings packages there"));
     }
     if matches!(update, UpdateCall::Repair { .. }) {
@@ -882,7 +941,11 @@ pub(crate) async fn machine(
     let running = match heard {
         Some(kernel) => Some(kernel),
         None => match submission::call_machine(
-            node, acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts,
+            node,
+            acting,
+            &machine,
+            fastctx_types::access::Purpose::Look,
+            RemoteCall::Facts,
         )
         .await
         {
@@ -910,13 +973,14 @@ pub(crate) async fn machine(
     };
     let asking = crate::submitted::Asking::begin();
     loop {
-        let reply = submission::call_machine(
-            node, acting, &machine, fastctx_types::access::Purpose::Hands, call.clone(),
-        )
-        .await?;
+        let reply =
+            submission::call_machine(node, acting, &machine, fastctx_types::access::Purpose::Hands, call.clone())
+                .await?;
         match reply {
             Ok(RemoteReply::Update(state)) => return Ok(*state),
-            Ok(_) => return Err(Failure::new(format!("{machine} answered something other than how its updates stand"))),
+            Ok(_) => {
+                return Err(Failure::new(format!("{machine} answered something other than how its updates stand")));
+            }
             Err(failure) => asking.accepted(failure).await?,
         }
     }
@@ -986,9 +1050,9 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
         Some(UpdateCall::Kernel { version }) => {
             kernel(node, version.as_deref(), Some(asker)).await.map(|()| state(node))
         }
-        Some(UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) => {
-            Err(format!("only an interface on {} says what it is or brings packages there", node.machine()))
-        }
+        Some(
+            UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. },
+        ) => Err(format!("only an interface on {} says what it is or brings packages there", node.machine())),
         Some(update) => call(node, update).await,
     }
 }

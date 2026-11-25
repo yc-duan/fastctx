@@ -40,12 +40,21 @@ pub(crate) async fn wait(
         return Ok(Some(node.topics.told(&request, crate::topics::WAITS).await));
     }
     let mut refused = None;
-    for (link, account) in node.speakers(acting, &machine, Purpose::Look).map_err(|error| Failure::new(error.to_string()))? {
+    for (link, account) in
+        node.speakers(acting, &machine, Purpose::Look).map_err(|error| Failure::new(error.to_string()))?
+    {
         let hub = link.membership().id;
         if !tells(&link, &hub, &machine.name, &account).await? {
             return Ok(None);
         }
-        let reply = match fastctx_net::cancellable::call(&link, &machine.name, &account, RemoteCall::Topics { request: request.clone() }).await {
+        let reply = match fastctx_net::cancellable::call(
+            &link,
+            &machine.name,
+            &account,
+            RemoteCall::Topics { request: request.clone() },
+        )
+        .await
+        {
             Ok(reply) => reply,
             // Not carried — a hub of a release before topics passes on no
             // asking it cannot read — the page reads on its timer a while.
@@ -66,7 +75,12 @@ pub(crate) async fn wait(
 
 /// Whether `machine` reached through `hub` tells its topics, as its facts
 /// said within `TOLD_FOR`.
-async fn tells(link: &fastctx_net::link::Link, hub: &HubId, machine: &MachineName, account: &fastctx_types::AccountName) -> Result<bool, Failure> {
+async fn tells(
+    link: &fastctx_net::link::Link,
+    hub: &HubId,
+    machine: &MachineName,
+    account: &fastctx_types::AccountName,
+) -> Result<bool, Failure> {
     let key = (hub.clone(), machine.clone());
     if let Some((at, tells)) = TELLS.lock().expect("never poisoned").get(&key)
         && at.elapsed() < TOLD_FOR

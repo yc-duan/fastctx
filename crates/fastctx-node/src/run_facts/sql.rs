@@ -510,13 +510,13 @@ pub(super) fn save_job(
         WHERE run_jobs.sequence!=excluded.sequence OR run_jobs.body!=excluded.body",
     )?
     .execute(params![
-            conversation,
-            update.call_id,
-            update.machine.as_str(),
-            update.job.as_str(),
-            metadata.sequence.to_be_bytes().as_slice(),
-            encode(&metadata)?
-        ])?;
+        conversation,
+        update.call_id,
+        update.machine.as_str(),
+        update.job.as_str(),
+        metadata.sequence.to_be_bytes().as_slice(),
+        encode(&metadata)?
+    ])?;
     Ok(())
 }
 

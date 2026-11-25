@@ -170,7 +170,15 @@ impl Writing {
         // Written in order and read back mostly so, beside a reading's own
         // store: a smaller cache than a reading's does.
         spill.connection()?.execute_batch(&format!("PRAGMA cache_size = -{CACHE_KIB};")).map_err(failed)?;
-        let mut writing = Writing { spill, n: 0, open: 0, rows: Vec::new(), bytes: 0, removed: HashSet::new(), began: HashMap::new() };
+        let mut writing = Writing {
+            spill,
+            n: 0,
+            open: 0,
+            rows: Vec::new(),
+            bytes: 0,
+            removed: HashSet::new(),
+            began: HashMap::new(),
+        };
         for event in open {
             writing.push(0, event, serde_json::to_vec(event).map_err(failed)?)?;
         }
@@ -239,26 +247,39 @@ impl Writing {
         let db = self.spill.connection()?;
         if as_recorded {
             let began = std::mem::take(&mut self.began);
-            fastctx_platform::roles::in_place("keeping the World's record on disk", || -> Result<(), fastctx_storage::rusqlite::Error> {
-                let transaction = db.unchecked_transaction()?;
-                for (turn, at) in &began {
-                    let (second, nanosecond) = parts(*at);
-                    transaction.prepare_cached("INSERT INTO began (turn, second, nanosecond) VALUES (?1, ?2, ?3)")?.execute(params![turn, second, nanosecond])?;
-                }
-                transaction.commit()
-            })
+            fastctx_platform::roles::in_place(
+                "keeping the World's record on disk",
+                || -> Result<(), fastctx_storage::rusqlite::Error> {
+                    let transaction = db.unchecked_transaction()?;
+                    for (turn, at) in &began {
+                        let (second, nanosecond) = parts(*at);
+                        transaction
+                            .prepare_cached("INSERT INTO began (turn, second, nanosecond) VALUES (?1, ?2, ?3)")?
+                            .execute(params![turn, second, nanosecond])?;
+                    }
+                    transaction.commit()
+                },
+            )
             .map_err(failed)?;
         }
         if from_start && cut && !as_recorded {
             let removed = std::mem::take(&mut self.removed);
-            fastctx_platform::roles::in_place("keeping the World's record on disk", || -> Result<(), fastctx_storage::rusqlite::Error> {
-                let transaction = db.unchecked_transaction()?;
-                for turn in &removed {
-                    transaction.prepare_cached("INSERT OR IGNORE INTO removed (turn) VALUES (?1)")?.execute(params![turn])?;
-                }
-                transaction.execute("UPDATE world SET cut = 1 WHERE n > ?1 AND turn IN (SELECT turn FROM removed)", params![self.open])?;
-                transaction.commit()
-            })
+            fastctx_platform::roles::in_place(
+                "keeping the World's record on disk",
+                || -> Result<(), fastctx_storage::rusqlite::Error> {
+                    let transaction = db.unchecked_transaction()?;
+                    for turn in &removed {
+                        transaction
+                            .prepare_cached("INSERT OR IGNORE INTO removed (turn) VALUES (?1)")?
+                            .execute(params![turn])?;
+                    }
+                    transaction.execute(
+                        "UPDATE world SET cut = 1 WHERE n > ?1 AND turn IN (SELECT turn FROM removed)",
+                        params![self.open],
+                    )?;
+                    transaction.commit()
+                },
+            )
             .map_err(failed)?;
         }
         // What the turns are read from: their starts, ends and words, as
@@ -308,15 +329,21 @@ impl World {
     /// sequence `after`, read a page at a time into `spill` beside the
     /// starts of the turns `open` before, as the record was read whole
     /// (from its start, the turns a cut took back left out).
-    pub(crate) fn read(spill: Spill, directory: &ConversationDir, after: u64, open: &[SessionEvent]) -> Result<Self, String> {
+    pub(crate) fn read(
+        spill: Spill,
+        directory: &ConversationDir,
+        after: u64,
+        open: &[SessionEvent],
+    ) -> Result<Self, String> {
         let mut writing = Writing::new(spill, open)?;
         let (mut from, mut through) = (after, None);
         let latest = loop {
-            let (latest, next, count) = crate::session_record::page_each(directory, from, through, 512, &mut |sequence, body| {
-                let event = decoded(body)?;
-                writing.push(sequence, &event, body.to_vec())
-            })
-            .map_err(failed)?;
+            let (latest, next, count) =
+                crate::session_record::page_each(directory, from, through, 512, &mut |sequence, body| {
+                    let event = decoded(body)?;
+                    writing.push(sequence, &event, body.to_vec())
+                })
+                .map_err(failed)?;
             through = Some(latest);
             if count == 0 {
                 break latest;
@@ -337,11 +364,12 @@ impl World {
         let mut writing = Writing::new(spill, &[])?;
         let (mut from, mut through) = (0, None);
         let latest = loop {
-            let (latest, next, count) = crate::session_record::page_each(directory, from, through, 512, &mut |sequence, body| {
-                let event = decoded(body)?;
-                writing.push(sequence, &event, body.to_vec())
-            })
-            .map_err(failed)?;
+            let (latest, next, count) =
+                crate::session_record::page_each(directory, from, through, 512, &mut |sequence, body| {
+                    let event = decoded(body)?;
+                    writing.push(sequence, &event, body.to_vec())
+                })
+                .map_err(failed)?;
             through = Some(latest);
             if count == 0 || next >= latest {
                 break latest;
@@ -353,7 +381,13 @@ impl World {
 
     /// As `read`, of `events` with their sequences, read through `latest`.
     #[cfg(any(test, feature = "bench"))]
-    pub(crate) fn of(spill: Spill, events: impl IntoIterator<Item = (u64, SessionEvent)>, latest: u64, after: u64, open: &[SessionEvent]) -> Result<Self, String> {
+    pub(crate) fn of(
+        spill: Spill,
+        events: impl IntoIterator<Item = (u64, SessionEvent)>,
+        latest: u64,
+        after: u64,
+        open: &[SessionEvent],
+    ) -> Result<Self, String> {
         let mut writing = Writing::new(spill, open)?;
         for (sequence, event) in events {
             let body = serde_json::to_vec(&event).map_err(failed)?;
@@ -364,7 +398,10 @@ impl World {
 
     /// As `read_as_recorded`, of `events` with their sequences.
     #[cfg(any(test, feature = "bench"))]
-    pub(crate) fn of_recorded(spill: Spill, events: impl IntoIterator<Item = (u64, SessionEvent)>) -> Result<Self, String> {
+    pub(crate) fn of_recorded(
+        spill: Spill,
+        events: impl IntoIterator<Item = (u64, SessionEvent)>,
+    ) -> Result<Self, String> {
         let mut writing = Writing::new(spill, &[])?;
         let mut latest = 0;
         for (sequence, event) in events {
@@ -385,11 +422,13 @@ impl World {
             return Err(failed("a history of the World's record alone of one not read as it was recorded"));
         }
         let db = self.spill.connection()?;
-        let viewed = fastctx_platform::roles::in_place("keeping the World's record on disk", || -> Result<usize, fastctx_storage::rusqlite::Error> {
-            let transaction = db.unchecked_transaction()?;
-            transaction.execute("DELETE FROM view", [])?;
-            let viewed = transaction.execute(
-                "INSERT INTO view (pos, n)
+        let viewed = fastctx_platform::roles::in_place(
+            "keeping the World's record on disk",
+            || -> Result<usize, fastctx_storage::rusqlite::Error> {
+                let transaction = db.unchecked_transaction()?;
+                transaction.execute("DELETE FROM view", [])?;
+                let viewed = transaction.execute(
+                    "INSERT INTO view (pos, n)
                    SELECT row_number() OVER (ORDER BY o1, o2, o3, o4, o5, n) - 1, n FROM (
                      SELECT w.n AS n, w.changes AS changes,
                        CASE WHEN b.turn IS NULL THEN w.sort_second ELSE b.second END AS o1,
@@ -399,11 +438,12 @@ impl World {
                      FROM world w LEFT JOIN began b ON b.turn = w.turn
                      WHERE w.kept = 1)
                    WHERE changes = 0",
-                [],
-            )?;
-            transaction.commit()?;
-            Ok(viewed)
-        })
+                    [],
+                )?;
+                transaction.commit()?;
+                Ok(viewed)
+            },
+        )
         .map_err(failed)?;
         self.viewed = viewed;
         Ok(())
@@ -468,21 +508,34 @@ impl World {
     /// later told of those begun at one moment; none where none is.
     pub(crate) fn running(&self) -> Option<String> {
         let ends = self.ends_by_turn();
-        self.starts.iter().filter(|start| !ends.contains_key(start.turn.as_str())).max_by_key(|start| start.at).map(|start| start.turn.clone())
+        self.starts
+            .iter()
+            .filter(|start| !ends.contains_key(start.turn.as_str()))
+            .max_by_key(|start| start.at)
+            .map(|start| start.turn.clone())
     }
 
     /// What it records later than `after` (all of it for none), in its
     /// order, held: at most `most` events, none where there are more — what
     /// a window written on from inside a turn puts among its last items
     /// (`tail::onward`).
-    pub(crate) fn later_than(&self, after: Option<Timestamp>, most: usize) -> Result<Option<Vec<SessionEvent>>, String> {
+    pub(crate) fn later_than(
+        &self,
+        after: Option<Timestamp>,
+        most: usize,
+    ) -> Result<Option<Vec<SessionEvent>>, String> {
         let db = self.db()?;
         let (second, nanosecond) = after.map_or((i64::MIN, i32::MIN), parts);
-        let bodies = fastctx_platform::roles::in_place("reading the World's record kept on disk", || -> Result<Vec<Vec<u8>>, fastctx_storage::rusqlite::Error> {
-            let mut query = db.prepare_cached("SELECT body FROM world WHERE cut = 0 AND (second, nanosecond) > (?1, ?2) ORDER BY n LIMIT ?3")?;
-            let rows = query.query_map(params![second, nanosecond, most as i64 + 1], |row| row.get(0))?;
-            rows.collect()
-        })
+        let bodies = fastctx_platform::roles::in_place(
+            "reading the World's record kept on disk",
+            || -> Result<Vec<Vec<u8>>, fastctx_storage::rusqlite::Error> {
+                let mut query = db.prepare_cached(
+                    "SELECT body FROM world WHERE cut = 0 AND (second, nanosecond) > (?1, ?2) ORDER BY n LIMIT ?3",
+                )?;
+                let rows = query.query_map(params![second, nanosecond, most as i64 + 1], |row| row.get(0))?;
+                rows.collect()
+            },
+        )
         .map_err(failed)?;
         if bodies.len() > most {
             return Ok(None);
@@ -501,16 +554,25 @@ impl World {
 
     /// The turns as `placement::Turns::of` makes them of what it records,
     /// the words heard in each asked of `heard` (`World::heard_in`).
-    pub(crate) fn turns<'a>(&self, heard: &'a dyn Fn(&str, &str) -> bool) -> crate::claude::history::placement::Turns<'a> {
+    pub(crate) fn turns<'a>(
+        &self,
+        heard: &'a dyn Fn(&str, &str) -> bool,
+    ) -> crate::claude::history::placement::Turns<'a> {
         let ends = self.ends_by_turn();
-        let turns = self.starts.iter().map(|start| (start.at, ends.get(start.turn.as_str()).copied(), start.turn.clone())).collect();
+        let turns = self
+            .starts
+            .iter()
+            .map(|start| (start.at, ends.get(start.turn.as_str()).copied(), start.turn.clone()))
+            .collect();
         crate::claude::history::placement::Turns::kept(turns, heard)
     }
 
     /// Whether the World heard `text` in `turn`, as `placement::Turns` asks:
     /// those of its length and digest read back and told by their words.
     pub(crate) fn heard_in(&self, turn: &str, text: &str) -> Result<bool, String> {
-        let Some(said) = self.heard.get(turn).and_then(|said| said.get(&(text.len(), digest(text)))) else { return Ok(false) };
+        let Some(said) = self.heard.get(turn).and_then(|said| said.get(&(text.len(), digest(text)))) else {
+            return Ok(false);
+        };
         for n in said {
             if let Happened::Heard { text: heard, .. } = self.event(*n)?.happened
                 && heard == text
@@ -560,7 +622,11 @@ impl World {
     /// on, of a host that has the turns `hosted` tells: requests and what
     /// resolved them left out, and before the last time its history was put
     /// in place of another's, the turns the host has none of.
-    pub(crate) fn view_beside(&mut self, since: Option<Timestamp>, hosted: &dyn Fn(&str) -> bool) -> Result<(), String> {
+    pub(crate) fn view_beside(
+        &mut self,
+        since: Option<Timestamp>,
+        hosted: &dyn Fn(&str) -> bool,
+    ) -> Result<(), String> {
         self.view(since)?;
         let db = self.spill.connection()?;
         let viewed = fastctx_platform::roles::in_place("keeping the World's record on disk", || -> Result<usize, fastctx_storage::rusqlite::Error> {
@@ -618,21 +684,24 @@ impl World {
         let db = self.db()?;
         let mut from = 0i64;
         loop {
-            let batch = fastctx_platform::roles::in_place("reading the World's record kept on disk", || -> Result<Vec<(i64, i64, Vec<u8>)>, String> {
-                let mut query = db
+            let batch = fastctx_platform::roles::in_place(
+                "reading the World's record kept on disk",
+                || -> Result<Vec<(i64, i64, Vec<u8>)>, String> {
+                    let mut query = db
                     .prepare_cached("SELECT v.pos, v.n, w.body FROM view v JOIN world w ON w.n = v.n WHERE v.pos >= ?1 ORDER BY v.pos LIMIT ?2")
                     .map_err(failed)?;
-                let mut rows = query.query(params![from, AT_ONCE]).map_err(failed)?;
-                let (mut batch, mut bytes) = (Vec::new(), 0usize);
-                while bytes < READ_BYTES
-                    && let Some(row) = rows.next().map_err(failed)?
-                {
-                    let body: Vec<u8> = row.get(2).map_err(failed)?;
-                    bytes += body.len();
-                    batch.push((row.get(0).map_err(failed)?, row.get(1).map_err(failed)?, body));
-                }
-                Ok(batch)
-            })?;
+                    let mut rows = query.query(params![from, AT_ONCE]).map_err(failed)?;
+                    let (mut batch, mut bytes) = (Vec::new(), 0usize);
+                    while bytes < READ_BYTES
+                        && let Some(row) = rows.next().map_err(failed)?
+                    {
+                        let body: Vec<u8> = row.get(2).map_err(failed)?;
+                        bytes += body.len();
+                        batch.push((row.get(0).map_err(failed)?, row.get(1).map_err(failed)?, body));
+                    }
+                    Ok(batch)
+                },
+            )?;
             let Some((last, ..)) = batch.last() else { return Ok(()) };
             from = last + 1;
             for (_, n, body) in batch {
@@ -661,13 +730,18 @@ impl World {
         let db = self.db()?;
         let write = |keyed: &mut Vec<(i64, Vec<u8>)>| -> Result<(), String> {
             let keyed = std::mem::take(keyed);
-            fastctx_platform::roles::in_place("keeping the World's record on disk", || -> Result<(), fastctx_storage::rusqlite::Error> {
-                let transaction = db.unchecked_transaction()?;
-                for (n, key) in keyed {
-                    transaction.prepare_cached("INSERT OR REPLACE INTO world_key (n, key) VALUES (?1, ?2)")?.execute(params![n, key])?;
-                }
-                transaction.commit()
-            })
+            fastctx_platform::roles::in_place(
+                "keeping the World's record on disk",
+                || -> Result<(), fastctx_storage::rusqlite::Error> {
+                    let transaction = db.unchecked_transaction()?;
+                    for (n, key) in keyed {
+                        transaction
+                            .prepare_cached("INSERT OR REPLACE INTO world_key (n, key) VALUES (?1, ?2)")?
+                            .execute(params![n, key])?;
+                    }
+                    transaction.commit()
+                },
+            )
             .map_err(failed)
         };
         // Written a batch at a time, between the batches read
@@ -696,7 +770,12 @@ impl World {
     /// `settled` are settled, as `timeline::tail::world_after` finds it of
     /// the events read (not those open) and `open`, the starts of the turns
     /// open before; `before` where it was read through.
-    pub(crate) fn world_after(&self, open: Vec<SessionEvent>, settled: Timestamp, before: Option<u64>) -> Result<(u64, Vec<SessionEvent>), String> {
+    pub(crate) fn world_after(
+        &self,
+        open: Vec<SessionEvent>,
+        settled: Timestamp,
+        before: Option<u64>,
+    ) -> Result<(u64, Vec<SessionEvent>), String> {
         let (second, nanosecond) = parts(settled);
         let db = self.db()?;
         let first: Option<i64> = fastctx_platform::roles::in_place("reading the World's record kept on disk", || {
@@ -707,15 +786,18 @@ impl World {
             )
         })
         .map_err(failed)?;
-        let through = first.map_or_else(|| self.latest.max(before.unwrap_or(0)), |sequence| sequence_of(sequence).saturating_sub(1));
-        let ended: HashSet<&str> = self.ends.iter().filter(|(at, _)| *at <= settled).map(|(_, turn)| turn.as_str()).collect();
+        let through = first
+            .map_or_else(|| self.latest.max(before.unwrap_or(0)), |sequence| sequence_of(sequence).saturating_sub(1));
+        let ended: HashSet<&str> =
+            self.ends.iter().filter(|(at, _)| *at <= settled).map(|(_, turn)| turn.as_str()).collect();
         let started = open.into_iter().chain(
-            self.starts
-                .iter()
-                .filter(|start| start.n > self.open && start.sequence <= through)
-                .map(|start| SessionEvent { at: start.at, happened: Happened::TurnStarted { turn: start.turn.clone() } }),
+            self.starts.iter().filter(|start| start.n > self.open && start.sequence <= through).map(|start| {
+                SessionEvent { at: start.at, happened: Happened::TurnStarted { turn: start.turn.clone() } }
+            }),
         );
-        let open = started.filter(|event| matches!(&event.happened, Happened::TurnStarted { turn } if !ended.contains(turn.as_str()))).collect();
+        let open = started
+            .filter(|event| matches!(&event.happened, Happened::TurnStarted { turn } if !ended.contains(turn.as_str())))
+            .collect();
         Ok((through, open))
     }
 
@@ -766,7 +848,8 @@ impl World {
     fn viewed_event(&self, pos: usize) -> Result<SessionEvent, String> {
         let db = self.db()?;
         let body: Vec<u8> = fastctx_platform::roles::in_place("reading the World's record kept on disk", || {
-            db.prepare_cached("SELECT w.body FROM view v JOIN world w ON w.n = v.n WHERE v.pos = ?1")?.query_row(params![pos as i64], |row| row.get(0))
+            db.prepare_cached("SELECT w.body FROM view v JOIN world w ON w.n = v.n WHERE v.pos = ?1")?
+                .query_row(params![pos as i64], |row| row.get(0))
         })
         .map_err(failed)?;
         decoded(&body)
@@ -781,14 +864,20 @@ impl World {
             while slots.peek().is_some() {
                 let transaction = db.unchecked_transaction().map_err(failed)?;
                 {
-                    let mut insert = transaction.prepare_cached("INSERT INTO slot (seq, base, over) VALUES (?1, ?2, ?3)").map_err(failed)?;
+                    let mut insert = transaction
+                        .prepare_cached("INSERT INTO slot (seq, base, over) VALUES (?1, ?2, ?3)")
+                        .map_err(failed)?;
                     for slot in slots.by_ref().take(64 * 1024) {
                         let base = match slot.base {
                             merging::Base::Hosted(index) => (index as i64) << 1,
                             merging::Base::Recorded(at) => ((at as i64) << 1) | 1,
                         };
-                        let over = (!slot.over.is_empty())
-                            .then(|| slot.over.iter().flat_map(|at| u32::try_from(*at).expect("fewer events than numbers").to_le_bytes()).collect::<Vec<u8>>());
+                        let over = (!slot.over.is_empty()).then(|| {
+                            slot.over
+                                .iter()
+                                .flat_map(|at| u32::try_from(*at).expect("fewer events than numbers").to_le_bytes())
+                                .collect::<Vec<u8>>()
+                        });
                         insert.execute(params![seq, base, over]).map_err(failed)?;
                         seq += 1;
                     }
@@ -812,7 +901,9 @@ impl merging::sparse::Keys for ViewKeys<'_> {
         let db = self.0.db()?;
         let mut count = 0usize;
         fastctx_platform::roles::in_place("reading the World's record kept on disk", || -> Result<(), String> {
-            let mut query = db.prepare("SELECT v.pos, k.key FROM view v JOIN world_key k ON k.n = v.n ORDER BY v.pos").map_err(failed)?;
+            let mut query = db
+                .prepare("SELECT v.pos, k.key FROM view v JOIN world_key k ON k.n = v.n ORDER BY v.pos")
+                .map_err(failed)?;
             let mut rows = query.query([]).map_err(failed)?;
             while let Some(row) = rows.next().map_err(failed)? {
                 let pos: i64 = row.get(0).map_err(failed)?;
@@ -835,7 +926,8 @@ impl merging::sparse::Keys for ViewKeys<'_> {
 /// No name, in a packed key.
 const NONE: u32 = u32::MAX;
 
-const KINDS: [Kind; 7] = [Kind::TurnStarted, Kind::TurnEnded, Kind::Heard, Kind::Finished, Kind::Updated, Kind::Realtime, Kind::Other];
+const KINDS: [Kind; 7] =
+    [Kind::TurnStarted, Kind::TurnEnded, Kind::Heard, Kind::Finished, Kind::Updated, Kind::Realtime, Kind::Other];
 
 /// A key as the store keeps it: its time, kind, names (`NONE` for none),
 /// voice, whether native and whether it stays.
@@ -922,7 +1014,9 @@ mod tests {
         let maybe = if choices.pick(4) == 0 { json!(null) } else { json!(turn) };
         let value = match choices.pick(13) {
             0 | 1 => json!({"at": at, "event": "turn_started", "turn": turn}),
-            2 => json!({"at": at, "event": "turn_ended", "turn": turn, "end": {"how": "completed", "reason": null, "duration_ms": 1, "last_message": null}}),
+            2 => {
+                json!({"at": at, "event": "turn_ended", "turn": turn, "end": {"how": "completed", "reason": null, "duration_ms": 1, "last_message": null}})
+            }
             3 | 4 => {
                 let text = TEXTS[choices.pick(TEXTS.len() as u64) as usize];
                 let message = if choices.pick(2) == 0 {
@@ -933,12 +1027,18 @@ mod tests {
                 json!({"at": at, "event": "heard", "delivery": null, "turn": maybe, "from": {"kind": "user", "machine": "m"}, "text": text, "message": message})
             }
             5 => json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "usage", "usage": {}}}),
-            6 => json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "model_request", "step": 0, "model": "m", "effort": "high"}}),
+            6 => {
+                json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "model_request", "step": 0, "model": "m", "effort": "high"}})
+            }
             7 => json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "history_changed"}}),
             8 => json!({"at": at, "event": "changed", "turn": maybe,
                         "change": {"kind": "history_cut", "removed_turns": [TURNS[choices.pick(4) as usize]]}}),
-            9 => json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "request", "id": 1, "request": "r", "params": {}}}),
-            10 => json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "resolved", "id": 1, "resolution": "done"}}),
+            9 => {
+                json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "request", "id": 1, "request": "r", "params": {}}})
+            }
+            10 => {
+                json!({"at": at, "event": "changed", "turn": maybe, "change": {"kind": "resolved", "id": 1, "resolution": "done"}})
+            }
             11 => {
                 let started = if choices.pick(2) == 0 { json!(at_of(choices)) } else { json!(null) };
                 json!({"at": at, "event": "finished", "turn": turn, "item": {"id": format!("i{}", choices.pick(3)), "started_at": started, "kind": "message", "text": "done"}})
@@ -966,41 +1066,57 @@ mod tests {
             let count = choices.pick(if round % 25 == 0 { 400 } else { 40 });
             // Sequences of all 64 bits, the highest among them in some rounds.
             let high = if round % 3 == 0 { (1u64 << 63) - count / 2 } else { 0 };
-            let events: Vec<(u64, SessionEvent)> = (1..=count).map(|sequence| (high + sequence, event(&mut choices))).collect();
+            let events: Vec<(u64, SessionEvent)> =
+                (1..=count).map(|sequence| (high + sequence, event(&mut choices))).collect();
             let latest = high + count + choices.pick(3);
             let after = if choices.pick(3) == 0 { 0 } else { high + choices.pick(count + 1) };
             let open: Vec<SessionEvent> = if after > 0 && choices.pick(2) == 0 {
-                (0..choices.pick(3)).map(|_| {
-                    let turn = TURNS[choices.pick(4) as usize];
-                    serde_json::from_value(json!({"at": at(&mut choices), "event": "turn_started", "turn": turn})).unwrap()
-                }).collect()
+                (0..choices.pick(3))
+                    .map(|_| {
+                        let turn = TURNS[choices.pick(4) as usize];
+                        serde_json::from_value(json!({"at": at(&mut choices), "event": "turn_started", "turn": turn}))
+                            .unwrap()
+                    })
+                    .collect()
             } else {
                 Vec::new()
             };
             // As the record was read whole (`talk::recorded_after`, before
             // ⑥-1) and `produce` held it.
-            let mut numbered: Vec<(u64, SessionEvent)> = events.iter().filter(|(sequence, _)| *sequence > after).cloned().collect();
+            let mut numbered: Vec<(u64, SessionEvent)> =
+                events.iter().filter(|(sequence, _)| *sequence > after).cloned().collect();
             let removed: HashSet<String> = numbered
                 .iter()
                 .flat_map(|(_, event)| match &event.happened {
-                    Happened::Changed { change: SessionChange::HistoryCut { removed_turns }, .. } => removed_turns.clone(),
+                    Happened::Changed { change: SessionChange::HistoryCut { removed_turns }, .. } => {
+                        removed_turns.clone()
+                    }
                     _ => Vec::new(),
                 })
                 .collect();
             if after == 0 {
-                numbered.retain(|(_, event)| crate::talk::turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
+                numbered.retain(|(_, event)| {
+                    crate::talk::turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn))
+                });
             }
-            let recorded: Vec<SessionEvent> = open.iter().cloned().chain(numbered.iter().map(|(_, event)| event.clone())).collect();
+            let recorded: Vec<SessionEvent> =
+                open.iter().cloned().chain(numbered.iter().map(|(_, event)| event.clone())).collect();
             let given = events.iter().filter(|(sequence, _)| *sequence > after).cloned();
             let mut world = World::of(Spill::new(root.clone(), "world-test"), given, latest, after, &open).unwrap();
             assert_eq!(world.cut(), !removed.is_empty(), "round {round}");
             assert_eq!(world.latest(), latest);
             // Heard since, and late.
             let heard = (choices.pick(2) == 0).then(|| high + choices.pick(count + 1));
-            let settled = (choices.pick(2) == 0).then(|| Timestamp::new(1_800_000_000 + choices.pick(60) as i64, 0).unwrap());
+            let settled =
+                (choices.pick(2) == 0).then(|| Timestamp::new(1_800_000_000 + choices.pick(60) as i64, 0).unwrap());
             let fresh = |sequence: &u64| heard.is_none_or(|heard| *sequence > heard);
-            let replaced = numbered.iter().any(|(sequence, event)| fresh(sequence) && matches!(event.happened, Happened::Changed { change: SessionChange::HistoryChanged, .. }));
-            let late = numbered.iter().any(|(sequence, event)| fresh(sequence) && settled.is_some_and(|settled| event.at < settled));
+            let replaced = numbered.iter().any(|(sequence, event)| {
+                fresh(sequence)
+                    && matches!(event.happened, Happened::Changed { change: SessionChange::HistoryChanged, .. })
+            });
+            let late = numbered
+                .iter()
+                .any(|(sequence, event)| fresh(sequence) && settled.is_some_and(|settled| event.at < settled));
             assert_eq!(world.heard_since(heard, settled).unwrap(), (replaced, late), "round {round}");
             // Turns.
             assert_eq!(world.turn_spans(), crate::claude::history::turns(&recorded), "round {round}");
@@ -1015,11 +1131,15 @@ mod tests {
             }
             drop(kept);
             // Views.
-            let since = (choices.pick(2) == 0).then(|| Timestamp::new(1_800_000_000 + choices.pick(60) as i64, 0).unwrap());
-            let shown = |events: &[SessionEvent]| events.iter().map(|event| serde_json::to_value(event).unwrap()).collect::<Vec<_>>();
+            let since =
+                (choices.pick(2) == 0).then(|| Timestamp::new(1_800_000_000 + choices.pick(60) as i64, 0).unwrap());
+            let shown = |events: &[SessionEvent]| {
+                events.iter().map(|event| serde_json::to_value(event).unwrap()).collect::<Vec<_>>()
+            };
             world.view(None).unwrap();
             assert_eq!(shown(&world.events().unwrap()), shown(&recorded), "round {round}");
-            let from: Vec<SessionEvent> = recorded.iter().filter(|event| since.is_none_or(|since| event.at >= since)).cloned().collect();
+            let from: Vec<SessionEvent> =
+                recorded.iter().filter(|event| since.is_none_or(|since| event.at >= since)).cloned().collect();
             let hosted: HashSet<&str> = TURNS.iter().copied().filter(|_| choices.pick(2) == 0).collect();
             world.view_beside(since, &|turn| hosted.contains(turn)).unwrap();
             let beside = crate::codex::watch::recorded_beside(from.clone(), &|turn| hosted.contains(turn));
@@ -1037,7 +1157,9 @@ mod tests {
                 })
                 .collect();
             assert_eq!(sent, held_sent, "round {round}");
-            for name in TURNS.iter().map(|turn| turn.to_string()).chain(["m0", "m1", "m2", "elsewhere"].map(String::from)) {
+            for name in
+                TURNS.iter().map(|turn| turn.to_string()).chain(["m0", "m1", "m2", "elsewhere"].map(String::from))
+            {
                 assert_eq!(names.of(&name), over.of(&name), "round {round}: {name}");
             }
             let mut kept_keys = Vec::new();
@@ -1053,7 +1175,8 @@ mod tests {
             let settled = Timestamp::new(1_800_000_000 + choices.pick(60) as i64, 0).unwrap();
             let before = (choices.pick(2) == 0).then(|| high + choices.pick(count + 1));
             let (kept_through, kept_open) = world.world_after(open.clone(), settled, before).unwrap();
-            let (held_through, held_open) = super::super::tail::world_after(&numbered, open.clone(), latest, settled, before);
+            let (held_through, held_open) =
+                super::super::tail::world_after(&numbered, open.clone(), latest, settled, before);
             assert_eq!((kept_through, shown(&kept_open)), (held_through, shown(&held_open)), "round {round}");
             // A merge with a host's events, laid out from the store and from
             // the events held.
@@ -1069,24 +1192,43 @@ mod tests {
             let codex = choices.pick(2) == 0;
             let agent = if codex { "codex" } else { "claude" };
             let mut laid = Vec::new();
-            crate::talk::assemble_each(None, agent, crate::talk::Recorded::Kept(&world), host_keys(), &mut names.clone(),
-                &mut |index| Ok(hosted_events[index].clone()), &mut |event| {
+            crate::talk::assemble_each(
+                None,
+                agent,
+                crate::talk::Recorded::Kept(&world),
+                host_keys(),
+                &mut names.clone(),
+                &mut |index| Ok(hosted_events[index].clone()),
+                &mut |event| {
                     laid.push(serde_json::to_value(&event).unwrap());
                     Ok(())
-                })
+                },
+            )
             .unwrap();
             let mut was = Vec::new();
-            crate::talk::assemble_each(None, agent, crate::talk::Recorded::Held(from.clone()), host_keys(), &mut names.clone(),
-                &mut |index| Ok(hosted_events[index].clone()), &mut |event| {
+            crate::talk::assemble_each(
+                None,
+                agent,
+                crate::talk::Recorded::Held(from.clone()),
+                host_keys(),
+                &mut names.clone(),
+                &mut |index| Ok(hosted_events[index].clone()),
+                &mut |event| {
                     was.push(serde_json::to_value(&event).unwrap());
                     Ok(())
-                })
+                },
+            )
             .unwrap();
             assert_eq!(laid, was, "round {round}");
             // As it was recorded, a history of it alone.
             let mut alone = World::of_recorded(Spill::new(root.clone(), "world-test"), events.iter().cloned()).unwrap();
             alone.view_as_recorded().unwrap();
-            let held = crate::talk::merged(events.iter().map(|(_, event)| event.clone()).collect(), None, agent, &fastctx_types::session::attachments::NoReceipts);
+            let held = crate::talk::merged(
+                events.iter().map(|(_, event)| event.clone()).collect(),
+                None,
+                agent,
+                &fastctx_types::session::attachments::NoReceipts,
+            );
             assert_eq!(shown(&alone.events().unwrap()), shown(&held), "round {round}");
         }
         let _ = fastctx_platform::disk::remove_dir_all(&root);

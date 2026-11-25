@@ -46,9 +46,7 @@ impl Aliases {
     pub(super) fn of(&self, root: &Path, resident: &ResidentId) -> (Vec<PathBuf>, Vec<String>) {
         let mut kept = self.0.lock().expect("never poisoned");
         let changed = fastctx_platform::disk::metadata(root).and_then(|metadata| metadata.modified()).ok();
-        let stands = kept
-            .listed
-            .is_some_and(|(at, was)| was.is_some() && was == changed && at.elapsed() < LISTED_FOR);
+        let stands = kept.listed.is_some_and(|(at, was)| was.is_some() && was == changed && at.elapsed() < LISTED_FOR);
         if !stands {
             kept.list(root, changed);
         }
@@ -97,7 +95,9 @@ impl Kept {
             let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
             // When the file naming it was last written: one read as it
             // stands is not read again.
-            let written = fastctx_platform::disk::metadata(directory.join("resident.json")).and_then(|metadata| metadata.modified()).ok();
+            let written = fastctx_platform::disk::metadata(directory.join("resident.json"))
+                .and_then(|metadata| metadata.modified())
+                .ok();
             if self.named.get(&name).is_none_or(|(_, read)| read.is_none() || *read != written) {
                 match fastctx_platform::disk::read(directory.join("resident.json")) {
                     Ok(bytes) => match serde_json::from_slice::<ResidentId>(&bytes) {
@@ -133,7 +133,8 @@ mod tests {
 
     fn name_it(root: &Path, session: &str, id: &ResidentId) {
         fastctx_platform::disk::create_dir_all(root.join(session)).expect("directory");
-        fastctx_platform::disk::write(root.join(session).join("resident.json"), serde_json::to_vec(id).expect("json")).expect("alias");
+        fastctx_platform::disk::write(root.join(session).join("resident.json"), serde_json::to_vec(id).expect("json"))
+            .expect("alias");
     }
 
     #[test]

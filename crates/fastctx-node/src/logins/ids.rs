@@ -114,7 +114,9 @@ fn given(world: &Path, agent: &AgentName, dir: &Path, bytes_at_most: usize) -> i
             return Ok(id);
         }
         [] => {}
-        _ => return Err(invalid(format!("{} could be the directory of more than one login moved here", real.display()))),
+        _ => {
+            return Err(invalid(format!("{} could be the directory of more than one login moved here", real.display())));
+        }
     }
     let id = loop {
         let mut bytes = [0_u8; 8];

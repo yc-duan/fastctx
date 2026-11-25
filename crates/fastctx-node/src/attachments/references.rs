@@ -174,7 +174,8 @@ fn keep_inherited(
     if node.residents.deleted(child).is_some() || node.residents.is_deleting(child) {
         return Err(failure("the destination conversation was deleted before its attachments were inherited"));
     }
-    super::index::inherit(&node.world.conversation(parent), &node.world.conversation(child), retained).map_err(failure)?;
+    super::index::inherit(&node.world.conversation(parent), &node.world.conversation(child), retained)
+        .map_err(failure)?;
     // The small picture of one kept elsewhere goes with it, so the fork shows
     // it after the conversation it came from is deleted.
     for file in retained.iter().filter(|file| !node.is_me(&file.owner.machine)) {

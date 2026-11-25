@@ -922,7 +922,8 @@ impl fastctx_net::link::Node for Handler {
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
                     RemoteCall::Assets => {
-                        let stream = stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
+                        let stream =
+                            stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
                         crate::assets::served::serve(&node, &hub, &caller, stream).await.map(|()| RemoteReply::Set)
                     }
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
@@ -1411,10 +1412,10 @@ impl fastctx_net::link::Node for Handler {
                         fastctx_platform::task::spawn_blocking(move || {
                             crate::assets::copies::asked(&asking, ask, Some((&through, &owner)))
                         })
-                            .await
-                            .map_err(|error| Failure::new(error.to_string()))?
-                            .map(RemoteReply::Copies)
-                            .map_err(Failure::not_run)
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(RemoteReply::Copies)
+                        .map_err(Failure::not_run)
                     }
                     RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                         let update = match call {

@@ -10,30 +10,69 @@
 
 use crate::Node;
 use fastctx_content::v2::{ConversationSentinelRun, Kind as _, LEASE, Library, Write, Writer};
+use sha2::Digest as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
-use sha2::Digest as _;
 use std::time::Duration;
 
-/// How often the sentinels here are looked at.
-const EVERY: Duration = Duration::from_secs(60);
+/// How long after the sentinels here change their wakes are looked at,
+/// gathering the burst a wake comes in.
+const SETTLE: Duration = Duration::from_secs(2);
+/// The longest the look sleeps with nothing told: a safety net, since every
+/// wake a sentinel here writes says so on the SENTINELS topic.
+const QUIET: Duration = Duration::from_secs(30 * 60);
 /// The most wakes written in one look.
 const A_LOOK: usize = 64;
+/// The first wait before a wake whose scope was not writable is tried again.
+const DEFERRED: Duration = Duration::from_secs(60);
 
-/// Starts writing the wakes of the sentinels here every minute.
+/// Starts writing the wakes of the sentinels here as they come.
 pub(crate) fn start(node: &Arc<Node>) {
     let weak: Weak<Node> = Arc::downgrade(node);
+    let mut moved = node.topics.watch();
     fastctx_platform::task::spawn(async move {
+        let mut seen = None;
+        let mut more = false;
+        // A wake whose conversation's scope is not writable here yet is
+        // looked at again after this, doubling while it stays so.
+        let mut deferred: Option<Duration> = None;
         loop {
-            tokio::time::sleep(EVERY).await;
+            if !more {
+                let wait = match (seen, deferred) {
+                    (None, _) => SETTLE,
+                    (Some(_), Some(after)) => after,
+                    (Some(_), None) => QUIET,
+                };
+                let quiet = tokio::time::sleep(wait);
+                tokio::pin!(quiet);
+                loop {
+                    tokio::select! {
+                        changed = moved.changed() => {
+                            if changed.is_err() { return }
+                            let Some(node) = weak.upgrade() else { return };
+                            if Some(node.topics.revision(fastctx_types::topics::SENTINELS)) != seen { break }
+                        }
+                        () = &mut quiet => break,
+                    }
+                }
+                tokio::time::sleep(SETTLE).await;
+            }
             let Some(node) = weak.upgrade() else { return };
+            seen = Some(node.topics.revision(fastctx_types::topics::SENTINELS));
+            more = false;
             if node.assets.is_none() {
                 continue;
             }
             let working = node.clone();
             match fastctx_platform::task::blocking(move || look(&working)).await {
-                Ok(()) => {}
-                Err(error) => node.log.line(format_args!("writing the sentinels' wakes into the asset library: {error}")),
+                Ok((left, waits)) => {
+                    more = left;
+                    deferred = waits.then(|| deferred.map_or(DEFERRED, |after| (after * 2).min(QUIET)));
+                }
+                Err(error) => {
+                    deferred = Some(deferred.map_or(DEFERRED, |after| (after * 2).min(QUIET)));
+                    node.log.line(format_args!("writing the sentinels' wakes into the asset library: {error}"));
+                }
             }
         }
     });
@@ -46,38 +85,44 @@ fn directories(path: &Path) -> Result<Vec<PathBuf>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("looking at {}: {error}", path.display())),
     };
-    let mut found: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).filter(|path| fastctx_platform::disk::is_dir(path)).collect();
+    let mut found: Vec<PathBuf> =
+        entries.flatten().map(|entry| entry.path()).filter(|path| fastctx_platform::disk::is_dir(path)).collect();
     found.sort();
     Ok(found)
 }
 
 /// Writes what is new of every sentinel here: `<world>/sentinels/<account's
-/// key>/<sentinel>/<generation>/history/<sequence>.json`.
-fn look(node: &Arc<Node>) -> Result<(), String> {
-    let mut left = A_LOOK;
+/// key>/<sentinel>/<generation>/history/<sequence>.json`. Whether it stopped
+/// at `A_LOOK` with more perhaps left, and whether a wake waits for its
+/// conversation's scope to be writable here.
+fn look(node: &Arc<Node>) -> Result<(bool, bool), String> {
+    let (mut left, mut waits) = (A_LOOK, false);
     for account in directories(&node.world.path().join("sentinels"))? {
         for sentinel in directories(&account)? {
             for generation in directories(&sentinel)? {
                 if left == 0 {
-                    return Ok(());
+                    return Ok((true, waits));
                 }
-                left -= generation_wakes(node, &generation, left)?;
+                let (wrote, waiting) = generation_wakes(node, &generation, left)?;
+                left -= wrote;
+                waits |= waiting;
             }
         }
     }
-    Ok(())
+    Ok((false, waits))
 }
 
 /// Writes at most `most` of the wakes of the generation kept at `directory`
-/// not written yet: how many it wrote.
-fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<usize, String> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(0) };
+/// not written yet: how many it wrote, and whether they wait for the
+/// conversation's scope to be held and writable here.
+fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<(usize, bool), String> {
+    let Some(kept) = node.assets.as_ref() else { return Ok((0, false)) };
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let history = directory.join("history");
     let entries = match fastctx_platform::disk::read_dir(&history) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, false)),
         Err(error) => return Err(format!("looking at {}: {error}", history.display())),
     };
     let mut wakes: Vec<(u64, PathBuf)> = entries
@@ -89,35 +134,46 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
         })
         .collect();
     wakes.sort();
-    let Some((_, last)) = wakes.last() else { return Ok(0) };
+    let Some((_, last)) = wakes.last() else { return Ok((0, false)) };
     // The sentinel as its last wake left it: whose conversation, on which
     // network.
     let state: serde_json::Value =
-        serde_json::from_slice(&fastctx_platform::disk::read(last).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        serde_json::from_slice(&fastctx_platform::disk::read(last).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
     let definition = &state["definition"];
     let (Some(id), Some(generation), Some(account), Some(resident), Some(machine)) = (
         definition["id"].as_str(),
         definition["generation"].as_u64(),
-        definition["account"].as_str().and_then(|account| fastctx_types::AccountName::try_from(account.to_string()).ok()),
+        definition["account"]
+            .as_str()
+            .and_then(|account| fastctx_types::AccountName::try_from(account.to_string()).ok()),
         definition["owner"]["resident"].as_str(),
-        definition["owner"]["machine"].as_str().and_then(|machine| fastctx_types::MachineName::try_from(machine.to_string()).ok()),
+        definition["owner"]["machine"]
+            .as_str()
+            .and_then(|machine| fastctx_types::MachineName::try_from(machine.to_string()).ok()),
     ) else {
-        return Ok(0);
+        return Ok((0, false));
     };
     // The network it was kept for: the one whose id, with its account, its
     // keeping is named by (`fastctx_sentinel` `scope_key`) — never another
     // of the same name met since (codex-847f57fd #2).
-    let kept_as = directory.parent().and_then(Path::parent).and_then(Path::file_name).and_then(|name| name.to_str()).map(str::to_string);
+    let kept_as = directory
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(str::to_string);
     let Some(link) = node.links().into_iter().find(|link| {
         let scope = fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account: account.clone() };
-        let named = serde_json::to_vec(&scope).map(|bytes| sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+        let named = serde_json::to_vec(&scope)
+            .map(|bytes| sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>());
         named.ok().is_some_and(|named| Some(named) == kept_as)
     }) else {
-        return Ok(0);
+        return Ok((0, false));
     };
     let (hub_id, key, now_named) = {
         let view = link.view();
-        let Some(me) = view.me() else { return Ok(0) };
+        let Some(me) = view.me() else { return Ok((0, false)) };
         let key: String = me.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
         // The machine it lives on by the name it has now, renamed since
         // (codex-847f57fd #12).
@@ -128,10 +184,11 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
     // on its machine.
     let mut scopes = library.scopes_ending(&format!("/{resident}")).map_err(error)?.into_iter().filter(|scope| {
         scope.hub.as_deref() == Some(hub_id.as_str())
-            && (crate::timeline::copy::lives_on(library, scope, &machine) || crate::timeline::copy::lives_on(library, scope, &now_named))
+            && (crate::timeline::copy::lives_on(library, scope, &machine)
+                || crate::timeline::copy::lives_on(library, scope, &now_named))
     });
-    let (Some(scope), None) = (scopes.next(), scopes.next()) else { return Ok(0) };
-    let Some(holding) = writable(library, &scope.key, &stream, &kept.device())? else { return Ok(0) };
+    let (Some(scope), None) = (scopes.next(), scopes.next()) else { return Ok((0, true)) };
+    let Some(holding) = writable(library, &scope.key, &stream, &kept.device())? else { return Ok((0, true)) };
     // From the wake after the last one written in this holding period.
     let standing = format!("sentinel-runs/{}/{id}/{generation}", scope.key);
     let from = library
@@ -164,7 +221,12 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
         // How it ended, in a word: the conclusion's own name.
         let conclusion = left["conclusion"]
             .as_object()
-            .and_then(|conclusion| conclusion.get("kind").and_then(serde_json::Value::as_str).or_else(|| conclusion.keys().next().map(String::as_str)))
+            .and_then(|conclusion| {
+                conclusion
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| conclusion.keys().next().map(String::as_str))
+            })
             .or_else(|| left["conclusion"].as_str())
             .map(str::to_string);
         let body = serde_json::to_vec(&serde_json::json!({
@@ -189,9 +251,11 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
     }
     if next != from {
         let at = serde_json::json!({ "holding": holding, "next": next });
-        library.keep_checkpoint(&standing, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)?;
+        library
+            .keep_checkpoint(&standing, serde_json::to_vec(&at).map_err(|error| error.to_string())?)
+            .map_err(error)?;
     }
-    Ok(written)
+    Ok((written, false))
 }
 
 /// Whether this machine writes the stream `stream` of `scope`: held here and

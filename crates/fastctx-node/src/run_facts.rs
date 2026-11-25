@@ -13,8 +13,8 @@ mod frame_queue;
 mod frames;
 mod journal;
 mod log;
-mod migrate;
 mod measurements;
+mod migrate;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod projections;
@@ -121,11 +121,14 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
 /// Whether `event` is a host's call of World's `run`, which `attach` gives
 /// its run's facts.
 pub(crate) fn tells_of_a_run(event: &SessionEvent) -> bool {
-    let (Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. }) = &event.happened else {
+    let (Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. }) =
+        &event.happened
+    else {
         return false;
     };
     let What::Tool(tool) = &item.what else { return false };
-    tool.name == "run" && tool.server.as_deref().is_some_and(|server| server == "fastctx" || server.ends_with("_fastctx"))
+    tool.name == "run"
+        && tool.server.as_deref().is_some_and(|server| server == "fastctx" || server.ends_with("_fastctx"))
 }
 
 pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> io::Result<()> {

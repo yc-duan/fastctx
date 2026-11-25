@@ -24,8 +24,8 @@ use fastctx_net::link::Link;
 use fastctx_net::sign::{Domain, SecretKey, Signed};
 use fastctx_platform::ensure_private_dir;
 use fastctx_types::access::{Acting, TownId};
-use fastctx_types::{MachineName, TownName};
 use fastctx_types::layout::TownDir;
+use fastctx_types::{MachineName, TownName};
 
 use crate::Node;
 
@@ -132,8 +132,7 @@ pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
     let machines = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
     // A hub that speaks the asset sync writes projections: what is not here
     // of one is waited for.
-    let otherwise =
-        |scope, machines| if view.asset_sync > 0 { Seen::Waiting { scope, machines } } else { Seen::Not };
+    let otherwise = |scope, machines| if view.asset_sync > 0 { Seen::Waiting { scope, machines } } else { Seen::Not };
     let Some(assets) = node.assets.as_ref() else { return otherwise(scope, machines) };
     let library = &assets.library;
     let Some(held) = library.held_scopes().ok().and_then(|held| held.into_iter().find(|held| held.key == scope)) else {
@@ -144,9 +143,7 @@ pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
     }
     let stream = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&machines));
     match library.streams(&scope) {
-        Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => {
-            Seen::At(Source { scope, stream, machines })
-        }
+        Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => Seen::At(Source { scope, stream, machines }),
         Ok(_) => Seen::Waiting { scope, machines },
         Err(_) => otherwise(scope, machines),
     }

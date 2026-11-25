@@ -79,7 +79,8 @@ pub(crate) fn scope_of_conversation(node: &Node, resident: &ResidentId, machine:
     let library = kept.library.clone();
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
-        if !(read_here(node, &scope) && lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine)) {
+        if !(read_here(node, &scope) && lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine))
+        {
             continue;
         }
         if found.replace(scope.key).is_some() {

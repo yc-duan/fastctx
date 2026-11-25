@@ -34,13 +34,19 @@ pub(super) async fn take(
         return Ok(Reply::Received { received: received.remove(0) });
     }
     if !frame.too_large() {
-        let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.to_vec(), staged: 0 };
+        let request =
+            Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.to_vec(), staged: 0 };
         return ask(assets, link, request).await;
     }
     if *staged == 0 {
         *staged = stage(assets, link, scope, &frame.body.0).await?;
     }
-    let apart = wire::Frame { header: frame.header.clone(), signature: frame.signature.clone(), body: Bytes::default(), apart: frame.body.0.len() as u64 };
+    let apart = wire::Frame {
+        header: frame.header.clone(),
+        signature: frame.signature.clone(),
+        body: Bytes::default(),
+        apart: frame.body.0.len() as u64,
+    };
     let request = Request::Take { scope: scope.to_string(), frame: apart, proven: proven.to_vec(), staged: *staged };
     let reply = ask(assets, link, request).await;
     if reply.is_err() {
@@ -57,7 +63,8 @@ async fn stage(assets: &Assets, link: &Arc<Link>, scope: &str, body: &[u8]) -> R
     let Reply::Staged { ticket } = ask(assets, link, request).await? else {
         return Err("the hub gave no room for a frame body".into());
     };
-    let _waiting = fastctx_platform::doing::waiting_outside("a frame body going to the hub on a data connection", APART_WITHIN);
+    let _waiting =
+        fastctx_platform::doing::waiting_outside("a frame body going to the hub on a data connection", APART_WITHIN);
     let mut outgoing = link.put_object(ticket).await?;
     for (index, chunk) in body.chunks(CHUNK_BYTES as usize).enumerate() {
         outgoing.chunk(index as u64, chunk).await?;
@@ -75,7 +82,8 @@ pub(super) async fn bring(link: &Arc<Link>, ticket: u64, frames: &mut [wire::Fra
     if ticket == 0 {
         return Err("the hub sent frame bodies apart under no ticket".into());
     }
-    let _waiting = fastctx_platform::doing::waiting_outside("frame bodies coming from the hub on a data connection", APART_WITHIN);
+    let _waiting =
+        fastctx_platform::doing::waiting_outside("frame bodies coming from the hub on a data connection", APART_WITHIN);
     let mut incoming = link.get_object(ticket).await?;
     let mut expected = 0u64;
     for frame in frames.iter_mut().filter(|frame| frame.apart > 0) {

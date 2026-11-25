@@ -49,7 +49,8 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<
             // shows its own conversations apart.
             let machines = crate::around::reachable_each(node, acting, Purpose::Look);
             let heard =
-                crate::around::ask_known(machines, |_| RemoteCall::Look { id: id.clone() }, crate::around::SEARCHED).await;
+                crate::around::ask_known(machines, |_| RemoteCall::Look { id: id.clone() }, crate::around::SEARCHED)
+                    .await;
             for answers in fastctx_net::around::answers::collect(heard) {
                 answers.look(&mut one);
             }

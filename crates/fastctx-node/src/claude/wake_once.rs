@@ -321,7 +321,8 @@ pub(super) fn waiting() -> Failure {
 /// no launch of this node's behind it is waited for as a failure is.
 pub(crate) fn in_flight(node: &Node, id: &ResidentId, failure: &Failure) -> bool {
     failure.message == IN_FLIGHT
-        && (hold(node, id).is_some() || wake_store::get(node, id).is_ok_and(|intent| intent.is_some_and(|intent| !intent.settled)))
+        && (hold(node, id).is_some()
+            || wake_store::get(node, id).is_ok_and(|intent| intent.is_some_and(|intent| !intent.settled)))
 }
 
 /// What the words that wait for a wake say while they do.
@@ -390,7 +391,9 @@ pub(crate) fn register(node: &Arc<Node>) {
             }
         })
     };
-    node.durable_jobs
-        .register(Kind { name: KIND, at_once: 32, within: Duration::from_secs(120), tries: 5, ready: None }, Arc::new(run));
+    node.durable_jobs.register(
+        Kind { name: KIND, at_once: 32, within: Duration::from_secs(120), tries: 5, ready: None },
+        Arc::new(run),
+    );
     super::copies::register(node);
 }

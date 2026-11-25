@@ -11,7 +11,8 @@ pub(super) fn storage(error: fastctx_storage::Error) -> Failure {
     // So too when the composer changed under the write: what changed it may
     // be an earlier attempt of the same operation, committed late, and it is
     // read again with its receipt when asked again (§28.46).
-    let unknown = matches!(error.kind(), fastctx_storage::ErrorKind::OutcomeUnknown | fastctx_storage::ErrorKind::Changed);
+    let unknown =
+        matches!(error.kind(), fastctx_storage::ErrorKind::OutcomeUnknown | fastctx_storage::ErrorKind::Changed);
     let mut failure = super::failure(error);
     if unknown {
         failure.code = Some(fastctx_types::ipc::FailureCode::Unanswered);

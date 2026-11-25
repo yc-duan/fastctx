@@ -46,20 +46,25 @@ pub(crate) async fn remember(
         let entry = crate::records::metadata::prepare(&path)?;
         // On the way to a stop: kept at once, on the disk with the turn's
         // durable end (`records::write_relaxed_at`).
-        crate::records::write_relaxed_at(&entry.directory, fastctx_storage::Priority::Control, turn.len() + 256, move |rows| {
-            if let Some(previous) = rows.get::<Requested>(&entry.family, "value")? {
-                if previous.turn != turn {
-                    return Err(fastctx_storage::Error::with_kind(
-                        fastctx_storage::ErrorKind::Corrupt,
-                        "stop record belongs to a different turn",
-                    ));
+        crate::records::write_relaxed_at(
+            &entry.directory,
+            fastctx_storage::Priority::Control,
+            turn.len() + 256,
+            move |rows| {
+                if let Some(previous) = rows.get::<Requested>(&entry.family, "value")? {
+                    if previous.turn != turn {
+                        return Err(fastctx_storage::Error::with_kind(
+                            fastctx_storage::ErrorKind::Corrupt,
+                            "stop record belongs to a different turn",
+                        ));
+                    }
+                    if previous.source == StopSource::User {
+                        return Ok(());
+                    }
                 }
-                if previous.source == StopSource::User {
-                    return Ok(());
-                }
-            }
-            rows.put(&entry.family, "value", &Requested { turn, source, at: jiff::Timestamp::now() })
-        })
+                rows.put(&entry.family, "value", &Requested { turn, source, at: jiff::Timestamp::now() })
+            },
+        )
     })
     .await
     .map_err(io::Error::other)?

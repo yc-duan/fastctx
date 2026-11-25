@@ -43,6 +43,7 @@ mod retire_command;
 pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
+pub(crate) mod colleague;
 pub(crate) mod lifecycle;
 mod listing;
 pub mod management;
@@ -53,7 +54,6 @@ pub(crate) mod pairing;
 mod plugin_check;
 mod plugin_gone;
 mod process;
-pub(crate) mod colleague;
 mod queued;
 mod receipts;
 mod rewind;
@@ -2090,7 +2090,9 @@ fn reword(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
     // A colleague is told its preset's rules, and what the account adds to
     // them, as it was at its birth.
     let started = match about.origin {
-        Origin::Colleague { .. } => crate::collab::started(node, resident).map_err(|failure| std::io::Error::other(failure.message))?,
+        Origin::Colleague { .. } => {
+            crate::collab::started(node, resident).map_err(|failure| std::io::Error::other(failure.message))?
+        }
         Origin::User => None,
     };
     let kind = started.as_ref().map(|started| started.callee.kind()).unwrap_or_default();
@@ -2230,8 +2232,16 @@ pub async fn open_here(
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;
     crate::assists::host::starting(node, &id, &opened.acting)?;
-    let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false, Default::default()).await?;
+    let (words, heard) = crate::colleagues::instructions(
+        node,
+        &id,
+        town.as_ref(),
+        &Origin::User,
+        &opened.acting,
+        false,
+        Default::default(),
+    )
+    .await?;
     // What it is told of its machines and folders its plugin adds to the
     // first message's context, from the session's own directory.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;

@@ -130,7 +130,12 @@ fn member_key(world: &WorldDir, hub: &str, to: &str) -> io::Result<[u8; 32]> {
         .iter()
         .find(|member| member.name.as_str() == to || member.was.iter().any(|was| was.as_str() == to))
         .map(|member| *member.key.as_bytes())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no machine {to} is on the hub's directory as this machine last saw it")))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no machine {to} is on the hub's directory as this machine last saw it"),
+            )
+        })
 }
 
 /// The hub and scope `conversation` keeps its streams under here.
@@ -148,11 +153,20 @@ fn scope_of(library: &Library, conversation: &str) -> io::Result<Option<(String,
 }
 
 /// The releases of the streams of `scope` this machine orders, to `to`.
-fn package(library: &Library, key: &SecretKey, hub: &str, scope: &str, to: &str, to_key: [u8; 32]) -> io::Result<Package> {
+fn package(
+    library: &Library,
+    key: &SecretKey,
+    hub: &str,
+    scope: &str,
+    to: &str,
+    to_key: [u8; 32],
+) -> io::Result<Package> {
     let error = |error: fastctx_content::Error| io::Error::other(error.to_string());
     let device = *key.public().as_bytes();
     let mut streams = Vec::new();
-    for fastctx_content::v2::Releasable { stream, epoch, next, head, uploaded } in library.releasable(scope, &device).map_err(error)? {
+    for fastctx_content::v2::Releasable { stream, epoch, next, head, uploaded } in
+        library.releasable(scope, &device).map_err(error)?
+    {
         let release = fastctx_content::v2::Release {
             hub: hub.to_string(),
             scope: scope.to_string(),
@@ -290,7 +304,9 @@ pub(crate) fn adopted(directory: &Path, me: &[u8; 32]) {
     let outbound = fastctx_platform::disk::read(directory.join(FILE))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Package>(&bytes).ok())
-        .is_some_and(|package| package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice());
+        .is_some_and(|package| {
+            package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice()
+        });
     if outbound {
         let _ = clear_package(directory);
     }
@@ -311,7 +327,9 @@ pub(crate) fn released_away(directory: &Path, scope: &str, me: &[u8; 32]) -> boo
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Package>(&bytes).ok())
         .is_some_and(|package| {
-            package.scope == scope && package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice()
+            package.scope == scope
+                && package.from_key.0.as_slice() == me.as_slice()
+                && package.to_key.0.as_slice() != me.as_slice()
         });
     if !outbound {
         return false;
@@ -322,7 +340,9 @@ pub(crate) fn released_away(directory: &Path, scope: &str, me: &[u8; 32]) -> boo
     // Both here: the later says — an export after the adopting began lets
     // the conversation go; an adopting after the export takes it back (N06,
     // QQ14).
-    let made = |name: &str| fastctx_platform::disk::metadata(directory.join(name)).and_then(|metadata| metadata.modified()).ok();
+    let made = |name: &str| {
+        fastctx_platform::disk::metadata(directory.join(name)).and_then(|metadata| metadata.modified()).ok()
+    };
     matches!((made(FILE), made(ADOPTED)), (Some(package), Some(adopting)) if package > adopting)
 }
 

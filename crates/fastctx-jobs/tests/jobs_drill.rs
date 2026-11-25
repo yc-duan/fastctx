@@ -96,7 +96,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "count", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None }, count);
+    jobs.register(
+        Kind { name: "count", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None },
+        count,
+    );
 
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     let merged = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
@@ -148,7 +151,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             if wrote.is_ok() { Outcome::Done } else { Outcome::Failed("its settling was not written".into()) }
         })
     });
-    jobs.register(Kind { name: "operate", at_once: 1, within: Duration::from_secs(30), tries: 3, ready: None }, operate);
+    jobs.register(
+        Kind { name: "operate", at_once: 1, within: Duration::from_secs(30), tries: 3, ready: None },
+        operate,
+    );
 
     let slow: Run = Arc::new(|_| {
         Box::pin(async {
@@ -244,7 +250,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "order", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None }, order);
+    jobs.register(
+        Kind { name: "order", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None },
+        order,
+    );
     database
         .write(64 * 1024, |db| {
             for number in 0..300u32 {

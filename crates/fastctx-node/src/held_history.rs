@@ -83,8 +83,10 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     if let Some(at) = read.at
         && !read.unread
     {
-        node.cut_histories
-            .keep(resident, crate::cut_history::CutHistory::new(at, version, read.cut.clone(), read.revision, read.snapshots.clone()));
+        node.cut_histories.keep(
+            resident,
+            crate::cut_history::CutHistory::new(at, version, read.cut.clone(), read.revision, read.snapshots.clone()),
+        );
     }
     pieces.extend(made(live(read.pending, &owner).collect()));
     pieces.extend(made(told(read.snapshots, &owner).collect()));
@@ -155,7 +157,8 @@ async fn from_timeline(node: &Arc<Node>, resident: &ResidentId, owner: &Address)
     let mut reader = viewed::Reader::forward(held).with_runs(node.world.conversation(resident));
     let world = node.world.path().to_path_buf();
     let begin = || -> Result<(history::Segmenter, crate::cut_history::Writing), Failure> {
-        let writing = crate::cut_history::Writing::create(&world, epoch).map_err(|error| Failure::new(format!("keeping the history's segments: {error}")))?;
+        let writing = crate::cut_history::Writing::create(&world, epoch)
+            .map_err(|error| Failure::new(format!("keeping the history's segments: {error}")))?;
         Ok((history::Segmenter::default(), writing))
     };
     let mut cutting = begin()?;
@@ -213,7 +216,15 @@ async fn from_timeline(node: &Arc<Node>, resident: &ResidentId, owner: &Address)
     .await
     .map_err(|error| failed(error.to_string()))?
     .map_err(|error| failed(error.to_string()))?;
-    Ok(Some(Apart { cut: Arc::new(cut), revision: reader.revision(), unread, pending, events, snapshots: followed.snapshots, at: Some(followed.at) }))
+    Ok(Some(Apart {
+        cut: Arc::new(cut),
+        revision: reader.revision(),
+        unread,
+        pending,
+        events,
+        snapshots: followed.snapshots,
+        at: Some(followed.at),
+    }))
 }
 
 /// The history cut from its sources read whole, as before the timeline was
@@ -222,10 +233,19 @@ async fn from_sources(node: &Arc<Node>, resident: &ResidentId, owner: &Address) 
     let epoch = crate::cut_history::holding();
     let read = crate::talk::history_apart(node, resident).await?;
     let history = slimmed(node, read.history, owner).await?;
-    let cut = fastctx_platform::task::spawn_blocking(move || crate::cut_history::Kept::held(history::cut(history), epoch))
-        .await
-        .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
-    Ok(Apart { cut: Arc::new(cut), revision: None, unread: read.unread, pending: read.pending, events: read.events, snapshots: read.snapshots, at: read.at })
+    let cut =
+        fastctx_platform::task::spawn_blocking(move || crate::cut_history::Kept::held(history::cut(history), epoch))
+            .await
+            .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
+    Ok(Apart {
+        cut: Arc::new(cut),
+        revision: None,
+        unread: read.unread,
+        pending: read.pending,
+        events: read.events,
+        snapshots: read.snapshots,
+        at: read.at,
+    })
 }
 
 /// The opening of a viewer that holds nothing, from the cut kept of the
@@ -455,7 +475,9 @@ fn names(event: &SessionEvent, turn: Option<&str>, item: &str) -> bool {
 fn detail(event: SessionEvent) -> serde_json::Value {
     use fastctx_types::session::Happened;
     match event.happened {
-        Happened::Finished { item, .. } | Happened::Updated { item, .. } => item.detail.unwrap_or(serde_json::Value::Null),
+        Happened::Finished { item, .. } | Happened::Updated { item, .. } => {
+            item.detail.unwrap_or(serde_json::Value::Null)
+        }
         Happened::Heard { message: Some(message), .. } => message.detail,
         _ => serde_json::Value::Null,
     }
@@ -507,7 +529,9 @@ async fn item_detail_in_timeline(
                         (Shown::Event(_), Some(event)) => event,
                         _ => match reader.whole(&shown)? {
                             Some(event) => event,
-                            None => return Ok(Found::Read(if reader.moved()? { Next::Changed } else { Next::Missing })),
+                            None => {
+                                return Ok(Found::Read(if reader.moved()? { Next::Changed } else { Next::Missing }));
+                            }
                         },
                     };
                     if names(&whole, asked_turn.as_deref(), &asked_item) {

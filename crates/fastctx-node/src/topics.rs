@@ -40,6 +40,17 @@ impl Topics {
         self.moved.send_modify(|moves| *moves = moves.wrapping_add(1));
     }
 
+    /// Where `topic` stands now: for a loop of the node's own that follows a
+    /// topic with `watch` instead of looking on a timer.
+    pub(crate) fn revision(&self, topic: &str) -> u64 {
+        self.revisions.lock().expect("never poisoned").get(topic).copied().unwrap_or(1)
+    }
+
+    /// Told whenever any topic changes.
+    pub(crate) fn watch(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.moved.subscribe()
+    }
+
     /// Invalidates a family's topics without walking the towns or readers.
     pub(crate) fn changed_prefix(&self, prefix: &str) {
         self.changed(prefix);
@@ -122,8 +133,9 @@ mod tests {
             let topics = Topics::new();
             topics.changed("logins");
             // A reader that was told no run is told every topic it asks for.
-            let first =
-                topics.told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("book", 0), at("other", 0)] }, WAITS).await;
+            let first = topics
+                .told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("book", 0), at("other", 0)] }, WAITS)
+                .await;
             assert_eq!(first.changed, [at("logins", 2), at("book", 1), at("other", 0)]);
             let known = TopicsAsk { run: Some(first.run.clone()), known: first.changed };
             // Nothing changed: it waits, and is answered with none.

@@ -235,7 +235,11 @@ pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> 
 /// and the version of the last of them.
 pub(crate) type Changed = (Vec<String>, i64);
 
-pub(crate) fn changed_since(directory: &ConversationDir, after: i64, most: usize) -> io::Result<(i64, Option<Changed>)> {
+pub(crate) fn changed_since(
+    directory: &ConversationDir,
+    after: i64,
+    most: usize,
+) -> io::Result<(i64, Option<Changed>)> {
     let (database, conversation) = database(directory)?;
     database
         .read_now(|db| {
@@ -259,8 +263,9 @@ fn changed_in(db: &Connection, conversation: &str, after: i64, most: usize) -> S
     if !(since.is_some_and(|since| since <= after + 1) && last == Some(version)) {
         return Ok((version, None));
     }
-    let mut statement =
-        db.prepare_cached("SELECT call, version FROM run_call_versions WHERE conversation=?1 AND version>?2 ORDER BY version LIMIT ?3")?;
+    let mut statement = db.prepare_cached(
+        "SELECT call, version FROM run_call_versions WHERE conversation=?1 AND version>?2 ORDER BY version LIMIT ?3",
+    )?;
     let rows = statement.query_map(fastctx_storage::rusqlite::params![conversation, after, most as i64], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;

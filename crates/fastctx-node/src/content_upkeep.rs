@@ -98,7 +98,8 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             }
         })
     };
-    node.durable_jobs.register(Kind { name: FORGETTING, at_once: 2, within: FORGETS_WITHIN, tries: 5, ready: None }, Arc::new(run));
+    node.durable_jobs
+        .register(Kind { name: FORGETTING, at_once: 2, within: FORGETS_WITHIN, tries: 5, ready: None }, Arc::new(run));
     let jobs = node.durable_jobs.clone();
     let database = node.database.clone();
     let node = Arc::downgrade(node);

@@ -233,10 +233,14 @@ fn last_within<C: fastctx_storage::rusqlite::ToSql>(
     drop(rows);
     let place = match place {
         Some(place) => Some(place),
-        None => db.prepare_cached(LAST_ARRIVED_WITHIN)?.query_row(params![conversation, from, until], |row| row.get(0))?,
+        None => {
+            db.prepare_cached(LAST_ARRIVED_WITHIN)?.query_row(params![conversation, from, until], |row| row.get(0))?
+        }
     };
     match place {
-        Some(place) => db.prepare_cached(ACTION_AT)?.query_row(params![conversation, place], |row| row.get(0)).optional(),
+        Some(place) => {
+            db.prepare_cached(ACTION_AT)?.query_row(params![conversation, place], |row| row.get(0)).optional()
+        }
         None => Ok(None),
     }
 }

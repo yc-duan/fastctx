@@ -1772,15 +1772,18 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 tokio::time::timeout(
                     std::time::Duration::from_millis(5),
                     crate::timeline::last_page::capture(node, machine, &request),
-                ).await.ok().flatten()
+                )
+                .await
+                .ok()
+                .flatten()
             } else {
                 None
             };
-            let page = crate::timeline::api::checked(
-                node, crate::timeline::api::call(node, machine.clone(), request), || {
+            let page =
+                crate::timeline::api::checked(node, crate::timeline::api::call(node, machine.clone(), request), || {
                     users_voice(node, peer).and_then(|()| crate::admission::local::admit(node, peer, &admitted))
-                },
-            ).await;
+                })
+                .await;
             match (&page, machine, captured) {
                 (Ok(page), Some(machine), Some(captured)) => {
                     crate::timeline::last_page::keep(node, machine, captured, page.clone());
@@ -2497,9 +2500,12 @@ async fn who(
         });
     }
     let reachable = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look);
-    let heard =
-        crate::around::ask_known(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }, crate::around::WAITED_ON)
-            .await;
+    let heard = crate::around::ask_known(
+        reachable,
+        |_| RemoteCall::Who { all, town: town.clone(), since },
+        crate::around::WAITED_ON,
+    )
+    .await;
     machines
         .extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())));
     let mut reply =
@@ -2618,7 +2624,8 @@ async fn nodes(
                 .machines()
                 .filter(|machine| listed && !view.is_me(&machine.name))
                 .filter_map(|seen| {
-                    let account = view.account_for(&logins, &view.me, &seen.name, fastctx_types::access::Purpose::Hands)?;
+                    let account =
+                        view.account_for(&logins, &view.me, &seen.name, fastctx_types::access::Purpose::Hands)?;
                     let name = seen.name.clone();
                     let facts = crate::facts::of(node, &link, seen, Some(account));
                     Some(NodeView {

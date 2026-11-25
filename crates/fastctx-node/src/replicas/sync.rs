@@ -6,12 +6,12 @@ use super::{
 };
 use crate::Node;
 use fastctx_net::link::Link;
+use fastctx_types::ResidentId;
 use fastctx_types::{
     access::HubAccount,
     owned_records::{Request, Response},
     replicas::{Document, Head, Scope},
 };
-use fastctx_types::ResidentId;
 use std::{
     collections::HashMap,
     path::PathBuf,

@@ -104,12 +104,14 @@ fn told(event: Option<SessionEvent>) -> Told {
 fn event_in(library: &Library, entry: &Entry) -> Result<Told, Failure> {
     match entry.body.split_first() {
         // Most events are no ended call: those are not read whole.
-        Some((&EVENT, encoded)) if !encoded.windows(FINISHED.len()).any(|window| window == FINISHED) => Ok(Told::Nothing),
+        Some((&EVENT, encoded)) if !encoded.windows(FINISHED.len()).any(|window| window == FINISHED) => {
+            Ok(Told::Nothing)
+        }
         Some((&EVENT, encoded)) => Ok(told(serde_json::from_slice(encoded).ok())),
         Some((&OVERSIZED, record)) => {
-            let slim = serde_json::from_slice::<serde_json::Value>(record)
-                .ok()
-                .and_then(|record| serde_json::from_value::<Option<SessionEvent>>(record["slim"].clone()).ok().flatten());
+            let slim = serde_json::from_slice::<serde_json::Value>(record).ok().and_then(|record| {
+                serde_json::from_value::<Option<SessionEvent>>(record["slim"].clone()).ok().flatten()
+            });
             if slim.as_ref().is_some_and(|slim| !ended_call(slim)) {
                 return Ok(Told::Nothing);
             }
@@ -369,4 +371,3 @@ pub(super) async fn produce(
     }
     Ok(written)
 }
-

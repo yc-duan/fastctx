@@ -84,7 +84,10 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
             .iter()
             .filter_map(|account| {
                 let opened = view.directory.account(account)?.opened;
-                Some((fastctx_types::assets::records_key(hub.as_str(), account, opened.as_millisecond()), account.clone()))
+                Some((
+                    fastctx_types::assets::records_key(hub.as_str(), account, opened.as_millisecond()),
+                    account.clone(),
+                ))
             })
             .collect();
         if found.replace((hub, format!("{}/{named}", AccountUsage::STREAM), accounts, owner, hands, scopes)).is_some() {
@@ -114,7 +117,15 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
         .iter()
         .map(|scope| Some((scope.key.clone(), library.view_revision(&scope.key, &stream).ok()?.unwrap_or(0))))
         .collect();
-    let asked: Asked = (node.root.clone(), machine.to_string(), hub.to_string(), agent.to_string(), dir.to_path_buf(), only.clone(), owner);
+    let asked: Asked = (
+        node.root.clone(),
+        machine.to_string(),
+        hub.to_string(),
+        agent.to_string(),
+        dir.to_path_buf(),
+        only.clone(),
+        owner,
+    );
     // The accounts whose own records are read here: a line one shares with
     // another is in both, the other's copy naming no conversation, and is
     // read once, from the first's (§28.58).
@@ -133,7 +144,8 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
             for entry in &page {
                 let Ok(body) = serde_json::from_slice::<serde_json::Value>(&entry.body) else { continue };
                 let Some(file) = body.get("file").and_then(serde_json::Value::as_str) else { continue };
-                let Some((day, key)) = ledgers.iter().find_map(|(ledger, key)| file.strip_prefix(ledger.as_str()).map(|day| (day, key)))
+                let Some((day, key)) =
+                    ledgers.iter().find_map(|(ledger, key)| file.strip_prefix(ledger.as_str()).map(|day| (day, key)))
                 else {
                     continue;
                 };
@@ -148,7 +160,12 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
                 if let Some(own) = own {
                     lines = shared_once(&lines, own, &hub, &read_accounts);
                 }
-                by_key.entry(key.clone()).or_default().entry(day.to_string()).or_default().insert((offset, scope.key.clone()), lines);
+                by_key
+                    .entry(key.clone())
+                    .or_default()
+                    .entry(day.to_string())
+                    .or_default()
+                    .insert((offset, scope.key.clone()), lines);
             }
             match page.last() {
                 Some(last) if full => after = Some((last.order.clone(), last.item.clone())),
@@ -181,9 +198,12 @@ fn shared_once(
     for line in lines.split_inclusive(|&byte| byte == b'\n') {
         let whose = serde_json::from_slice::<serde_json::Value>(line).ok().and_then(|value| {
             let who = value.get("who")?;
-            (who.get("hub")?.as_str()? == hub.as_str()).then(|| who.get("account")?.as_str().map(str::to_string)).flatten()
+            (who.get("hub")?.as_str()? == hub.as_str())
+                .then(|| who.get("account")?.as_str().map(str::to_string))
+                .flatten()
         });
-        let theirs = whose.is_some_and(|whose| whose != own.as_str() && read.iter().any(|account| account.as_str() == whose));
+        let theirs =
+            whose.is_some_and(|whose| whose != own.as_str() && read.iter().any(|account| account.as_str() == whose));
         if !theirs {
             kept.extend_from_slice(line);
         }
@@ -194,10 +214,11 @@ fn shared_once(
 /// The day files of `pieces` written into a passing folder, given to `make`,
 /// and the folder let go of after.
 fn in_folder<T>(node: &Node, pieces: &Pieces, make: impl FnOnce(&Path) -> std::io::Result<T>) -> Option<T> {
-    let folder = node.world.path().join("passing").join(format!(
-        "usage-{}",
-        u64::from(std::process::id()) ^ jiff::Timestamp::now().as_nanosecond() as u64
-    ));
+    let folder = node
+        .world
+        .path()
+        .join("passing")
+        .join(format!("usage-{}", u64::from(std::process::id()) ^ jiff::Timestamp::now().as_nanosecond() as u64));
     let made = (|| {
         fastctx_platform::disk::create_dir_all(&folder)?;
         for (day, day_pieces) in &pieces.days {
@@ -222,7 +243,8 @@ pub(crate) fn report(node: &Node, written: &Written, agent: &str, dir: &Path) ->
     {
         return Some(report.clone());
     }
-    let made = in_folder(node, &pieces, |folder| super::report::report_of(agent, folder, pieces.only.as_ref(), pieces.owner))?;
+    let made =
+        in_folder(node, &pieces, |folder| super::report::report_of(agent, folder, pieces.only.as_ref(), pieces.owner))?;
     if let Some(read) = pieces.read {
         let mut kept = MADE.lock().expect("reports made");
         if kept.len() >= MADE_KEPT && !kept.contains_key(&pieces.asked) {
@@ -248,7 +270,14 @@ pub(crate) fn calls(
     in_folder(node, &pieces, |folder| {
         let mut book = super::ledger::Book::default();
         book.load_at(folder, jiff::Timestamp::now())?;
-        super::calls::calls_in(node, &mut book, folder, pieces.only.as_ref(), crate::admission::seen::Looker::Here(&here), query)
+        super::calls::calls_in(
+            node,
+            &mut book,
+            folder,
+            pieces.only.as_ref(),
+            crate::admission::seen::Looker::Here(&here),
+            query,
+        )
     })
 }
 

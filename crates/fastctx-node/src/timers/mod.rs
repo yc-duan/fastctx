@@ -22,6 +22,9 @@ use crate::Node;
 use store::Store;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
+/// The longest the timers go unlooked at with nothing due and nothing told:
+/// a safety net under `Store::changed`.
+const QUIET: Duration = Duration::from_secs(10 * 60);
 const CONCURRENT: usize = 32;
 
 pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
@@ -202,9 +205,10 @@ pub(crate) fn start(node: &Arc<Node>) {
                         node.log.line(format_args!("reading timer deadline: {error}"));
                         None
                     })
-                    .map_or(HEARTBEAT, |at| {
-                        Duration::from_secs_f64(at.duration_since(Timestamp::now()).as_secs_f64().max(0.0))
-                            .min(HEARTBEAT)
+                    // Every change to the timers stirs `changed`, so with
+                    // none due the loop sleeps until the earliest falls due.
+                    .map_or(QUIET, |at| {
+                        Duration::from_secs_f64(at.duration_since(Timestamp::now()).as_secs_f64().max(0.0)).min(QUIET)
                     })
             };
             tokio::select! {

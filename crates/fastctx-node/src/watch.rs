@@ -361,7 +361,13 @@ impl Watchers {
         // Deleted: nothing is told of it any more.
         if self.gone.lock().expect("never poisoned").contains(id) {
             sender.finish();
-            return Followed { replay: None, reset: false, snapshots: Vec::new(), at: Mark { epoch: 0, sequence: 0 }, events: receiver };
+            return Followed {
+                replay: None,
+                reset: false,
+                snapshots: Vec::new(),
+                at: Mark { epoch: 0, sequence: 0 },
+                events: receiver,
+            };
         }
         let cell = self.session(id);
         let mut session = cell.lock().expect("never poisoned");

@@ -162,7 +162,11 @@ async fn here(node: &Node, id: &ResidentId) -> Location {
 }
 
 pub(crate) async fn prepare_for(
-    node: &Arc<Node>, id: &ResidentId, origin: &Origin, acting: &Acting, scope: &HubAccount,
+    node: &Arc<Node>,
+    id: &ResidentId,
+    origin: &Origin,
+    acting: &Acting,
+    scope: &HubAccount,
 ) -> Result<Option<Location>, Failure> {
     let room = node.world.conversation(id);
     let receipt = room.path().join("working-place.json");

@@ -75,9 +75,12 @@ pub(crate) async fn query(
     };
     let reading = crate::elsewhere::Reading::of(machine.as_ref(), at_once);
     let (heard, asking) = crate::elsewhere::ask(node, crate::elsewhere::Kind::Logins, reachable, reading).await;
-    machines.extend(crate::elsewhere::listed(heard, asking, |answers| answers.logins(), |machine, observation| {
-        MachineLoginsHeard::Asking { observation, machine }
-    }));
+    machines.extend(crate::elsewhere::listed(
+        heard,
+        asking,
+        |answers| answers.logins(),
+        |machine, observation| MachineLoginsHeard::Asking { observation, machine },
+    ));
     Ok(WorldLogins { machine: here, machines })
 }
 
@@ -196,7 +199,8 @@ pub(crate) fn may_see(
 /// Asks `machine`'s node, of the user's own, for `call`, or this node when
 /// it is this machine.
 async fn ask(node: &Arc<Node>, machine: &Written, purpose: Purpose, call: RemoteCall) -> Result<RemoteReply, Failure> {
-    let answer = node.call(&Acting::Here, machine, purpose, call).await.map_err(|error| Failure::new(error.to_string()));
+    let answer =
+        node.call(&Acting::Here, machine, purpose, call).await.map_err(|error| Failure::new(error.to_string()));
     // What it says of its logins once changed is asked again before what
     // was kept of them here is told (`crate::elsewhere`).
     if purpose != Purpose::Look {

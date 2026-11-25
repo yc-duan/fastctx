@@ -288,7 +288,12 @@ pub(super) fn made_in(state: &[u8]) -> Option<i64> {
 /// again, not past a floor below which it wrote.
 /// Held by the build (EE05): a build given up on never writes it after a
 /// newer one. Kept only in the `epoch` it was read in (`publish`).
-async fn reset(library: &fastctx_content::v2::Library, name: &str, epoch: u64, held: super::serial::Held) -> Result<(), Failure> {
+async fn reset(
+    library: &fastctx_content::v2::Library,
+    name: &str,
+    epoch: u64,
+    held: super::serial::Held,
+) -> Result<(), Failure> {
     let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() }).map_err(failure)?;
     publish(library, name, state, epoch, held).await
 }
@@ -298,7 +303,13 @@ async fn reset(library: &fastctx_content::v2::Library, name: &str, epoch: u64, h
 /// sync that discarded what this machine wrote, the conversation gone):
 /// then this reading is let go too, and the next reads anew (design §28.51
 /// ⑤-7). Held by the build, as `reset` is.
-async fn publish(library: &fastctx_content::v2::Library, name: &str, state: Vec<u8>, epoch: u64, held: super::serial::Held) -> Result<(), Failure> {
+async fn publish(
+    library: &fastctx_content::v2::Library,
+    name: &str,
+    state: Vec<u8>,
+    epoch: u64,
+    held: super::serial::Held,
+) -> Result<(), Failure> {
     let (writing, name) = (library.clone(), name.to_string());
     let kept = fastctx_platform::task::blocking(move || {
         let _held = held;
@@ -327,7 +338,10 @@ fn prefix_name(resident: &ResidentId) -> String {
 /// The generation the record ids before `resident`'s Claude seam are kept
 /// under beside the checkpoint (`Library::stage_digests`, design §28.51
 /// ⑤-7c): its own checkpoint is that number alone.
-async fn prefix_generation(library: &fastctx_content::v2::Library, resident: &ResidentId) -> Result<Option<u64>, Failure> {
+async fn prefix_generation(
+    library: &fastctx_content::v2::Library,
+    resident: &ResidentId,
+) -> Result<Option<u64>, Failure> {
     let (reading, name) = (library.clone(), prefix_name(resident));
     let bytes = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
     Ok(bytes.and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok()).map(u64::from_le_bytes))
@@ -355,7 +369,9 @@ async fn keep_prefix_ids(
     held: super::serial::Held,
 ) -> Result<(), Failure> {
     let digests: Vec<u64> = match &sorted {
-        Some(bytes) => bytes.chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))).collect(),
+        Some(bytes) => {
+            bytes.chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))).collect()
+        }
         None => moved.to_vec(),
     };
     drop(sorted);
@@ -375,7 +391,13 @@ async fn keep_prefix_ids(
 
 /// `keep_prefix_ids` beside the checkpoint `name`, whose generation is
 /// `named`: the generation they are kept under.
-fn stage_prefix(library: &fastctx_content::v2::Library, name: &str, named: Option<u64>, whole: bool, digests: &[u64]) -> fastctx_content::Result<u64> {
+fn stage_prefix(
+    library: &fastctx_content::v2::Library,
+    name: &str,
+    named: Option<u64>,
+    whole: bool,
+    digests: &[u64],
+) -> fastctx_content::Result<u64> {
     let (generation, fresh) = match named {
         Some(named) if !whole => (named, false),
         named => (named.map_or(1, |named| named.wrapping_add(1)), true),
@@ -407,7 +429,8 @@ fn past_floor(
     // Past every identity at the floor's own place.
     let mut after = Some((floor.to_be_bytes().to_vec(), vec![0xff; 33]));
     loop {
-        let page = library.orders(scope, Timeline::STREAM, after.clone(), fastctx_content::v2::PAGE).map_err(failure)?;
+        let page =
+            library.orders(scope, Timeline::STREAM, after.clone(), fastctx_content::v2::PAGE).map_err(failure)?;
         let Some((item, order, _)) = page.last() else { return Ok(()) };
         after = Some((order.clone(), item.clone()));
         for (item, ..) in page {
@@ -491,7 +514,10 @@ enum Next {
 /// thread's title, or what it says of itself.
 pub(crate) fn told_again(event: &SessionEvent) -> bool {
     use fastctx_types::session::{Happened, SessionChange};
-    matches!(event.happened, Happened::Titled { .. } | Happened::Changed { turn: None, change: SessionChange::Metadata { .. } })
+    matches!(
+        event.happened,
+        Happened::Titled { .. } | Happened::Changed { turn: None, change: SessionChange::Metadata { .. } }
+    )
 }
 
 /// Whether `event` says Codex put a history in place of the one it had.
@@ -627,7 +653,8 @@ impl<'l> Held<'l> {
 /// the checkpoint, told ones left out (`Held`).
 fn floor_from(library: &fastctx_content::v2::Library, stood: &Stood, since: Timestamp) -> Result<u64, Failure> {
     let Some(generation) = stood.held else { return Ok(stood.floor) };
-    let before = library.held_before(&stood.name, generation, since.as_second(), since.subsec_nanosecond()).map_err(failure)?;
+    let before =
+        library.held_before(&stood.name, generation, since.as_second(), since.subsec_nanosecond()).map_err(failure)?;
     Ok(before.map_or(stood.floor, |key| key.max(stood.floor)))
 }
 
@@ -680,7 +707,10 @@ fn place(
         history
             .iter()
             .zip(identities)
-            .filter(|(event, _)| (!codex || told_again(event)) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value)))
+            .filter(|(event, _)| {
+                (!codex || told_again(event))
+                    && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value))
+            })
             .map(|(_, identity)| identity)
             .collect()
     };
@@ -699,11 +729,14 @@ fn place(
     // — written past the floor, it goes when the history drops it.
     let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || *at < since || unturned.contains(identity);
     let base = if whole { 0 } else { floor };
-    let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
+    let settled_floor =
+        wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
     // Kept beside the checkpoint, those told again left out: the next
     // reading leaves them out of its floor (R2).
     let mut open = Held::new(library, &stood.name, stood.generation);
-    for (_, at, key) in wrote.items.iter().filter(|(identity, at, _)| held(identity, at) && !unturned.contains(identity)) {
+    for (_, at, key) in
+        wrote.items.iter().filter(|(identity, at, _)| held(identity, at) && !unturned.contains(identity))
+    {
         open.push(*at, *key)?;
     }
     let held = open.finish()?;
@@ -765,7 +798,9 @@ fn finals(
         recorded,
         keys,
         &mut names,
-        &mut |index| ahead.take(index, &mut |from, alone| spill.borrow_mut().hosted_from(from, alone)).map_err(Failure::new),
+        &mut |index| {
+            ahead.take(index, &mut |from, alone| spill.borrow_mut().hosted_from(from, alone)).map_err(Failure::new)
+        },
         &mut |event| {
             let base = super::names::base(&event);
             if told(&event) {
@@ -856,7 +891,12 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
 /// changed (`checked`): what a check does once the bytes before the seam are
 /// found as they were read (`check`) — the window past it read again, and
 /// the history checked as of now where all of it was read.
-async fn produce_with(node: &Arc<Node>, resident: &ResidentId, whole: bool, checked: Option<Checked>) -> Result<Produced, Failure> {
+async fn produce_with(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    whole: bool,
+    checked: Option<Checked>,
+) -> Result<Produced, Failure> {
     match produce_step(node, resident, whole, checked, None).await? {
         onward::Step::Done(produced) => Ok(produced),
         // Written on from inside a turn for a while: judged now by a
@@ -900,7 +940,13 @@ async fn produce_step(
         .await
         .map_err(failure)?;
         let stood = kept.as_ref().map(|bytes| Sha256::digest(bytes).into());
-        (kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM).unwrap_or_default(), epoch, stood)
+        (
+            kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok())
+                .filter(|state| state.form == FORM)
+                .unwrap_or_default(),
+            epoch,
+            stood,
+        )
     };
     // What this reading holds in its window is kept beside the checkpoint
     // under a generation other than the one the checkpoint names (`Held`).
@@ -920,7 +966,11 @@ async fn produce_step(
     if holding.is_none() && awaits_listing(&library, &placed.scope).await? {
         return Ok(Done(Produced { waits_listing: true, ..Produced::default() }));
     }
-    let (state, whole, stood) = if state.holding.is_some() && state.holding != holding { (Following::default(), true, None) } else { (state, whole, stood) };
+    let (state, whole, stood) = if state.holding.is_some() && state.holding != holding {
+        (Following::default(), true, None)
+    } else {
+        (state, whole, stood)
+    };
     // A check's finding stands only for the record and seam it was made of.
     let checked = checked.is_some_and(|checked| {
         state.session.as_deref() == Some(checked.session.as_str())
@@ -929,7 +979,12 @@ async fn produce_step(
             && state.seam.blocks == checked.seam.blocks
     });
     let version = crate::held_history::version(node, resident).await?;
-    if state.version == version && !whole && !checked && audit.is_none() && (!state.unread || unread_waits(resident).is_some()) {
+    if state.version == version
+        && !whole
+        && !checked
+        && audit.is_none()
+        && (!state.unread || unread_waits(resident).is_some())
+    {
         // Unchanged: when it was last checked still stands (DD10). One read
         // short of a source waits its time before it is read again.
         return Ok(Done(Produced { verified: state.verified, unread: state.unread, ..Produced::default() }));
@@ -944,9 +999,11 @@ async fn produce_step(
         let (asking, scope) = (library.clone(), placed.scope.clone());
         // Described by the hub and every stream of it pulled here once: what
         // orders each is known (MM02).
-        let live = fastctx_platform::task::blocking(move || Ok::<_, fastctx_content::Error>(asking.is_live(&scope)? && asking.is_pulled(&scope)?))
-            .await
-            .map_err(failure)?;
+        let live = fastctx_platform::task::blocking(move || {
+            Ok::<_, fastctx_content::Error>(asking.is_live(&scope)? && asking.is_pulled(&scope)?)
+        })
+        .await
+        .map_err(failure)?;
         if !live && waited_for_scope(resident) {
             crate::assets::wake(node, &placed.hub);
             return Ok(Done(Produced { handing: true, read: true, ..Produced::default() }));
@@ -961,10 +1018,19 @@ async fn produce_step(
     // timeline goes on here once the hub hands its ordering over (§8).
     let orderer = {
         let (asking, scope) = (library.clone(), placed.scope.clone());
-        fastctx_platform::task::blocking(move || asking.orderer(&scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)).await.map_err(failure)?
+        fastctx_platform::task::blocking(move || {
+            asking.orderer(&scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+        })
+        .await
+        .map_err(failure)?
     };
     if orderer.is_some_and(|orderer| orderer != kept.device()) {
-        crate::assets::takeover::want(node, &placed.hub, &placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM);
+        crate::assets::takeover::want(
+            node,
+            &placed.hub,
+            &placed.scope,
+            <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM,
+        );
         return Ok(Done(Produced { handing: true, read: true, ..Produced::default() }));
     }
     let directory = node.world.conversation(resident);
@@ -987,7 +1053,21 @@ async fn produce_step(
         && audit.is_none()
         && let Some(stood) = stood
     {
-        match onward::advance(node, resident, &about, &library, &name, epoch, &state, stood, &version, runs_now, producing.clone()).await? {
+        match onward::advance(
+            node,
+            resident,
+            &about,
+            &library,
+            &name,
+            epoch,
+            &state,
+            stood,
+            &version,
+            runs_now,
+            producing.clone(),
+        )
+        .await?
+        {
             onward::Step::Seam => {}
             step => return Ok(step),
         }
@@ -1001,12 +1081,36 @@ async fn produce_step(
         && audit.is_none()
         && let Some(stood) = stood
     {
-        match codex_onward::advance(node, resident, &about, &library, &name, epoch, &state, stood, &version, runs_now, producing.clone()).await? {
+        match codex_onward::advance(
+            node,
+            resident,
+            &about,
+            &library,
+            &name,
+            epoch,
+            &state,
+            stood,
+            &version,
+            runs_now,
+            producing.clone(),
+        )
+        .await?
+        {
             onward::Step::Seam => {}
             step => return Ok(step),
         }
     }
-    fastctx_platform::readings::counter_of("timeline.looks", if !follows { "whole" } else if agent == "claude" { "claude_from_the_seam" } else { "codex" }).add(1);
+    fastctx_platform::readings::counter_of(
+        "timeline.looks",
+        if !follows {
+            "whole"
+        } else if agent == "claude" {
+            "claude_from_the_seam"
+        } else {
+            "codex"
+        },
+    )
+    .add(1);
     let window = if follows {
         // What Codex said so far is in the World's record before it is read.
         if agent == "codex"
@@ -1023,7 +1127,8 @@ async fn produce_step(
             let (directory, spill) = (directory.clone(), world_spill());
             fastctx_platform::task::blocking(move || super::world::World::read(spill, &directory, after, &open))
         };
-        let mut world = read_world(state.world_from.unwrap_or(0), state.world_open.clone()).await.map_err(Failure::new)?;
+        let mut world =
+            read_world(state.world_from.unwrap_or(0), state.world_open.clone()).await.map_err(Failure::new)?;
         // Only one not heard before: the window reads again what it read. A
         // fact the World tells late, of a time before what is settled, is
         // placed only by reading all again (CC15).
@@ -1047,7 +1152,11 @@ async fn produce_step(
         let followed = loop {
             let followed = if agent == "claude" {
                 // A check reads the record from its start.
-                let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone(), state.earlier.clone()));
+                let from = state
+                    .session
+                    .clone()
+                    .filter(|_| !whole)
+                    .map(|session| (session, state.seam.clone(), state.earlier.clone()));
                 // Read past a seam, the record ids before it are asked of
                 // as they are kept beside the checkpoint (`Keep`), not held.
                 let prefix = Arc::new(crate::claude::history::PrefixIds::default());
@@ -1059,23 +1168,26 @@ async fn produce_step(
                     library: library.clone(),
                     seen: before_seam.map(|generation| (prefix_name(resident), generation)),
                 };
-                crate::claude::history::window(node, resident, &world, from, prefix, Some(keep)).await.map_err(Failure::new)?.map(|window| Followed {
-                    events: window.events,
-                    told: window.told,
-                    whole: window.whole,
-                    since: window.since,
-                    settled: window.settled,
-                    kept: window.held.map(|(placed, early)| Kept::Claude { placed, early }),
-                    next: Next::Claude {
-                        session: window.session,
-                        seam: Box::new(window.seam),
-                        kept: window.kept,
-                        kept_here: window.kept_here,
-                        earlier: window.earlier,
-                        prefix_ids: window.prefix_ids,
-                        read: window.read.map(Box::new),
-                    },
-                })
+                crate::claude::history::window(node, resident, &world, from, prefix, Some(keep))
+                    .await
+                    .map_err(Failure::new)?
+                    .map(|window| Followed {
+                        events: window.events,
+                        told: window.told,
+                        whole: window.whole,
+                        since: window.since,
+                        settled: window.settled,
+                        kept: window.held.map(|(placed, early)| Kept::Claude { placed, early }),
+                        next: Next::Claude {
+                            session: window.session,
+                            seam: Box::new(window.seam),
+                            kept: window.kept,
+                            kept_here: window.kept_here,
+                            earlier: window.earlier,
+                            prefix_ids: window.prefix_ids,
+                            read: window.read.map(Box::new),
+                        },
+                    })
             } else {
                 let from = state.codex.clone().filter(|_| !whole);
                 // Read whole, kept on disk as it is read (design §28.51).
@@ -1094,7 +1206,9 @@ async fn produce_step(
                     .map_err(Failure::new)?
                 };
                 let mut reading = crate::codex::follow::Reading::kept(node, resident, sent, names, spill);
-                let window = crate::codex::follow::window(node, resident, &about, &turns, from, Some(&mut reading)).await.map_err(Failure::new)?;
+                let window = crate::codex::follow::window(node, resident, &about, &turns, from, Some(&mut reading))
+                    .await
+                    .map_err(Failure::new)?;
                 window.map(|window| {
                     let (spill, taken) = reading.finish();
                     let (told, kept) = if window.kept {
@@ -1103,7 +1217,15 @@ async fn produce_step(
                         (window.events.iter().filter(|event| told_again(event)).cloned().collect(), None)
                     };
                     let next = Next::Codex(window.seam, window.through.map(Box::new));
-                    Followed { told, events: window.events, whole: window.whole, since: window.since, settled: window.settled, next, kept }
+                    Followed {
+                        told,
+                        events: window.events,
+                        whole: window.whole,
+                        since: window.since,
+                        settled: window.settled,
+                        next,
+                        kept,
+                    }
                 })
             };
             // The host read whole of its own accord (a seam gone, a settled
@@ -1130,7 +1252,11 @@ async fn produce_step(
     let written_to = placed.scope.clone();
     // What a Codex window written on from inside its running turn stands on,
     // where this reading read the thread through a place there.
-    let mut codex_seeded: Option<(fastctx_hosts::codex::follow::onward::Through, Vec<SessionEvent>, Vec<SessionEvent>)> = None;
+    let mut codex_seeded: Option<(
+        fastctx_hosts::codex::follow::onward::Through,
+        Vec<SessionEvent>,
+        Vec<SessionEvent>,
+    )> = None;
     let (wrote, next, unread, judged) = match window {
         Some((window, world, open)) => {
             // The latest time before the place the record was read through,
@@ -1166,37 +1292,64 @@ async fn produce_step(
             let merged = (!window.whole).then_some(window.since);
             // The host's own title and what it says of the thread, told again
             // at every reading (R3: not a title the World recorded).
-            let host_told: Vec<serde_json::Value> = window.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told: Vec<serde_json::Value> =
+                window.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let (whole, since, settled) = (window.whole, window.since, window.settled);
-            let stood = Stood { name: name.clone(), held: state.held, told: state.told.clone(), floor: state.floor, holding: state.holding, generation };
+            let stood = Stood {
+                name: name.clone(),
+                held: state.held,
+                told: state.told.clone(),
+                floor: state.floor,
+                holding: state.holding,
+                generation,
+            };
             let mut codex_judged: Option<(Vec<SessionEvent>, Vec<SessionEvent>)> = None;
             let Placement { wrote, floor: settled_floor, held, told, before_seam } = match window.kept {
                 // Read whole and kept on disk: made into the history there
                 // and written a batch at a time (design §28.51).
                 Some(kept) => {
                     let finals = {
-                        let (folder, held, agent, world) = (directory.clone(), producing.clone(), agent.to_string(), world.clone());
+                        let (folder, held, agent, world) =
+                            (directory.clone(), producing.clone(), agent.to_string(), world.clone());
                         fastctx_platform::task::blocking(move || {
                             let _held = held;
                             // As `place` takes what the host tells again: of a
                             // Codex thread, only the kinds `told_again` names.
                             let codex = agent == "codex";
-                            let told =
-                                |event: &SessionEvent| (!codex || told_again(event)) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
+                            let told = |event: &SessionEvent| {
+                                (!codex || told_again(event))
+                                    && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value))
+                            };
                             let mut world = world.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                             match &kept {
-                                Kept::Codex { taken, .. } => world.view_beside(merged, &|turn| taken.turns.contains(turn)),
+                                Kept::Codex { taken, .. } => {
+                                    world.view_beside(merged, &|turn| taken.turns.contains(turn))
+                                }
                                 Kept::Claude { .. } => world.view(merged),
                             }
                             .map_err(Failure::new)?;
-                            finals(Some(&folder), kept.into(), &agent, &told, crate::talk::Recorded::Kept(&world), false)
+                            finals(
+                                Some(&folder),
+                                kept.into(),
+                                &agent,
+                                &told,
+                                crate::talk::Recorded::Kept(&world),
+                                false,
+                            )
                         })
                         .await?
                     };
                     if whole {
                         reset(&library, &name, epoch, producing.clone()).await?;
                     }
-                    let (writing, signer, whose, placed, held, codex) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone(), agent == "codex");
+                    let (writing, signer, whose, placed, held, codex) = (
+                        library.clone(),
+                        signer.clone(),
+                        resident.clone(),
+                        placed,
+                        producing.clone(),
+                        agent == "codex",
+                    );
                     fastctx_platform::task::blocking(move || {
                         let _held = held;
                         place_kept(&writing, signer, &whose, &placed, &stood, finals, whole, codex, since, settled)
@@ -1215,14 +1368,19 @@ async fn produce_step(
                         .await
                         .map_err(Failure::new)?
                     };
-                    let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
+                    let recorded = if agent == "codex" {
+                        crate::codex::watch::recorded(recorded, &window.events)
+                    } else {
+                        recorded
+                    };
                     // What a Codex window written on stands on: the World's
                     // record as merged, and what the host told again.
                     if matches!(window.next, Next::Codex(_, Some(_))) {
                         codex_judged = Some((recorded.clone(), window.told.clone()));
                     }
                     let history = {
-                        let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
+                        let (assembling, whose, folder, events, agent) =
+                            (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
                         let held = producing.clone();
                         fastctx_platform::task::blocking(move || {
                             let _held = held;
@@ -1233,8 +1391,16 @@ async fn produce_step(
                     if whole {
                         reset(&library, &name, epoch, producing.clone()).await?;
                     }
-                    let reading = Reading { history, host_told, whole, since, settled, codex: matches!(window.next, Next::Codex(..)) };
-                    let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
+                    let reading = Reading {
+                        history,
+                        host_told,
+                        whole,
+                        since,
+                        settled,
+                        codex: matches!(window.next, Next::Codex(..)),
+                    };
+                    let (writing, signer, whose, placed, held) =
+                        (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                     fastctx_platform::task::blocking(move || {
                         let _held = held;
                         place(&writing, signer, &whose, &placed, &stood, reading)
@@ -1262,7 +1428,20 @@ async fn produce_step(
             let (runs_version, refreshed) = if whole {
                 (Some(runs_now), 0)
             } else {
-                runs_brought(node, &about, &library, signer.clone(), resident, &directory, producing.clone(), runs_known, runs_now, settled_floor, wrote.holding).await?
+                runs_brought(
+                    node,
+                    &about,
+                    &library,
+                    signer.clone(),
+                    resident,
+                    &directory,
+                    producing.clone(),
+                    runs_known,
+                    runs_now,
+                    settled_floor,
+                    wrote.holding,
+                )
+                .await?
             };
             // What they wrote is this build's writing too: told on at once.
             let wrote = assets::Wrote { written: wrote.written + refreshed, ..wrote };
@@ -1287,7 +1466,9 @@ async fn produce_step(
                         None
                     };
                     let judged = match (read.map(|read| *read), world_names, later) {
-                        (Some((read, left)), Some(names), Some(world)) => Some(onward::Judged { read, left, turn: running, names, whole, world }),
+                        (Some((read, left)), Some(names), Some(world)) => {
+                            Some(onward::Judged { read, left, turn: running, names, whole, world })
+                        }
                         (None, ..) => not("no place read through inside the turn"),
                         (_, None, _) => not("a reading not placed in a store"),
                         (_, _, None) => not("more of the World's record past the place than a window holds"),
@@ -1317,7 +1498,8 @@ async fn produce_step(
                     (next, unread, judged)
                 }
                 Next::Codex(seam, through) => {
-                    codex_seeded = through.zip(codex_judged).map(|(through, (recorded, told))| (*through, recorded, told));
+                    codex_seeded =
+                        through.zip(codex_judged).map(|(through, (recorded, told))| (*through, recorded, told));
                     let next = Following {
                         form: FORM,
                         version,
@@ -1355,13 +1537,21 @@ async fn produce_step(
                 let crate::claude::history::HostedKept { placed: history, unread, refused, .. } = read;
                 let crate::claude::history::kept::Placed { spill, keys, names, .. } = history;
                 reset(&library, &name, epoch, producing.clone()).await?;
-                let (writing, signer, whose, folder, held) = (library.clone(), signer.clone(), resident.clone(), directory.clone(), producing.clone());
+                let (writing, signer, whose, folder, held) =
+                    (library.clone(), signer.clone(), resident.clone(), directory.clone(), producing.clone());
                 let wrote = fastctx_platform::task::blocking(move || {
                     let _held = held;
                     // All the World's record, as it was named (`hosted_kept`).
                     let mut world = world.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     world.view(None).map_err(Failure::new)?;
-                    let mut finals = finals(Some(&folder), Hosted { spill, keys, names, early }, "claude", &|_| false, crate::talk::Recorded::Kept(&world), refused)?;
+                    let mut finals = finals(
+                        Some(&folder),
+                        Hosted { spill, keys, names, early },
+                        "claude",
+                        &|_| false,
+                        crate::talk::Recorded::Kept(&world),
+                        refused,
+                    )?;
                     drop(world);
                     // As the history held in memory is written (below), what
                     // records stopped short know their events by kept in the
@@ -1373,26 +1563,47 @@ async fn produce_step(
                     } else {
                         Reach::Whole
                     };
-                    assets::write_kept(&writing, signer, &whose, &placed, &mut finals.spill, finals.early.as_ref(), reach, &mut |_, _, _| Ok(false))
+                    assets::write_kept(
+                        &writing,
+                        signer,
+                        &whose,
+                        &placed,
+                        &mut finals.spill,
+                        finals.early.as_ref(),
+                        reach,
+                        &mut |_, _, _| Ok(false),
+                    )
                 })
                 .await?;
                 let floor = wrote.floor;
-                (assets::Wrote { written: wrote.written, gone: wrote.gone, items: Vec::new(), holding: wrote.holding }, floor, unread)
-            } else if let Some(world) = if about.world_managed() && !(hosted && agent == "codex" && about.session.is_some()) {
-                // As the World recorded it — its host neither started nor
-                // read (asked again as it is read) — kept on disk as it is
-                // read and written from there a batch at a time (design
-                // §28.51 ⑥-4), as `history_quietly` reads it and the whole is
-                // written.
-                let world = super::spill::Spill::new(kept.spill_dir(), &format!("{}-world", resident.as_str()));
-                crate::talk::recorded_kept(node, resident, world).await?
-            } else {
-                None
-            } {
+                (
+                    assets::Wrote {
+                        written: wrote.written,
+                        gone: wrote.gone,
+                        items: Vec::new(),
+                        holding: wrote.holding,
+                    },
+                    floor,
+                    unread,
+                )
+            } else if let Some(world) =
+                if about.world_managed() && !(hosted && agent == "codex" && about.session.is_some()) {
+                    // As the World recorded it — its host neither started nor
+                    // read (asked again as it is read) — kept on disk as it is
+                    // read and written from there a batch at a time (design
+                    // §28.51 ⑥-4), as `history_quietly` reads it and the whole is
+                    // written.
+                    let world = super::spill::Spill::new(kept.spill_dir(), &format!("{}-world", resident.as_str()));
+                    crate::talk::recorded_kept(node, resident, world).await?
+                } else {
+                    None
+                }
+            {
                 reset(&library, &name, epoch, producing.clone()).await?;
                 let spill = super::spill::Spill::new(kept.spill_dir(), resident.as_str());
                 let early = assets::Early::new(library.clone(), resident);
-                let (writing, signer, whose, folder, held) = (library.clone(), signer.clone(), resident.clone(), directory.clone(), producing.clone());
+                let (writing, signer, whose, folder, held) =
+                    (library.clone(), signer.clone(), resident.clone(), directory.clone(), producing.clone());
                 // A conversation its host has a record of — a login the
                 // workbench is closed in, moved, or not this node's to drive
                 // — is read here from the World's record alone, which lacks
@@ -1406,11 +1617,29 @@ async fn produce_step(
                     world.view_as_recorded().map_err(Failure::new)?;
                     let mut finals = finals_recorded(&folder, &world, spill, early)?;
                     drop(world);
-                    assets::write_kept(&writing, signer, &whose, &placed, &mut finals.spill, finals.early.as_ref(), reach, &mut |_, _, _| Ok(false))
+                    assets::write_kept(
+                        &writing,
+                        signer,
+                        &whose,
+                        &placed,
+                        &mut finals.spill,
+                        finals.early.as_ref(),
+                        reach,
+                        &mut |_, _, _| Ok(false),
+                    )
                 })
                 .await?;
                 let floor = wrote.floor;
-                (assets::Wrote { written: wrote.written, gone: wrote.gone, items: Vec::new(), holding: wrote.holding }, floor, false)
+                (
+                    assets::Wrote {
+                        written: wrote.written,
+                        gone: wrote.gone,
+                        items: Vec::new(),
+                        holding: wrote.holding,
+                    },
+                    floor,
+                    false,
+                )
             } else {
                 let read = crate::talk::history_quietly(node, resident).await?;
                 // A source unreadable now, gone for good or not yet whole, holds
@@ -1421,7 +1650,8 @@ async fn produce_step(
                 let (refused, frozen) = (read.refused, read.frozen);
                 reset(&library, &name, epoch, producing.clone()).await?;
                 let wrote = {
-                    let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
+                    let (writing, signer, whose, history, held) =
+                        (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
                     fastctx_platform::task::blocking(move || {
                         let _held = held;
                         // Stopped before a line larger than World reads: what
@@ -1491,11 +1721,26 @@ async fn produce_step(
     // From the place this reading read the record through, the timeline is
     // written on while only the record grows (`onward`).
     match judged {
-        Some(judged) => onward::seed(node, resident, &library, &written_to, &next, &state, judged, producing.clone()).await,
+        Some(judged) => {
+            onward::seed(node, resident, &library, &written_to, &next, &state, judged, producing.clone()).await
+        }
         None => onward::forget_of(resident),
     }
     match codex_seeded {
-        Some((through, recorded, told)) => codex_onward::seed(node, resident, &library, &written_to, &state, through, recorded, told, producing.clone()).await,
+        Some((through, recorded, told)) => {
+            codex_onward::seed(
+                node,
+                resident,
+                &library,
+                &written_to,
+                &state,
+                through,
+                recorded,
+                told,
+                producing.clone(),
+            )
+            .await
+        }
         None => codex_onward::forget_of(resident),
     }
     Ok(Done(Produced {
@@ -1548,10 +1793,19 @@ async fn runs_brought(
         while let Some(after) = from {
             let (_, page) = crate::run_facts::changed_since(&folder, after, CALLS_A_PAGE).map_err(failure)?;
             let Some((calls, through)) = page else {
-                written = assets::refresh_every_run(&writing, signer.clone(), &whose, &placed, &attach, floor, Some(holding))?;
+                written = assets::refresh_every_run(
+                    &writing,
+                    signer.clone(),
+                    &whose,
+                    &placed,
+                    &attach,
+                    floor,
+                    Some(holding),
+                )?;
                 return Ok((Some(runs_now), written));
             };
-            written += assets::refresh_runs(&writing, signer.clone(), &whose, &placed, &attach, &calls, floor, Some(holding))?;
+            written +=
+                assets::refresh_runs(&writing, signer.clone(), &whose, &placed, &attach, &calls, floor, Some(holding))?;
             from = (through < runs_now && !calls.is_empty()).then_some(through);
         }
         // None kept, or kept past the version now (the facts made anew):
@@ -1578,7 +1832,8 @@ fn finals_recorded(
     let mut since = std::time::Instant::now();
     world
         .each_event(&mut |mut event| {
-            crate::run_facts::attach(directory, &mut event).map_err(|error| crate::record_migration::failure(error).message)?;
+            crate::run_facts::attach(directory, &mut event)
+                .map_err(|error| crate::record_migration::failure(error).message)?;
             let base = super::names::base(&event);
             let encoded = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
             let (record, object) = assets::body(&event, encoded).map_err(|failure| failure.message)?;
@@ -1619,7 +1874,9 @@ pub(super) fn world_after(
             _ => None,
         })
         .collect();
-    let started = open.into_iter().chain(numbered.iter().filter(|(sequence, _)| *sequence <= through).map(|(_, event)| event.clone()));
+    let started = open
+        .into_iter()
+        .chain(numbered.iter().filter(|(sequence, _)| *sequence <= through).map(|(_, event)| event.clone()));
     let open = started
         .filter(|event| matches!(&event.happened, Happened::TurnStarted { turn } if !ended.contains(turn.as_str())))
         .collect();
@@ -1669,7 +1926,8 @@ pub(super) fn register_check(node: &Arc<Node>) {
             // would be late, so it is done within the hour it was asked for
             // whatever rest another left (EE07).
             let resting = if late { &LATE_REST_UNTIL } else { &REST_UNTIL };
-            let resting = resting.lock().expect("checks' rest").and_then(|until| until.checked_duration_since(Instant::now()));
+            let resting =
+                resting.lock().expect("checks' rest").and_then(|until| until.checked_duration_since(Instant::now()));
             if let Some(rest) = resting {
                 let until_late = waited.map_or(CHECK_LATE, |waited| CHECK_LATE.saturating_sub(waited));
                 let after = if late { rest } else { rest.min(until_late) };
@@ -1683,9 +1941,13 @@ pub(super) fn register_check(node: &Arc<Node>) {
             // Ended here before the job's own time is up, so a check that
             // runs too long is tried again as one that fails is (below), not
             // set aside by the jobs.
-            let checked = match tokio::time::timeout(WITHIN.saturating_sub(CHECK_ENDS_BEFORE), check(&node, &resident)).await {
+            let checked = match tokio::time::timeout(WITHIN.saturating_sub(CHECK_ENDS_BEFORE), check(&node, &resident))
+                .await
+            {
                 Ok(checked) => checked,
-                Err(_) => Err(failure(format!("the check ran past {} s", WITHIN.saturating_sub(CHECK_ENDS_BEFORE).as_secs()))),
+                Err(_) => {
+                    Err(failure(format!("the check ran past {} s", WITHIN.saturating_sub(CHECK_ENDS_BEFORE).as_secs())))
+                }
             };
             let took = began.elapsed();
             // Whatever came of it — a reading short of a source, a failure,
@@ -1701,7 +1963,9 @@ pub(super) fn register_check(node: &Arc<Node>) {
             match checked {
                 // Not all could be read: not checked, tried again (DD08), no
                 // sooner than a minute on and as its readings wait.
-                Ok(checked) if checked.unread => Outcome::Again { after: unread_again(&resident).max(UNREAD_AGAIN * 12) },
+                Ok(checked) if checked.unread => {
+                    Outcome::Again { after: unread_again(&resident).max(UNREAD_AGAIN * 12) }
+                }
                 Ok(checked) => {
                     if checked.written + checked.gone > 0 {
                         node.log.line(format_args!(
@@ -1710,7 +1974,9 @@ pub(super) fn register_check(node: &Arc<Node>) {
                         ));
                     }
                     if late {
-                        node.log.line(format_args!("{resident}'s check began late: checks are behind and take half a core"));
+                        node.log.line(format_args!(
+                            "{resident}'s check began late: checks are behind and take half a core"
+                        ));
                     }
                     Outcome::Done
                 }
@@ -1728,7 +1994,10 @@ pub(super) fn register_check(node: &Arc<Node>) {
             }
         })
     };
-    jobs.register(Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES, ready: Some(check_ready) }, Arc::new(run));
+    jobs.register(
+        Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES, ready: Some(check_ready) },
+        Arc::new(run),
+    );
 }
 
 /// Checks `resident`'s history (§10, design §28.53). A Claude record
@@ -1763,9 +2032,7 @@ async fn check(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Fail
         // The facts of its runs are the build's own to bring (`produce_with`),
         // a page at a time where not known call by call.
         let alone = state.earlier.is_empty() && state.seam.agents.is_empty() && beside.is_empty();
-        if alone
-            && let Some(session) = state.session
-        {
+        if alone && let Some(session) = state.session {
             // Given up as soon as the check is: one that ran too long is not
             // still hashing beside the next (codex-e024d399 #5).
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1779,13 +2046,19 @@ async fn check(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Fail
             let seam = state.seam;
             let hashing = seam.clone();
             let held = fastctx_platform::task::blocking(move || {
-                fastctx_hosts::claude::transcript::follow::prefix_unchanged(&path, &hashing, &|| stop.load(std::sync::atomic::Ordering::Relaxed))
+                fastctx_hosts::claude::transcript::follow::prefix_unchanged(&path, &hashing, &|| {
+                    stop.load(std::sync::atomic::Ordering::Relaxed)
+                })
             })
             .await;
             match held {
                 Ok(true) => return produce_with(node, resident, false, Some(Checked { session, seam })).await,
-                Ok(false) => node.log.line(format_args!("{resident}'s record changed before where it was read through: read whole")),
-                Err(error) => node.log.line(format_args!("{resident}'s record could not be checked ({error}): read whole")),
+                Ok(false) => node
+                    .log
+                    .line(format_args!("{resident}'s record changed before where it was read through: read whole")),
+                Err(error) => {
+                    node.log.line(format_args!("{resident}'s record could not be checked ({error}): read whole"))
+                }
             }
         }
     }
@@ -1795,7 +2068,10 @@ async fn check(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Fail
 /// The record a Claude resident's timeline follows past a seam, and where
 /// its timeline stands, as its checkpoint keeps it: none where it follows
 /// none (another host, read whole, read as the World recorded it).
-async fn followed_record(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<(std::path::PathBuf, Following)>, Failure> {
+async fn followed_record(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+) -> Result<Option<(std::path::PathBuf, Following)>, Failure> {
     let Some(kept) = node.assets.as_ref() else { return Ok(None) };
     let Some((about, _)) = node.residents.about(resident) else { return Ok(None) };
     if about.host.agent.as_str() != "claude" {
@@ -1803,12 +2079,17 @@ async fn followed_record(node: &Arc<Node>, resident: &ResidentId) -> Result<Opti
     }
     let (reading, name) = (kept.library.clone(), assets::checkpoint(resident));
     let state = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
-    let Some(state) = state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM) else {
+    let Some(state) =
+        state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM)
+    else {
         return Ok(None);
     };
     let (Some(session), Some(_)) = (&state.session, state.seam.identity.as_ref()) else { return Ok(None) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    let path = fastctx_platform::task::blocking(move || fastctx_hosts::claude::exchange::transcript(&directory)).await.ok().flatten();
+    let path = fastctx_platform::task::blocking(move || fastctx_hosts::claude::exchange::transcript(&directory))
+        .await
+        .ok()
+        .flatten();
     Ok(path.map(|path| (path, state)))
 }
 
@@ -1841,13 +2122,16 @@ pub(super) fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
         // Refused, it is asked again each minute until it is taken (N5).
         loop {
             let asked = job.clone();
-            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_unless_waiting(db, &asked, pause)).await {
+            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_unless_waiting(db, &asked, pause)).await
+            {
                 Ok(()) => {
                     jobs.stir(VERIFY);
                     return;
                 }
                 Err(error) => {
-                    log.line(format_args!("asking for {key}'s history to be checked: {error}; asked again in a minute"));
+                    log.line(format_args!(
+                        "asking for {key}'s history to be checked: {error}; asked again in a minute"
+                    ));
                     tokio::time::sleep(SUBMIT_LATER).await;
                 }
             }
@@ -1858,14 +2142,21 @@ pub(super) fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
 /// Asks for a check of each history here not checked for a week (§10, R4).
 pub(super) async fn check_stale(node: &Arc<Node>) {
     let Some(kept) = node.assets.as_ref() else { return };
-    let here: Vec<ResidentId> =
-        node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+    let here: Vec<ResidentId> = node
+        .residents
+        .everyone()
+        .filter(|record| record.here && record.removed.is_none())
+        .map(|record| record.id)
+        .collect();
     for resident in here {
         let (reading, name) = (kept.library.clone(), assets::checkpoint(&resident));
         let state = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.ok().flatten();
-        let verified = state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).and_then(|state| state.verified);
+        let verified =
+            state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).and_then(|state| state.verified);
         // A day ahead, so none waits past a week for the next sweep (N4).
-        if verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY - Duration::from_secs(24 * 60 * 60)) {
+        if verified.is_none_or(|at| {
+            Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY - Duration::from_secs(24 * 60 * 60)
+        }) {
             check_wanted(node, &resident);
         }
     }
@@ -1886,7 +2177,11 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     // What is kept beside the timeline is made when it was asked for, when
     // its history was read (a reading may begin its scope, or hand it
     // over), and every `BESIDE_EVERY` at least.
-    let due = BESIDE_MADE.lock().expect("beside timelines made").get(resident).is_none_or(|made| made.elapsed() >= BESIDE_EVERY);
+    let due = BESIDE_MADE
+        .lock()
+        .expect("beside timelines made")
+        .get(resident)
+        .is_none_or(|made| made.elapsed() >= BESIDE_EVERY);
     if !(asked || due || produced.as_ref().map_or(true, |produced| produced.read)) {
         // Its file changes are made of the timeline itself: made again
         // whenever the timeline was written.
@@ -1916,7 +2211,9 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
         }
         BROUGHT.lock().expect("brought timelines").insert(resident.clone(), (Instant::now(), begun.elapsed()));
         return match brought(node, resident, begun, produced, beside_failed) {
-            Outcome::Again { after } => Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) },
+            Outcome::Again { after } => {
+                Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) }
+            }
             outcome => outcome,
         };
     }
@@ -2000,14 +2297,22 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     }
     // Looked at again no sooner than it rests.
     match brought(node, resident, begun, produced, beside_failed) {
-        Outcome::Again { after } => Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) },
+        Outcome::Again { after } => {
+            Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) }
+        }
         outcome => outcome,
     }
 }
 
 /// What the job does next once `resident`'s timeline was brought as
 /// `produced` says, in the look begun at `begun`.
-fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Result<Produced, Failure>, beside_failed: bool) -> Outcome {
+fn brought(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    begun: Instant,
+    produced: Result<Produced, Failure>,
+    beside_failed: bool,
+) -> Outcome {
     match produced {
         Ok(produced) if produced.waits_listing => Outcome::Done,
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
@@ -2016,20 +2321,28 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
                 failures::brought(resident);
             }
             if produced.written + produced.gone > 0 || cfg!(feature = "timeline-drill") {
-                node.log.line(format_args!("{resident}'s asset timeline: {} written, {} gone", produced.written, produced.gone));
+                node.log.line(format_args!(
+                    "{resident}'s asset timeline: {} written, {} gone",
+                    produced.written, produced.gone
+                ));
             }
             if produced.unread {
                 // Read just now — from the seam, whole, or on from inside a
                 // turn — it waits longer than it did; found unchanged
                 // meanwhile, it waits what is left.
-                let after = if produced.read || produced.on { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
+                let after = if produced.read || produced.on {
+                    unread_again(resident)
+                } else {
+                    unread_waits(resident).unwrap_or(UNREAD_AGAIN)
+                };
                 return Outcome::Again { after };
             }
             UNREAD.lock().expect("unread timelines").remove(resident);
             // A long prefix changed: checked whole within the hour. Any
             // history not checked for a week, or not since this node began
             // keeping it: checked, at some moment of the next hour.
-            let stale = produced.verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY);
+            let stale =
+                produced.verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY);
             if produced.long_changed || stale {
                 check_wanted(node, resident);
             }
@@ -2059,7 +2372,8 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
 /// How soon a conversation fallen quiet is looked at again: every half
 /// minute for ten minutes, then every five, until an hour has gone by.
 fn quiet_again(node: &Node, resident: &ResidentId) -> Option<Duration> {
-    let quiet = node.residents.now(resident).map(|now| jiff::Timestamp::now().duration_since(now.since).unsigned_abs())?;
+    let quiet =
+        node.residents.now(resident).map(|now| jiff::Timestamp::now().duration_since(now.since).unsigned_abs())?;
     if quiet < QUIET_SOON {
         Some(Duration::from_secs(30))
     } else if quiet < QUIET_FOR {
@@ -2160,7 +2474,11 @@ pub(super) fn wanted_history(node: &Node, resident: &ResidentId) {
                     loop {
                         tokio::time::sleep(SUBMIT_LATER).await;
                         let asked = job.clone();
-                        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, Duration::ZERO)).await.is_ok() {
+                        if database
+                            .write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, Duration::ZERO))
+                            .await
+                            .is_ok()
+                        {
                             jobs.stir(KIND);
                             break;
                         }
@@ -2197,7 +2515,11 @@ pub mod bench {
 
     impl Follower {
         /// Follows into `scope` of `library`, held already.
-        pub fn new(library: fastctx_content::v2::Library, signer: Arc<dyn fastctx_content::v2::Signer>, scope: &str) -> Result<Self, String> {
+        pub fn new(
+            library: fastctx_content::v2::Library,
+            signer: Arc<dyn fastctx_content::v2::Signer>,
+            scope: &str,
+        ) -> Result<Self, String> {
             let hub = fastctx_types::access::HubId::from_bytes(*b"benchhub");
             let network = library.join(&hub.to_string(), &signer.device(), false).map_err(|error| error.to_string())?;
             let readers = fastctx_types::assets::Readers::Conversation { openers: Vec::new(), born_on: None };
@@ -2222,32 +2544,58 @@ pub mod bench {
             // As `codex::follow::window` and `produce` take it.
             let since = if whole { Timestamp::MIN } else { since.unwrap_or(Timestamp::MAX) };
             let settled = settled.unwrap_or(since);
-            let host_told = events.iter().filter(|event| told_again(event)).filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told = events
+                .iter()
+                .filter(|event| told_again(event))
+                .filter_map(|event| serde_json::to_value(event).ok())
+                .collect();
             assets::begin_phases();
             let began = std::time::Instant::now();
-            let history = crate::talk::merged(Vec::new(), Some(events), "codex", &fastctx_types::session::attachments::NoReceipts);
-            assets::PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(("final events", began.elapsed().as_secs_f64()));
+            let history = crate::talk::merged(
+                Vec::new(),
+                Some(events),
+                "codex",
+                &fastctx_types::session::attachments::NoReceipts,
+            );
+            assets::PHASES
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(("final events", began.elapsed().as_secs_f64()));
             let name = assets::checkpoint(&self.resident);
             // What `produce` reads first: where the timeline stands, the
             // scope's holding period, and who orders its stream.
             let failed = |error: fastctx_content::Error| error.to_string();
             let kept = self.library.checkpoint(&name).map_err(failed)?;
-            let state = kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM).unwrap_or_default();
+            let state = kept
+                .and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok())
+                .filter(|state| state.form == FORM)
+                .unwrap_or_default();
             self.library.holding(&self.placed.scope).map_err(failed)?;
-            self.library.orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(failed)?;
+            self.library
+                .orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+                .map_err(failed)?;
             if whole {
-                let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() }).map_err(|error| error.to_string())?;
+                let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() })
+                    .map_err(|error| error.to_string())?;
                 self.library.keep_checkpoint(&name, state).map_err(|error| error.to_string())?;
             }
             let generation = state.held.map_or(1, |held| held.wrapping_add(1));
             let stood = if whole {
                 Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation }
             } else {
-                Stood { name: name.clone(), held: state.held, told: state.told, floor: state.floor, holding: state.holding, generation }
+                Stood {
+                    name: name.clone(),
+                    held: state.held,
+                    told: state.told,
+                    floor: state.floor,
+                    holding: state.holding,
+                    generation,
+                }
             };
             let reading = Reading { history, host_told, whole, since, settled, codex: true };
             let Placement { wrote, floor, held, told, .. } =
-                place(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, reading).map_err(|failure| failure.message)?;
+                place(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, reading)
+                    .map_err(|failure| failure.message)?;
             let next = Following {
                 form: FORM,
                 version: "bench".into(),
@@ -2272,43 +2620,88 @@ pub mod bench {
         /// and written from there a batch at a time (design §28.51 ⑤-4),
         /// or, with no `root`, held whole and written. How many items it
         /// wrote.
-        pub fn claude_place(&self, path: &std::path::Path, began: Timestamp, root: Option<std::path::PathBuf>) -> Result<usize, String> {
+        pub fn claude_place(
+            &self,
+            path: &std::path::Path,
+            began: Timestamp,
+            root: Option<std::path::PathBuf>,
+        ) -> Result<usize, String> {
             let failed = |error: fastctx_content::Error| error.to_string();
             self.library.holding(&self.placed.scope).map_err(failed)?;
-            self.library.orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(failed)?;
+            self.library
+                .orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+                .map_err(failed)?;
             let receipts = fastctx_types::session::attachments::NoReceipts;
             let Some(root) = root else {
-                let read = fastctx_hosts::claude::transcript::read_continuing(path, &[], &Default::default()).map_err(|error| error.to_string())?;
+                let read = fastctx_hosts::claude::transcript::read_continuing(path, &[], &Default::default())
+                    .map_err(|error| error.to_string())?;
                 let mut events = Vec::new();
                 if let Some(title) = read.title.clone() {
-                    events.push(SessionEvent { at: began, happened: fastctx_types::session::Happened::Titled { title } });
+                    events
+                        .push(SessionEvent { at: began, happened: fastctx_types::session::Happened::Titled { title } });
                 }
                 events.extend(read.events);
-                if let Some(text) = crate::claude::history::problem_note("bench", &read.problems, read.problems_omitted) {
+                if let Some(text) = crate::claude::history::problem_note("bench", &read.problems, read.problems_omitted)
+                {
                     events.push(crate::claude::history::note(began, text));
                 }
                 let placed = crate::claude::history::place(events, &[]);
                 let history = crate::talk::merged(Vec::new(), Some(placed), "claude", &receipts);
-                let wrote = assets::write(&self.library, self.signer.clone(), &self.resident, &self.placed, &history, Span::Whole, &Default::default(), None)
-                    .map_err(|failure| failure.message)?;
+                let wrote = assets::write(
+                    &self.library,
+                    self.signer.clone(),
+                    &self.resident,
+                    &self.placed,
+                    &history,
+                    Span::Whole,
+                    &Default::default(),
+                    None,
+                )
+                .map_err(|failure| failure.message)?;
                 return Ok(wrote.written);
             };
             assets::begin_phases();
             let mut since = std::time::Instant::now();
-            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(root, self.resident.as_str()))?;
+            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(
+                root,
+                self.resident.as_str(),
+            ))?;
             let read = reading.read(path, &[], &mut |_| {}).map_err(|error| error.to_string())?;
             let refused = read.refused.is_some();
             reading.accept("bench", began, &read)?;
             assets::phase("read", &mut since);
             let early = assets::Early::new(self.library.clone(), &self.resident);
-            let placed = reading.place(crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] }, &mut |_| Ok(()), &receipts, early.as_ref(), &|_| false)?;
+            let placed = reading.place(
+                crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] },
+                &mut |_| Ok(()),
+                &receipts,
+                early.as_ref(),
+                &|_| false,
+            )?;
             assets::phase("placed", &mut since);
             let crate::claude::history::kept::Placed { spill, keys, names, .. } = placed;
-            let mut finals = finals(None, Hosted { spill, keys, names, early }, "claude", &|_| false, crate::talk::Recorded::Held(Vec::new()), refused).map_err(|failure| failure.message)?;
+            let mut finals = finals(
+                None,
+                Hosted { spill, keys, names, early },
+                "claude",
+                &|_| false,
+                crate::talk::Recorded::Held(Vec::new()),
+                refused,
+            )
+            .map_err(|failure| failure.message)?;
             // Stopped short, added only where the timeline has none of it.
             let reach = if refused { Reach::Added } else { Reach::Whole };
-            let wrote = assets::write_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &mut finals.spill, finals.early.as_ref(), reach, &mut |_, _, _| Ok(false))
-                .map_err(|failure| failure.message)?;
+            let wrote = assets::write_kept(
+                &self.library,
+                self.signer.clone(),
+                &self.resident,
+                &self.placed,
+                &mut finals.spill,
+                finals.early.as_ref(),
+                reach,
+                &mut |_, _, _| Ok(false),
+            )
+            .map_err(|failure| failure.message)?;
             Ok(wrote.written)
         }
 
@@ -2330,44 +2723,78 @@ pub mod bench {
             use fastctx_hosts::claude::transcript::follow;
             let failed = |error: fastctx_content::Error| error.to_string();
             self.library.holding(&self.placed.scope).map_err(failed)?;
-            self.library.orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(failed)?;
+            self.library
+                .orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+                .map_err(failed)?;
             let receipts = fastctx_types::session::attachments::NoReceipts;
-            let stood = Stood { name: assets::checkpoint(&self.resident), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
+            let stood = Stood {
+                name: assets::checkpoint(&self.resident),
+                held: None,
+                told: Vec::new(),
+                floor: 0,
+                holding: None,
+                generation: 1,
+            };
             let is_told = |event: &SessionEvent, title: Option<&str>, problem: Option<&str>| match &event.happened {
-                fastctx_types::session::Happened::Titled { title: told } => event.at == began && title == Some(told.as_str()),
-                fastctx_types::session::Happened::Health { health, .. } => event.at == began && problem == Some(health.text.as_str()),
+                fastctx_types::session::Happened::Titled { title: told } => {
+                    event.at == began && title == Some(told.as_str())
+                }
+                fastctx_types::session::Happened::Health { health, .. } => {
+                    event.at == began && problem == Some(health.text.as_str())
+                }
                 _ => false,
             };
             let Some(root) = root else {
-                let tail = follow::tail(path, &follow::Seam::default(), &Default::default(), &|_| true, false, &|_| false)
-                    .map_err(|error| error.to_string())?
-                    .map_err(|why| why.to_string())?;
+                let tail =
+                    follow::tail(path, &follow::Seam::default(), &Default::default(), &|_| true, false, &|_| false)
+                        .map_err(|error| error.to_string())?
+                        .map_err(|why| why.to_string())?;
                 let read = &tail.transcript;
                 let mut events = Vec::new();
                 if let Some(title) = read.title.clone() {
-                    events.push(SessionEvent { at: began, happened: fastctx_types::session::Happened::Titled { title } });
+                    events
+                        .push(SessionEvent { at: began, happened: fastctx_types::session::Happened::Titled { title } });
                 }
                 events.extend(read.events.iter().cloned());
                 let problem = crate::claude::history::problem_note("bench", &read.problems, read.problems_omitted);
                 if let Some(text) = &problem {
                     events.push(crate::claude::history::note(began, text.clone()));
                 }
-                let moved: Vec<u64> = tail.prefix_ids.iter().map(|id| crate::claude::history::PrefixIds::digest(id)).collect();
+                let moved: Vec<u64> =
+                    tail.prefix_ids.iter().map(|id| crate::claude::history::PrefixIds::digest(id)).collect();
                 let recorded: Vec<SessionEvent> = world().collect();
                 let placed = crate::claude::history::place(events, &recorded);
-                let host_told: Vec<serde_json::Value> =
-                    placed.iter().filter(|event| is_told(event, read.title.as_deref(), problem.as_deref())).filter_map(|event| serde_json::to_value(event).ok()).collect();
+                let host_told: Vec<serde_json::Value> = placed
+                    .iter()
+                    .filter(|event| is_told(event, read.title.as_deref(), problem.as_deref()))
+                    .filter_map(|event| serde_json::to_value(event).ok())
+                    .collect();
                 let history = crate::talk::merged(recorded, Some(placed), "claude", &receipts);
                 let settled = tail.seam_at.unwrap_or(Timestamp::MIN);
                 let reading = Reading { history, host_told, whole: true, since: Timestamp::MIN, settled, codex: false };
-                let placement = place(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, reading).map_err(|failure| failure.message)?;
+                let placement =
+                    place(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, reading)
+                        .map_err(|failure| failure.message)?;
                 return Ok((placement.wrote.written, moved.len()));
             };
             assets::begin_phases();
             let mut since = std::time::Instant::now();
-            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(root.clone(), self.resident.as_str()))?;
+            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(
+                root.clone(),
+                self.resident.as_str(),
+            ))?;
             let tail = reading
-                .tail(path, &follow::Seam::default(), &|_| true, false, &|_| Ok(Default::default()), &[], &crate::claude::history::PrefixIds::digest, &mut |_| {}, &mut |_| Ok(()))
+                .tail(
+                    path,
+                    &follow::Seam::default(),
+                    &|_| true,
+                    false,
+                    &|_| Ok(Default::default()),
+                    &[],
+                    &crate::claude::history::PrefixIds::digest,
+                    &mut |_| {},
+                    &mut |_| Ok(()),
+                )
                 .map_err(|error| error.to_string())?
                 .map_err(|why| why.to_string())?;
             let read = &tail.transcript;
@@ -2380,7 +2807,13 @@ pub mod bench {
             // The World's record as `produce` reads it whole: kept on disk
             // as it is read (§28.51 ⑥-1), named, its keys kept beside it.
             let events = world().enumerate().map(|(at, event)| (at as u64 + 1, event));
-            let mut world = super::super::world::World::of(super::super::spill::Spill::new(root.clone(), "bench-world"), events, 0, 0, &[])?;
+            let mut world = super::super::world::World::of(
+                super::super::spill::Spill::new(root.clone(), "bench-world"),
+                events,
+                0,
+                0,
+                &[],
+            )?;
             world.view(None)?;
             let (names, sent) = world.name()?;
             assets::phase("world read", &mut since);
@@ -2397,13 +2830,33 @@ pub mod bench {
                 return Err(error);
             }
             assets::phase("placed", &mut since);
-            let host_told: Vec<serde_json::Value> = placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told: Vec<serde_json::Value> =
+                placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-            let finals = finals(None, Kept::Claude { placed, early }.into(), "claude", &told, crate::talk::Recorded::Kept(&world), false).map_err(|failure| failure.message)?;
+            let finals = finals(
+                None,
+                Kept::Claude { placed, early }.into(),
+                "claude",
+                &told,
+                crate::talk::Recorded::Kept(&world),
+                false,
+            )
+            .map_err(|failure| failure.message)?;
             drop(world);
             let settled = tail.seam_at.unwrap_or(Timestamp::MIN);
-            let placement =
-                place_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, finals, true, false, Timestamp::MIN, settled).map_err(|failure| failure.message)?;
+            let placement = place_kept(
+                &self.library,
+                self.signer.clone(),
+                &self.resident,
+                &self.placed,
+                &stood,
+                finals,
+                true,
+                false,
+                Timestamp::MIN,
+                settled,
+            )
+            .map_err(|failure| failure.message)?;
             Ok((placement.wrote.written, placement.before_seam.map_or(0, |bytes| bytes.len() / 8)))
         }
 
@@ -2411,22 +2864,46 @@ pub mod bench {
         /// `produce` writes one whose host is not read (§28.51 ⑥-4): kept
         /// in a store under `root` as it is read, ordered there, made final
         /// and written a batch at a time. How many items it wrote.
-        pub fn world_alone(&self, events: Box<dyn Iterator<Item = SessionEvent>>, root: std::path::PathBuf) -> Result<usize, String> {
+        pub fn world_alone(
+            &self,
+            events: Box<dyn Iterator<Item = SessionEvent>>,
+            root: std::path::PathBuf,
+        ) -> Result<usize, String> {
             let failed = |error: fastctx_content::Error| error.to_string();
             self.library.holding(&self.placed.scope).map_err(failed)?;
-            self.library.orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(failed)?;
+            self.library
+                .orderer(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+                .map_err(failed)?;
             assets::begin_phases();
             let mut since = std::time::Instant::now();
             let events = events.enumerate().map(|(at, event)| (at as u64 + 1, event));
-            let mut world = super::super::world::World::of_recorded(super::super::spill::Spill::new(root.clone(), "bench-world"), events)?;
+            let mut world = super::super::world::World::of_recorded(
+                super::super::spill::Spill::new(root.clone(), "bench-world"),
+                events,
+            )?;
             world.view_as_recorded()?;
             assets::phase("world read", &mut since);
             let directory = fastctx_types::layout::ConversationDir::at(&root.join("conversation"));
             let early = assets::Early::new(self.library.clone(), &self.resident);
-            let mut finals = finals_recorded(&directory, &world, super::super::spill::Spill::new(root, self.resident.as_str()), early).map_err(|failure| failure.message)?;
+            let mut finals = finals_recorded(
+                &directory,
+                &world,
+                super::super::spill::Spill::new(root, self.resident.as_str()),
+                early,
+            )
+            .map_err(|failure| failure.message)?;
             drop(world);
-            let wrote = assets::write_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &mut finals.spill, finals.early.as_ref(), Reach::Whole, &mut |_, _, _| Ok(false))
-                .map_err(|failure| failure.message)?;
+            let wrote = assets::write_kept(
+                &self.library,
+                self.signer.clone(),
+                &self.resident,
+                &self.placed,
+                &mut finals.spill,
+                finals.early.as_ref(),
+                Reach::Whole,
+                &mut |_, _, _| Ok(false),
+            )
+            .map_err(|failure| failure.message)?;
             Ok(wrote.written)
         }
 
@@ -2449,8 +2926,10 @@ pub mod bench {
             self.library.holding(&self.placed.scope).map_err(failed)?;
             let receipts = fastctx_types::session::attachments::NoReceipts;
             let name = assets::checkpoint(&self.resident);
-            let mut stood = Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
-            let (mut seam, mut prefix, mut written) = (follow::Seam::default(), crate::claude::history::PrefixIds::default(), Vec::new());
+            let mut stood =
+                Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
+            let (mut seam, mut prefix, mut written) =
+                (follow::Seam::default(), crate::claude::history::PrefixIds::default(), Vec::new());
             let mut window = false;
             for round in 0..2 {
                 if round == 1 {
@@ -2458,10 +2937,25 @@ pub mod bench {
                 }
                 let whole = seam.identity.is_none();
                 window = !whole;
-                let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(root.clone(), self.resident.as_str()))?;
-                let seen = |uuids: &[String]| -> std::io::Result<std::collections::HashSet<String>> { Ok(uuids.iter().filter(|uuid| prefix.holds(uuid)).cloned().collect()) };
+                let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(
+                    root.clone(),
+                    self.resident.as_str(),
+                ))?;
+                let seen = |uuids: &[String]| -> std::io::Result<std::collections::HashSet<String>> {
+                    Ok(uuids.iter().filter(|uuid| prefix.holds(uuid)).cloned().collect())
+                };
                 let tail = reading
-                    .tail(path, &seam, &|_| true, false, &seen, &[], &crate::claude::history::PrefixIds::digest, &mut |_| {}, &mut |_| Ok(()))
+                    .tail(
+                        path,
+                        &seam,
+                        &|_| true,
+                        false,
+                        &seen,
+                        &[],
+                        &crate::claude::history::PrefixIds::digest,
+                        &mut |_| {},
+                        &mut |_| Ok(()),
+                    )
                     .map_err(|error| error.to_string())?
                     .map_err(|why| why.to_string())?;
                 let read = &tail.transcript;
@@ -2470,21 +2964,56 @@ pub mod bench {
                 let early = assets::Early::new(self.library.clone(), &self.resident);
                 let title = read.title.clone();
                 let told = |event: &SessionEvent| match &event.happened {
-                    fastctx_types::session::Happened::Titled { title: told } => event.at == began && title.as_deref() == Some(told.as_str()),
-                    fastctx_types::session::Happened::Health { health, .. } => event.at == began && problem.as_deref() == Some(health.text.as_str()),
+                    fastctx_types::session::Happened::Titled { title: told } => {
+                        event.at == began && title.as_deref() == Some(told.as_str())
+                    }
+                    fastctx_types::session::Happened::Health { health, .. } => {
+                        event.at == began && problem.as_deref() == Some(health.text.as_str())
+                    }
                     _ => false,
                 };
-                let placed = reading.place(crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] }, &mut |_| Ok(()), &receipts, early.as_ref(), &told)?;
-                let host_told: Vec<serde_json::Value> = placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
-                let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-                let finals = finals(None, Kept::Claude { placed, early }.into(), "claude", &told, crate::talk::Recorded::Held(Vec::new()), false).map_err(|failure| failure.message)?;
+                let placed = reading.place(
+                    crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] },
+                    &mut |_| Ok(()),
+                    &receipts,
+                    early.as_ref(),
+                    &told,
+                )?;
+                let host_told: Vec<serde_json::Value> =
+                    placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
+                let told =
+                    |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
+                let finals = finals(
+                    None,
+                    Kept::Claude { placed, early }.into(),
+                    "claude",
+                    &told,
+                    crate::talk::Recorded::Held(Vec::new()),
+                    false,
+                )
+                .map_err(|failure| failure.message)?;
                 let since = if whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
                 let settled = tail.seam_at.unwrap_or(since);
-                let placement =
-                    place_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, finals, whole, false, since, settled).map_err(|failure| failure.message)?;
+                let placement = place_kept(
+                    &self.library,
+                    self.signer.clone(),
+                    &self.resident,
+                    &self.placed,
+                    &stood,
+                    finals,
+                    whole,
+                    false,
+                    since,
+                    settled,
+                )
+                .map_err(|failure| failure.message)?;
                 written.push(placement.wrote.written);
-                let moved: Vec<u64> =
-                    placement.before_seam.unwrap_or_default().chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))).collect();
+                let moved: Vec<u64> = placement
+                    .before_seam
+                    .unwrap_or_default()
+                    .chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes")))
+                    .collect();
                 prefix.0.extend(moved);
                 prefix.0.sort_unstable();
                 prefix.0.dedup();
@@ -2524,14 +3053,28 @@ pub mod bench {
             self.library.holding(&self.placed.scope).map_err(failed)?;
             let receipts = fastctx_types::session::attachments::NoReceipts;
             let name = assets::checkpoint(&self.resident);
-            let stood = Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
-            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(root.clone(), self.resident.as_str()))?;
+            let stood =
+                Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
+            let mut reading = crate::claude::history::kept::Reading::new(super::super::spill::Spill::new(
+                root.clone(),
+                self.resident.as_str(),
+            ))?;
             let mut left = Vec::new();
             let tail = reading
-                .tail(path, &follow::Seam::default(), &|_| true, false, &|_| Ok(Default::default()), &[], &crate::claude::history::PrefixIds::digest, &mut |_| {}, &mut |key| {
-                    left.push(crate::claude::history::left_key(key));
-                    Ok(())
-                })
+                .tail(
+                    path,
+                    &follow::Seam::default(),
+                    &|_| true,
+                    false,
+                    &|_| Ok(Default::default()),
+                    &[],
+                    &crate::claude::history::PrefixIds::digest,
+                    &mut |_| {},
+                    &mut |key| {
+                        left.push(crate::claude::history::left_key(key));
+                        Ok(())
+                    },
+                )
                 .map_err(|error| error.to_string())?
                 .map_err(|why| why.to_string())?;
             let read = &tail.transcript;
@@ -2540,35 +3083,82 @@ pub mod bench {
             let early = assets::Early::new(self.library.clone(), &self.resident);
             let title = read.title.clone();
             let told = |event: &SessionEvent| match &event.happened {
-                fastctx_types::session::Happened::Titled { title: told } => event.at == began && title.as_deref() == Some(told.as_str()),
-                fastctx_types::session::Happened::Health { health, .. } => event.at == began && problem.as_deref() == Some(health.text.as_str()),
+                fastctx_types::session::Happened::Titled { title: told } => {
+                    event.at == began && title.as_deref() == Some(told.as_str())
+                }
+                fastctx_types::session::Happened::Health { health, .. } => {
+                    event.at == began && problem.as_deref() == Some(health.text.as_str())
+                }
                 _ => false,
             };
-            let placed = reading.place(crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] }, &mut |_| Ok(()), &receipts, early.as_ref(), &told)?;
+            let placed = reading.place(
+                crate::claude::history::kept::Placing::Held { recorded: &[], merged: &[] },
+                &mut |_| Ok(()),
+                &receipts,
+                early.as_ref(),
+                &told,
+            )?;
             let names = placed.names.clone();
-            let host_told: Vec<serde_json::Value> = placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told: Vec<serde_json::Value> =
+                placed.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-            let finals = finals(None, Kept::Claude { placed, early }.into(), "claude", &told, crate::talk::Recorded::Held(Vec::new()), false).map_err(|failure| failure.message)?;
+            let finals = finals(
+                None,
+                Kept::Claude { placed, early }.into(),
+                "claude",
+                &told,
+                crate::talk::Recorded::Held(Vec::new()),
+                false,
+            )
+            .map_err(|failure| failure.message)?;
             let settled = tail.seam_at.unwrap_or(Timestamp::MIN);
-            let placement =
-                place_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, finals, true, false, Timestamp::MIN, settled).map_err(|failure| failure.message)?;
-            let digests: Vec<u64> =
-                placement.before_seam.as_deref().unwrap_or_default().chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))).collect();
-            let generation = stage_prefix(&self.library, &prefix_name(&self.resident), None, true, &digests).map_err(failed)?;
+            let placement = place_kept(
+                &self.library,
+                self.signer.clone(),
+                &self.resident,
+                &self.placed,
+                &stood,
+                finals,
+                true,
+                false,
+                Timestamp::MIN,
+                settled,
+            )
+            .map_err(|failure| failure.message)?;
+            let digests: Vec<u64> = placement
+                .before_seam
+                .as_deref()
+                .unwrap_or_default()
+                .chunks_exact(8)
+                .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes")))
+                .collect();
+            let generation =
+                stage_prefix(&self.library, &prefix_name(&self.resident), None, true, &digests).map_err(failed)?;
             let seen = (self.library.clone(), prefix_name(&self.resident), generation);
             self.library.sweep_held(&name, Some(placement.held)).map_err(failed)?;
             let place = tail.read.clone().ok_or("the reading read the record through no place inside the turn")?;
             let judged = onward::Judged { read: place, left, turn: None, names, whole: true, world: Vec::new() };
             let shown = onward::Window::read_from(path, &judged, Some(&seen))?;
-            let mut window = onward::Window::seeded(&self.library, &self.placed.scope, None, [0; 32], "bench".into(), judged, shown)
-                .map_err(|failure| failure.message)?
-                .map_err(|why| format!("no window is held: {why}"))?;
+            let mut window =
+                onward::Window::seeded(&self.library, &self.placed.scope, None, [0; 32], "bench".into(), judged, shown)
+                    .map_err(|failure| failure.message)?
+                    .map_err(|why| format!("no window is held: {why}"))?;
             let mut took = Vec::with_capacity(looks);
             for look in 0..looks {
                 let world = between(look)?;
                 let started = std::time::Instant::now();
-                let wrote =
-                    window.look(path, &self.library, self.signer.clone(), &self.resident, &self.placed, &name, placement.held, Some(placement.wrote.holding), Some(&seen), world)?;
+                let wrote = window.look(
+                    path,
+                    &self.library,
+                    self.signer.clone(),
+                    &self.resident,
+                    &self.placed,
+                    &name,
+                    placement.held,
+                    Some(placement.wrote.holding),
+                    Some(&seen),
+                    world,
+                )?;
                 if !wrote.holds {
                     return Err("the window is not held on".into());
                 }
@@ -2587,11 +3177,19 @@ pub mod bench {
             spill.begin()?;
             let cell = std::cell::RefCell::new(spill);
             let mut events = 0;
-            let read = fastctx_hosts::claude::transcript::read_history_kept(path, &[], &|_| Ok(false), &mut Lines(&cell), &mut |event| {
-                cell.borrow_mut().push_hosted(pack_event(&event).map_err(std::io::Error::other)?).map_err(std::io::Error::other)?;
-                events += 1;
-                Ok(())
-            })
+            let read = fastctx_hosts::claude::transcript::read_history_kept(
+                path,
+                &[],
+                &|_| Ok(false),
+                &mut Lines(&cell),
+                &mut |event| {
+                    cell.borrow_mut()
+                        .push_hosted(pack_event(&event).map_err(std::io::Error::other)?)
+                        .map_err(std::io::Error::other)?;
+                    events += 1;
+                    Ok(())
+                },
+            )
             .map_err(|error| error.to_string())?;
             Ok((events, read.problems.len()))
         }
@@ -2600,32 +3198,68 @@ pub mod bench {
         /// read (`drill::tail`), under `root`.
         pub fn keeping(&self, root: std::path::PathBuf) -> Spilled {
             // With its objects put as they are read, unless `BENCH_NO_EARLY`.
-            let library = std::env::var_os("BENCH_NO_EARLY").is_none().then(|| (self.library.clone(), self.resident.clone()));
-            Spilled(crate::codex::follow::Reading::bare(super::super::spill::Spill::new(root, self.resident.as_str()), library))
+            let library =
+                std::env::var_os("BENCH_NO_EARLY").is_none().then(|| (self.library.clone(), self.resident.clone()));
+            Spilled(crate::codex::follow::Reading::bare(
+                super::super::spill::Spill::new(root, self.resident.as_str()),
+                library,
+            ))
         }
 
         /// As `read` of a whole reading, of one kept on disk (`keeping`)
         /// rather than held in memory, as `produce` places it.
-        pub fn read_kept(&self, keeping: Spilled, settled: Option<Timestamp>, seam: CodexSeam) -> Result<(usize, usize), String> {
+        pub fn read_kept(
+            &self,
+            keeping: Spilled,
+            settled: Option<Timestamp>,
+            seam: CodexSeam,
+        ) -> Result<(usize, usize), String> {
             let (spill, taken) = keeping.0.finish();
             if !spill.begun() {
                 return Err("the reading was not kept".into());
             }
             let since = Timestamp::MIN;
             let settled = settled.unwrap_or(since);
-            let host_told: Vec<serde_json::Value> = taken.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told: Vec<serde_json::Value> =
+                taken.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let name = assets::checkpoint(&self.resident);
             let failed = |error: fastctx_content::Error| error.to_string();
             assets::begin_phases();
             let began = std::time::Instant::now();
-            let told = |event: &SessionEvent| told_again(event) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-            let finals = finals(None, Kept::Codex { spill, taken }.into(), "codex", &told, crate::talk::Recorded::Held(Vec::new()), false).map_err(|failure| failure.message)?;
-            assets::PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(("final events", began.elapsed().as_secs_f64()));
-            let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() }).map_err(|error| error.to_string())?;
+            let told = |event: &SessionEvent| {
+                told_again(event) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value))
+            };
+            let finals = finals(
+                None,
+                Kept::Codex { spill, taken }.into(),
+                "codex",
+                &told,
+                crate::talk::Recorded::Held(Vec::new()),
+                false,
+            )
+            .map_err(|failure| failure.message)?;
+            assets::PHASES
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(("final events", began.elapsed().as_secs_f64()));
+            let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() })
+                .map_err(|error| error.to_string())?;
             self.library.keep_checkpoint(&name, state).map_err(failed)?;
-            let stood = Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
-            let Placement { wrote, floor, held, told, .. } =
-                place_kept(&self.library, self.signer.clone(), &self.resident, &self.placed, &stood, finals, true, true, since, settled).map_err(|failure| failure.message)?;
+            let stood =
+                Stood { name: name.clone(), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
+            let Placement { wrote, floor, held, told, .. } = place_kept(
+                &self.library,
+                self.signer.clone(),
+                &self.resident,
+                &self.placed,
+                &stood,
+                finals,
+                true,
+                true,
+                since,
+                settled,
+            )
+            .map_err(|failure| failure.message)?;
             let next = Following {
                 form: FORM,
                 version: "bench".into(),
@@ -2661,7 +3295,15 @@ pub mod bench {
             let mut items = Vec::new();
             let mut after = None;
             loop {
-                let page = self.library.page(&self.placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM, after.clone(), fastctx_content::v2::PAGE).map_err(|error| error.to_string())?;
+                let page = self
+                    .library
+                    .page(
+                        &self.placed.scope,
+                        <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM,
+                        after.clone(),
+                        fastctx_content::v2::PAGE,
+                    )
+                    .map_err(|error| error.to_string())?;
                 let Some(last) = page.last() else { break };
                 after = Some((last.order.clone(), last.item.clone()));
                 let full = page.len() == fastctx_content::v2::PAGE;
@@ -2675,8 +3317,13 @@ pub mod bench {
 
         /// The checkpoint as it stands, as JSON.
         pub fn checkpoint(&self) -> Result<serde_json::Value, String> {
-            let kept = self.library.checkpoint(&assets::checkpoint(&self.resident)).map_err(|error| error.to_string())?;
-            let mut state = kept.map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes)).transpose().map_err(|error| error.to_string())?.unwrap_or_default();
+            let kept =
+                self.library.checkpoint(&assets::checkpoint(&self.resident)).map_err(|error| error.to_string())?;
+            let mut state = kept
+                .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes))
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
             // When it was checked is the moment it ran, not what it read.
             if let Some(state) = state.as_object_mut() {
                 state.remove("verified");
@@ -2751,7 +3398,9 @@ mod tests {
         for n in 0..(8 + choices.pick(24) as i64) {
             let uuid = format!("s{session}-r{n}");
             let row = match choices.pick(10) {
-                0 | 1 => json!({"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": time(n), "message": {"role": "user", "content": format!("words {session}-{n}")}}),
+                0 | 1 => {
+                    json!({"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": time(n), "message": {"role": "user", "content": format!("words {session}-{n}")}})
+                }
                 2 => json!({"type": "assistant", "uuid": uuid, "parentUuid": parent, "timestamp": time(n),
                             "message": {"id": format!("m{session}-{n}"), "role": "assistant", "model": "m", "content": [{"type": "text", "text": format!("answer {n}")}]}}),
                 3 | 4 => {
@@ -2824,7 +3473,8 @@ mod tests {
     /// The World's record of the sessions' turns: each started and ended,
     /// words heard in some, some as a session's record has them.
     fn recorded(choices: &mut Choices, sessions: usize) -> Vec<SessionEvent> {
-        let end: fastctx_types::session::TurnEnd = serde_json::from_value(json!({"how": "completed", "reason": null, "duration_ms": null})).unwrap();
+        let end: fastctx_types::session::TurnEnd =
+            serde_json::from_value(json!({"how": "completed", "reason": null, "duration_ms": null})).unwrap();
         let mut recorded = Vec::new();
         for session in 0..sessions as i64 {
             for k in 0..choices.pick(4) as i64 {
@@ -2833,10 +3483,23 @@ mod tests {
                 recorded.push(SessionEvent { at: at(start), happened: Happened::TurnStarted { turn: turn.clone() } });
                 if choices.pick(2) == 0 {
                     let text = format!("words {session}-{}", choices.pick(30));
-                    recorded.push(SessionEvent { at: at(start), happened: Happened::Heard { delivery: None, turn: Some(turn.clone()), from: None, text, message: None, notice: None } });
+                    recorded.push(SessionEvent {
+                        at: at(start),
+                        happened: Happened::Heard {
+                            delivery: None,
+                            turn: Some(turn.clone()),
+                            from: None,
+                            text,
+                            message: None,
+                            notice: None,
+                        },
+                    });
                 }
                 if choices.pick(4) != 0 {
-                    recorded.push(SessionEvent { at: at(start + 50), happened: Happened::TurnEnded { turn, end: end.clone() } });
+                    recorded.push(SessionEvent {
+                        at: at(start + 50),
+                        happened: Happened::TurnEnded { turn, end: end.clone() },
+                    });
                 }
             }
         }
@@ -2847,7 +3510,10 @@ mod tests {
     /// sessions with all held in memory (no images, no context to restore,
     /// no receipts), whether a record stopped short, and the sets of what
     /// such records' events are known by.
-    fn held(sessions: &[(String, Timestamp, std::path::PathBuf)], recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool, Vec<HashSet<String>>) {
+    fn held(
+        sessions: &[(String, Timestamp, std::path::PathBuf)],
+        recorded: &[SessionEvent],
+    ) -> (Vec<SessionEvent>, bool, Vec<HashSet<String>>) {
         let (mut events, mut earlier, mut refused, mut frozen) = (Vec::new(), HashSet::new(), false, Vec::new());
         for (id, began, path) in sessions {
             let read = transcript::read_continuing(path, &[], &earlier).unwrap();
@@ -2911,7 +3577,9 @@ mod tests {
             coverage[1] += usize::from(count > 1);
             coverage[2] += usize::from(!grown.is_empty());
             coverage[3] += usize::from(history.iter().any(|event| matches!(&event.happened, Happened::Finished { item, .. } if matches!(item.what, fastctx_types::session::What::Compaction))));
-            let span = |refused: bool, frozen: &[HashSet<String>]| -> Vec<HashSet<String>> { if refused { frozen.to_vec() } else { Vec::new() } };
+            let span = |refused: bool, frozen: &[HashSet<String>]| -> Vec<HashSet<String>> {
+                if refused { frozen.to_vec() } else { Vec::new() }
+            };
             let (held_library, held_placed) = library(&dir.join("held"));
             let (kept_library, kept_placed) = library(&dir.join("kept"));
             // What the timeline had: a history of the first session alone.
@@ -2921,17 +3589,21 @@ mod tests {
             }
             let held_sets = span(refused, &frozen);
             let held_span = if refused { Span::Added(&held_sets) } else { Span::Whole };
-            let wrote = assets::write(&held_library, signer.clone(), &resident, &held_placed, &history, held_span, &none, None).unwrap();
+            let wrote =
+                assets::write(&held_library, signer.clone(), &resident, &held_placed, &history, held_span, &none, None)
+                    .unwrap();
 
             let spill_root = dir.join("spill");
-            let mut reading = kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
+            let mut reading =
+                kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
             let mut kept_refused = false;
             for (index, (id, began, path)) in sessions.iter().enumerate() {
                 if grown.contains(&index) {
                     // An attempt at a shorter record first, let go when it
                     // is read again after it grew.
                     let full = fastctx_platform::disk::read(path).unwrap();
-                    let cut = full.iter().take(full.len() / 2).rposition(|byte| *byte == b'\n').map_or(0, |end| end + 1);
+                    let cut =
+                        full.iter().take(full.len() / 2).rposition(|byte| *byte == b'\n').map_or(0, |end| end + 1);
                     fastctx_platform::disk::write(path, &full[..cut]).unwrap();
                     reading.read(path, &[], &mut |_| {}).unwrap();
                     fastctx_platform::disk::write(path, &full).unwrap();
@@ -2941,7 +3613,15 @@ mod tests {
                 reading.accept(id, *began, &read).unwrap();
             }
             assert_eq!(kept_refused, refused);
-            let placed = reading.place(crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &recorded }, &mut |_| Ok(()), &NoReceipts, None, &|_| false).unwrap();
+            let placed = reading
+                .place(
+                    crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &recorded },
+                    &mut |_| Ok(()),
+                    &NoReceipts,
+                    None,
+                    &|_| false,
+                )
+                .unwrap();
             let kept::Placed { spill, keys, names, .. } = placed;
             // What the spill kept is looked into with the timeline's test
             // support on (`--features timeline-test-support`).
@@ -2951,9 +3631,27 @@ mod tests {
                 assert_eq!(spill.known_sets(frozen.len()).unwrap(), frozen, "round {round}");
                 spill
             };
-            let mut finals = finals(None, Hosted { spill, keys, names, early: None }, "claude", &|_| false, crate::talk::Recorded::Held(recorded.clone()), refused).unwrap();
+            let mut finals = finals(
+                None,
+                Hosted { spill, keys, names, early: None },
+                "claude",
+                &|_| false,
+                crate::talk::Recorded::Held(recorded.clone()),
+                refused,
+            )
+            .unwrap();
             let reach = if refused { Reach::Added } else { Reach::Whole };
-            let kept = assets::write_kept(&kept_library, signer.clone(), &resident, &kept_placed, &mut finals.spill, None, reach, &mut |_, _, _| Ok(false)).unwrap();
+            let kept = assets::write_kept(
+                &kept_library,
+                signer.clone(),
+                &resident,
+                &kept_placed,
+                &mut finals.spill,
+                None,
+                reach,
+                &mut |_, _, _| Ok(false),
+            )
+            .unwrap();
             let floor = wrote.items.iter().map(|(_, _, key)| *key).max().unwrap_or(0);
             assert_eq!((kept.written, kept.gone, kept.floor), (wrote.written, wrote.gone, floor), "round {round}");
             assert_eq!(all(&kept_library), all(&held_library), "round {round}");
@@ -3053,11 +3751,22 @@ mod tests {
                 kept.push(*at, *key).unwrap();
             }
             assert_eq!(kept.finish().unwrap(), generation);
-            let stood = Stood { name: name.to_string(), held: Some(generation), told: Vec::new(), floor, holding: None, generation: generation + 1 };
+            let stood = Stood {
+                name: name.to_string(),
+                held: Some(generation),
+                told: Vec::new(),
+                floor,
+                holding: None,
+                generation: generation + 1,
+            };
             for second in -1..32 {
                 for nanos in 0..4 {
                     let since = at(second) + jiff::SignedDuration::from_nanos(nanos);
-                    let whole = items.iter().filter(|(at, _, told)| *at < since && !told).map(|(_, key, _)| *key).fold(floor, u64::max);
+                    let whole = items
+                        .iter()
+                        .filter(|(at, _, told)| *at < since && !told)
+                        .map(|(_, key, _)| *key)
+                        .fold(floor, u64::max);
                     assert_eq!(floor_from(&library, &stood, since).unwrap(), whole, "round {round}, since {since}");
                 }
             }
@@ -3114,7 +3823,8 @@ mod tests {
             }
             let recorded = recorded(&mut choices, count);
             let turns = history::turns(&recorded);
-            let accept = |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
+            let accept =
+                |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
             let (last, earlier) = sessions.split_last().unwrap();
             let several = !earlier.is_empty();
             let shown = |id: &str, began: Timestamp, read: &transcript::Transcript, events: Vec<SessionEvent>| {
@@ -3143,7 +3853,8 @@ mod tests {
             }
             // Kept: the same sessions read into the store and accepted.
             let spill_root = dir.join("spill");
-            let mut reading = kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
+            let mut reading =
+                kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
             for ((id, began, path), stopped) in earlier.iter().zip(&stopped) {
                 let read = reading.read(path, &[], &mut |_| {}).unwrap();
                 assert_eq!(read.refused.is_some(), *stopped, "round {round}");
@@ -3162,7 +3873,20 @@ mod tests {
             let (id, began, path) = last;
             let held_tail = follow::tail(path, &seam, &copied, &accept, false, &|_| false).unwrap().unwrap();
             let asked = vec![format!("s{}-r3", count - 1), "none".to_string()];
-            let kept_tail = reading.tail(path, &kept_seam, &accept, false, &|_| Ok(Default::default()), &asked, &history::PrefixIds::digest, &mut |_| {}, &mut |_| Ok(())).unwrap().unwrap();
+            let kept_tail = reading
+                .tail(
+                    path,
+                    &kept_seam,
+                    &accept,
+                    false,
+                    &|_| Ok(Default::default()),
+                    &asked,
+                    &history::PrefixIds::digest,
+                    &mut |_| {},
+                    &mut |_| Ok(()),
+                )
+                .unwrap()
+                .unwrap();
             assert_eq!(kept_tail.transcript.refused.is_some(), held_tail.transcript.refused.is_some(), "round {round}");
             if held_tail.transcript.refused.is_some() {
                 continue;
@@ -3179,14 +3903,19 @@ mod tests {
                 })
             };
             assert_eq!(sets(&kept_tail.seam), sets(&held_tail.seam), "round {round}");
-            assert_eq!((kept_tail.since, kept_tail.seam_at, kept_tail.end), (held_tail.since, held_tail.seam_at, held_tail.end), "round {round}");
+            assert_eq!(
+                (kept_tail.since, kept_tail.seam_at, kept_tail.end),
+                (held_tail.since, held_tail.seam_at, held_tail.end),
+                "round {round}"
+            );
             assert_eq!(
                 asked.iter().map(|uuid| kept_tail.transcript.uuids.contains(uuid)).collect::<Vec<_>>(),
                 asked.iter().map(|uuid| held_tail.transcript.uuids.contains(uuid)).collect::<Vec<_>>(),
                 "round {round}"
             );
             // The record ids before the seam, as the checkpoint keeps them.
-            let mut held_ids: Vec<u64> = held_tail.prefix_ids.iter().map(|uuid| history::PrefixIds::digest(uuid)).collect();
+            let mut held_ids: Vec<u64> =
+                held_tail.prefix_ids.iter().map(|uuid| history::PrefixIds::digest(uuid)).collect();
             if several {
                 held_ids.extend(copied.iter().map(|uuid| history::PrefixIds::digest(uuid)));
                 reading.keep_earlier_moved(&history::PrefixIds::digest).unwrap();
@@ -3201,7 +3930,9 @@ mod tests {
             let title = held_tail.transcript.title.clone();
             let is_told = |event: &SessionEvent| match &event.happened {
                 Happened::Titled { title: told } => event.at == *began && title.as_deref() == Some(told.as_str()),
-                Happened::Health { health, .. } => event.at == *began && problem.as_deref() == Some(health.text.as_str()),
+                Happened::Health { health, .. } => {
+                    event.at == *began && problem.as_deref() == Some(health.text.as_str())
+                }
                 _ => false,
             };
             let placed = history::place(held_events, &recorded);
@@ -3217,17 +3948,64 @@ mod tests {
             for (library, placed) in [(&held_library, &held_placed), (&kept_library, &kept_placed)] {
                 assets::write(library, signer.clone(), &resident, placed, &first, Span::Whole, &none, None).unwrap();
             }
-            let stood = Stood { name: assets::checkpoint(&resident), held: None, told: Vec::new(), floor: 0, holding: None, generation: 1 };
-            let reading_held = Reading { history, host_told: host_told.clone(), whole: true, since: Timestamp::MIN, settled, codex: false };
-            let held_placement = place(&held_library, signer.clone(), &resident, &held_placed, &stood, reading_held).unwrap();
+            let stood = Stood {
+                name: assets::checkpoint(&resident),
+                held: None,
+                told: Vec::new(),
+                floor: 0,
+                holding: None,
+                generation: 1,
+            };
+            let reading_held = Reading {
+                history,
+                host_told: host_told.clone(),
+                whole: true,
+                since: Timestamp::MIN,
+                settled,
+                codex: false,
+            };
+            let held_placement =
+                place(&held_library, signer.clone(), &resident, &held_placed, &stood, reading_held).unwrap();
 
             // The window kept: accepted, placed in the store, written.
             reading.accept(id, *began, &kept_tail.transcript).unwrap();
-            let kept_placed_history = reading.place(crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &recorded }, &mut |_| Ok(()), &NoReceipts, None, &is_told).unwrap();
-            assert_eq!(serde_json::to_value(&kept_placed_history.told).unwrap(), serde_json::to_value(&held_told).unwrap(), "round {round}");
+            let kept_placed_history = reading
+                .place(
+                    crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &recorded },
+                    &mut |_| Ok(()),
+                    &NoReceipts,
+                    None,
+                    &is_told,
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&kept_placed_history.told).unwrap(),
+                serde_json::to_value(&held_told).unwrap(),
+                "round {round}"
+            );
             let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-            let finals = finals(None, Kept::Claude { placed: kept_placed_history, early: None }.into(), "claude", &told, crate::talk::Recorded::Held(recorded.clone()), false).unwrap();
-            let kept_placement = place_kept(&kept_library, signer.clone(), &resident, &kept_placed, &stood, finals, true, false, Timestamp::MIN, settled).unwrap();
+            let finals = finals(
+                None,
+                Kept::Claude { placed: kept_placed_history, early: None }.into(),
+                "claude",
+                &told,
+                crate::talk::Recorded::Held(recorded.clone()),
+                false,
+            )
+            .unwrap();
+            let kept_placement = place_kept(
+                &kept_library,
+                signer.clone(),
+                &resident,
+                &kept_placed,
+                &stood,
+                finals,
+                true,
+                false,
+                Timestamp::MIN,
+                settled,
+            )
+            .unwrap();
 
             // What each kept of the items it holds in its window.
             let open = [
@@ -3261,9 +4039,24 @@ mod tests {
             let prefix = history::PrefixIds(held_ids.clone());
             let seen = |uuid: &str| prefix.holds(uuid);
             let held_on = follow::tail(path, &seam, &HashSet::new(), &accept, false, &seen).unwrap();
-            let mut reading = kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
-            let seen_kept = |uuids: &[String]| -> std::io::Result<HashSet<String>> { Ok(uuids.iter().filter(|uuid| prefix.holds(uuid)).cloned().collect()) };
-            let kept_on = reading.tail(path, &seam, &accept, false, &seen_kept, &asked, &history::PrefixIds::digest, &mut |_| {}, &mut |_| Ok(())).unwrap();
+            let mut reading =
+                kept::Reading::new(super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0")).unwrap();
+            let seen_kept = |uuids: &[String]| -> std::io::Result<HashSet<String>> {
+                Ok(uuids.iter().filter(|uuid| prefix.holds(uuid)).cloned().collect())
+            };
+            let kept_on = reading
+                .tail(
+                    path,
+                    &seam,
+                    &accept,
+                    false,
+                    &seen_kept,
+                    &asked,
+                    &history::PrefixIds::digest,
+                    &mut |_| {},
+                    &mut |_| Ok(()),
+                )
+                .unwrap();
             let (held_on, kept_on) = match (held_on, kept_on) {
                 (Ok(held_on), Ok(kept_on)) => (held_on, kept_on),
                 (held_on, kept_on) => {
@@ -3277,8 +4070,13 @@ mod tests {
             }
             coverage[4] += 1;
             assert_eq!(sets(&kept_on.seam), sets(&held_on.seam), "round {round}, read on");
-            assert_eq!((kept_on.since, kept_on.seam_at, kept_on.end), (held_on.since, held_on.seam_at, held_on.end), "round {round}, read on");
-            let mut moved_on: Vec<u64> = held_on.prefix_ids.iter().map(|uuid| history::PrefixIds::digest(uuid)).collect();
+            assert_eq!(
+                (kept_on.since, kept_on.seam_at, kept_on.end),
+                (held_on.since, held_on.seam_at, held_on.end),
+                "round {round}, read on"
+            );
+            let mut moved_on: Vec<u64> =
+                held_on.prefix_ids.iter().map(|uuid| history::PrefixIds::digest(uuid)).collect();
             moved_on.sort_unstable();
             moved_on.dedup();
             assert_eq!(reading.moved().unwrap(), moved_on, "round {round}, read on");
@@ -3289,7 +4087,9 @@ mod tests {
             let title = held_on.transcript.title.clone();
             let is_told = |event: &SessionEvent| match &event.happened {
                 Happened::Titled { title: told } => event.at == *began && title.as_deref() == Some(told.as_str()),
-                Happened::Health { health, .. } => event.at == *began && problem.as_deref() == Some(health.text.as_str()),
+                Happened::Health { health, .. } => {
+                    event.at == *began && problem.as_deref() == Some(health.text.as_str())
+                }
                 _ => false,
             };
             let placed = history::place(shown_on, &recorded);
@@ -3304,15 +4104,49 @@ mod tests {
                 holding: Some(placement.wrote.holding),
                 generation: placement.held + 1,
             };
-            let reading_on = Reading { history, host_told: host_told.clone(), whole: false, since, settled, codex: false };
-            let held_window = place(&held_library, signer.clone(), &resident, &held_placed, &stood_of(&held_placement), reading_on).unwrap();
+            let reading_on =
+                Reading { history, host_told: host_told.clone(), whole: false, since, settled, codex: false };
+            let held_window =
+                place(&held_library, signer.clone(), &resident, &held_placed, &stood_of(&held_placement), reading_on)
+                    .unwrap();
             reading.accept(id, *began, &kept_on.transcript).unwrap();
-            let kept_history = reading.place(crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &merged }, &mut |_| Ok(()), &NoReceipts, None, &is_told).unwrap();
-            assert_eq!(serde_json::to_value(&kept_history.told).unwrap(), serde_json::to_value(&held_told).unwrap(), "round {round}, read on");
+            let kept_history = reading
+                .place(
+                    crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &merged },
+                    &mut |_| Ok(()),
+                    &NoReceipts,
+                    None,
+                    &is_told,
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&kept_history.told).unwrap(),
+                serde_json::to_value(&held_told).unwrap(),
+                "round {round}, read on"
+            );
             let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-            let finals = super::finals(None, Kept::Claude { placed: kept_history, early: None }.into(), "claude", &told, crate::talk::Recorded::Held(merged.clone()), false).unwrap();
-            let kept_window =
-                place_kept(&kept_library, signer.clone(), &resident, &kept_placed, &stood_of(&kept_placement), finals, false, false, since, settled).unwrap();
+            let finals = super::finals(
+                None,
+                Kept::Claude { placed: kept_history, early: None }.into(),
+                "claude",
+                &told,
+                crate::talk::Recorded::Held(merged.clone()),
+                false,
+            )
+            .unwrap();
+            let kept_window = place_kept(
+                &kept_library,
+                signer.clone(),
+                &resident,
+                &kept_placed,
+                &stood_of(&kept_placement),
+                finals,
+                false,
+                false,
+                since,
+                settled,
+            )
+            .unwrap();
             let name = assets::checkpoint(&resident);
             let mut told_ids = [held_window.told.clone(), kept_window.told.clone()];
             told_ids.iter_mut().for_each(|told| told.sort());
@@ -3321,7 +4155,11 @@ mod tests {
                 (held_window.wrote.written, held_window.wrote.gone, held_window.floor),
                 "round {round}, read on"
             );
-            assert_eq!(kept_library.held_items(&name, kept_window.held).unwrap(), held_library.held_items(&name, held_window.held).unwrap(), "round {round}, read on");
+            assert_eq!(
+                kept_library.held_items(&name, kept_window.held).unwrap(),
+                held_library.held_items(&name, held_window.held).unwrap(),
+                "round {round}, read on"
+            );
             assert_eq!(told_ids[1], told_ids[0], "round {round}, read on");
             assert_eq!(all(&kept_library), all(&held_library), "round {round}, read on");
             let _ = super::super::spill::clear(&spill_root);

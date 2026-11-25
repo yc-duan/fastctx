@@ -143,7 +143,8 @@ pub(crate) async fn open(
             && (whole || !immutable)
         {
             let local = copy.path().to_string_lossy().into_owned();
-            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some((copy, whole))).await;
+            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some((copy, whole)))
+                .await;
         }
         let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;

@@ -109,8 +109,16 @@ pub async fn fork(
     let _permit = crate::purges::permit(node, &born_as)?;
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
-    let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false, Default::default()).await?;
+    let (words, heard) = crate::colleagues::instructions(
+        node,
+        &id,
+        town.as_ref(),
+        &Origin::User,
+        &source.acting,
+        false,
+        Default::default(),
+    )
+    .await?;
     let directory = node.world.conversation(&id);
     crate::focus::open(node, &directory, &source.acting, &source.focus).await?;
     super::fork_ready::begin(node, &id)?;

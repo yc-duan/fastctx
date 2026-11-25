@@ -475,7 +475,9 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
             if let Some(why) = choice.problem() {
                 return Err(Failure::not_run(why));
             }
-            node.residents.set_idle_compaction(&node.world, id, choice).map_err(|error| Failure::new(error.to_string()))?;
+            node.residents
+                .set_idle_compaction(&node.world, id, choice)
+                .map_err(|error| Failure::new(error.to_string()))?;
             step(&mut result, "records", Outcome::Done, "Idle compaction choice saved.".into());
         }
         Management::Mcp { off } => {

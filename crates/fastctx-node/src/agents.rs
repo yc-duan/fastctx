@@ -157,8 +157,11 @@ pub async fn query(
     };
     let reading = crate::elsewhere::Reading::of(machine.as_ref(), at_once);
     let (heard, asking) = crate::elsewhere::ask(node, crate::elsewhere::Kind::Agents, reachable, reading).await;
-    machines.extend(crate::elsewhere::listed(heard, asking, |answers| answers.agents(), |machine, observation| {
-        MachineAgents::Asking { observation, machine }
-    }));
+    machines.extend(crate::elsewhere::listed(
+        heard,
+        asking,
+        |answers| answers.agents(),
+        |machine, observation| MachineAgents::Asking { observation, machine },
+    ));
     Ok(WorldAgents { machine: here, machines })
 }

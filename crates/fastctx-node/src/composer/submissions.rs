@@ -352,13 +352,17 @@ pub(super) fn restore_stop(node: &Arc<Node>, id: &ResidentId, state: &Stored) {
     let stop = match &state.stopped {
         Some(StopMark::Turn(turn)) => Some(Stop::Turn(turn.clone())),
         Some(StopMark::Coming) => Some(Stop::Coming(std::time::Instant::now())),
-        None => node.residents.now(id).and_then(|now| now.turn).filter(|turn| {
-            matches!(
-                crate::turn_evidence::stopping::source(node, id, turn),
-                Ok(Some(fastctx_types::turn_evidence::StopSource::User))
-            )
-        })
-        .map(Stop::Turn),
+        None => node
+            .residents
+            .now(id)
+            .and_then(|now| now.turn)
+            .filter(|turn| {
+                matches!(
+                    crate::turn_evidence::stopping::source(node, id, turn),
+                    Ok(Some(fastctx_types::turn_evidence::StopSource::User))
+                )
+            })
+            .map(Stop::Turn),
     };
     let Some(stop) = stop else { return };
     let since = match stop {
@@ -529,9 +533,7 @@ async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         // Words sent from the input after a stop come after the commands
         // that waited before them: those are done first (the control
         // queue's), as a turn's end does them.
-        if lined.straight
-            && state.queue.iter().take_while(|entry| entry.id != lined.entry).any(|entry| entry.command)
-        {
+        if lined.straight && state.queue.iter().take_while(|entry| entry.id != lined.entry).any(|entry| entry.command) {
             crate::control_queue::poke(node, id);
             return Ok(());
         }

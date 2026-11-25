@@ -72,7 +72,9 @@ pub(super) fn took(assets: &Assets, hub: &HubId, counted: Option<&Counted<'_>>, 
     if assets.forgotten.load(std::sync::atomic::Ordering::SeqCst) != counted.era {
         return;
     }
-    let entry = taken.entry((hub.as_str().to_string(), counted.owner.to_string())).or_insert_with(|| (counted.generation.to_string(), 0));
+    let entry = taken
+        .entry((hub.as_str().to_string(), counted.owner.to_string()))
+        .or_insert_with(|| (counted.generation.to_string(), 0));
     if entry.0 != counted.generation {
         *entry = (counted.generation.to_string(), 0);
     }
@@ -105,7 +107,12 @@ async fn facts(assets: &Assets, hub: &HubId, link: &Link) -> Result<SyncReport, 
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
     let stays = kept_here(link);
     let (feeds, unpulled, lacking, unsent) = blocking(library, move |library| {
-        Ok((library.feeds_of(&theirs)?, library.unpulled_of(&theirs)?, library.lacking_of(&theirs)?, library.unsent_of(&theirs, &device, stays)?))
+        Ok((
+            library.feeds_of(&theirs)?,
+            library.unpulled_of(&theirs)?,
+            library.lacking_of(&theirs)?,
+            library.unsent_of(&theirs, &device, stays)?,
+        ))
     })
     .await?;
     let taken = assets.taken.lock().expect("taken").clone();
@@ -153,9 +160,7 @@ pub(super) async fn report(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Re
     let due = match assets.reported.lock().expect("reported").get(hub) {
         None => true,
         Some((last, at)) => {
-            at.elapsed() >= EVERY
-                || settled(last) != settled(&report)
-                || (*last != report && at.elapsed() >= SPACING)
+            at.elapsed() >= EVERY || settled(last) != settled(&report) || (*last != report && at.elapsed() >= SPACING)
         }
     };
     if !due {
@@ -182,16 +187,18 @@ pub(crate) async fn status(
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
     // Not counted, it is said so: never as nothing to send (KK06).
     let stays = kept_here(link);
-    let (unsent, unread) = match blocking(&assets.library, move |library| library.unsent_of(&theirs, &device, stays)).await {
-        Ok(unsent) => (unsent, None),
-        Err(why) => ((0, 0), Some(why)),
-    };
+    let (unsent, unread) =
+        match blocking(&assets.library, move |library| library.unsent_of(&theirs, &device, stays)).await {
+            Ok(unsent) => (unsent, None),
+            Err(why) => ((0, 0), Some(why)),
+        };
     let (cut_off, why) = match link.status() {
         fastctx_net::link::Status::Online { .. } => (None, None),
         fastctx_net::link::Status::Connecting { since, last_error } => (Some(since.as_millisecond()), last_error),
         fastctx_net::link::Status::Stopped { reason } => (Some(jiff::Timestamp::now().as_millisecond()), Some(reason)),
     };
-    let local = LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off, why, unread };
+    let local =
+        LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off, why, unread };
     if cut_off.is_some() {
         return (local, None, Some("the hub is not reached".into()));
     }

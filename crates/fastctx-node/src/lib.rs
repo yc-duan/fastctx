@@ -15,7 +15,6 @@ pub mod activity;
 mod activity_book;
 mod admission;
 mod admitted;
-mod conversation_retention;
 mod adoption;
 mod afoot;
 mod again;
@@ -42,6 +41,7 @@ mod colleagues;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
+mod conversation_retention;
 pub use composer::compaction::compact_document as compact_composer_document;
 mod consent;
 pub mod context;
@@ -87,6 +87,7 @@ mod history;
 mod homes;
 mod hub_arrival;
 mod hub_moving;
+mod idle_compaction;
 mod inbox;
 mod incarnations;
 mod initializing;
@@ -107,7 +108,6 @@ mod learned;
 mod leases;
 mod ledger;
 mod letters;
-mod idle_compaction;
 mod lifecycle;
 mod lifetime;
 mod limits;
@@ -826,7 +826,9 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
-            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf())) {
+            let assets = match world::key(&world)
+                .and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf()))
+            {
                 Ok(assets) => Some(assets),
                 Err(error) => {
                     log.line(format_args!("the asset library is unavailable: {error}"));
@@ -1094,7 +1096,7 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             idle_compaction::start(&node);
-        conversation_retention::expiry::start(&node);
+            conversation_retention::expiry::start(&node);
             recovery::start(&node, jobs_reconciled);
             goals::start(&node);
             sentinels::start(&node);
@@ -1120,6 +1122,15 @@ pub async fn run_prepared(
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
+        }
+    });
+    // The job runners sleep until the earliest job falls due by the clock
+    // they slept by: a machine that wakes from sleep, or whose ways changed
+    // as it does, has them look again at once (codex-8cc17361).
+    let mut ways = node.ways.subscribe();
+    fastctx_platform::task::spawn(async move {
+        while ways.changed().await.is_ok() {
+            fastctx_jobs::stir_all();
         }
     });
     let jobs_node = node.clone();

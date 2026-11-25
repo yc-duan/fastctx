@@ -1,15 +1,13 @@
 //! Timeline calls use the same routes and admission as watching a conversation.
 
 use super::reads::{self, Anchor, Change};
-use fastctx_client::timeline_copy::{decode, decode_place, encode_place, event, hex};
 use crate::Node;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use fastctx_client::timeline_copy::{decode, decode_place, encode_place, event, hex};
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::timeline_pages::{
-    OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineFrom, TimelineTold,
-};
+use fastctx_types::timeline_pages::{OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineFrom, TimelineTold};
 use std::{sync::Arc, time::Duration};
 
 /// Admission is repeated when the directory changes and before handing over
@@ -229,8 +227,9 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
     // its history is not read whole a second time beside it.
     if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. })
         && (std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_some()
-            || (!fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, request.resident()))?
-                && !super::tail::producing(request.resident())))
+            || (!fastctx_platform::roles::in_place("choosing a timeline", || {
+                reads::from_assets(node, request.resident())
+            })? && !super::tail::producing(request.resident())))
     {
         super::wanted_content(node, request.resident());
     }

@@ -34,7 +34,9 @@ fn identity(node: &Node, machine: &Written, resident: &ResidentId) -> Option<Las
         if !scope.key.starts_with("c/")
             || scope.hub.as_deref() != Some(hub.as_str())
             || !scope.allowed.as_ref().is_some_and(|allowed| {
-                allowed.lines().any(|name| classes.iter().any(|class| class.holders == Holders::Logged && class.prefix == name))
+                allowed
+                    .lines()
+                    .any(|name| classes.iter().any(|class| class.holders == Holders::Logged && class.prefix == name))
             })
             || !super::copy::lives_on(library, &scope, &target.name)
         {
@@ -67,21 +69,24 @@ pub(crate) async fn get(node: &Arc<Node>, machine: Written, resident: ResidentId
         let access = identity(&node, &machine, &resident)?;
         let page = Cache::under(&node.root).ok()?.last_page(&access).ok()??;
         (identity(&node, &machine, &resident).as_ref() == Some(&access)).then_some(page)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn capture(node: &Arc<Node>, machine: &Written, request: &TimelineAsk) -> Option<Reading> {
     use fastctx_types::timeline_pages::{PAGE_BYTES, PAGE_EVENTS};
-    if !matches!(request, TimelineAsk::Page {
-        from: TimelineFrom::Latest, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES, ..
-    }) {
+    if !matches!(
+        request,
+        TimelineAsk::Page { from: TimelineFrom::Latest, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES, .. }
+    ) {
         return None;
     }
     let (node, machine, resident) = (node.clone(), machine.clone(), request.resident().clone());
     fastctx_platform::task::blocking(move || {
         let generation = Cache::under(&node.root).ok()?.last_page_generation().ok()?;
         Some(Reading { identity: identity(&node, &machine, &resident)?, generation })
-    }).await
+    })
+    .await
 }
 
 pub(crate) fn keep(node: &Arc<Node>, machine: Written, reading: Reading, page: TimelineTold) {

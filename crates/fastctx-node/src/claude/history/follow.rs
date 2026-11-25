@@ -210,7 +210,8 @@ pub(crate) struct Accepting {
 impl Accepting {
     pub(crate) fn of(turns: &[(Timestamp, Option<Timestamp>)]) -> Self {
         let open = turns.iter().filter(|(_, end)| end.is_none()).map(|(start, _)| *start).min();
-        let mut ended: Vec<(Timestamp, Timestamp)> = turns.iter().filter_map(|(start, end)| end.filter(|end| end > start).map(|end| (*start, end))).collect();
+        let mut ended: Vec<(Timestamp, Timestamp)> =
+            turns.iter().filter_map(|(start, end)| end.filter(|end| end > start).map(|end| (*start, end))).collect();
         ended.sort_unstable();
         let mut spans: Vec<(Timestamp, Timestamp)> = Vec::with_capacity(ended.len());
         for (start, end) in ended {
@@ -265,13 +266,14 @@ pub(crate) async fn window(
     prefix: Arc<PrefixIds>,
     keep: Option<Keep>,
 ) -> Result<Option<Window>, String> {
-    let Standing { id, began, kept, ended, earlier, before: mut sessions, path } = match standing(node, resident).await? {
-        Ok(standing) => standing,
-        Err(why) => {
-            whole(why);
-            return Ok(None);
-        }
-    };
+    let Standing { id, began, kept, ended, earlier, before: mut sessions, path } =
+        match standing(node, resident).await? {
+            Ok(standing) => standing,
+            Err(why) => {
+                whole(why);
+                return Ok(None);
+            }
+        };
     let from = from.filter(|(_, _, stood)| *stood == earlier).map(|(session, seam, _)| (session, seam));
     let mut seam = from.filter(|(session, _)| *session == id).map(|(_, seam)| seam).unwrap_or_default();
     // Read from its start, the last session shows what it copied from the
@@ -283,7 +285,9 @@ pub(crate) async fn window(
         seam = Seam::default();
     }
     // The record ids before the seam, asked of where they are kept.
-    let seen_kept = keep.as_ref().and_then(|keep| keep.seen.clone().map(|(name, generation)| (keep.library.clone(), name, generation)));
+    let seen_kept = keep
+        .as_ref()
+        .and_then(|keep| keep.seen.clone().map(|(name, generation)| (keep.library.clone(), name, generation)));
     let (mut keep, mut early, mut reading) = (keep, None, None);
     let (mut before, mut copied) = (Vec::new(), HashSet::new());
     if seam.identity.is_none() {
@@ -330,7 +334,8 @@ pub(crate) async fn window(
         let read_kept = into.is_some();
         let read = match into {
             Some(held) => {
-                let (path, node, whose, asked, seen_kept) = (path.clone(), node.clone(), resident.clone(), asked.clone(), seen_kept.clone());
+                let (path, node, whose, asked, seen_kept) =
+                    (path.clone(), node.clone(), resident.clone(), asked.clone(), seen_kept.clone());
                 fastctx_platform::task::blocking(move || {
                     let accept = |at: Timestamp| turns.accepts(at);
                     let seen = |uuids: &[String]| -> std::io::Result<HashSet<String>> {
@@ -339,7 +344,12 @@ pub(crate) async fn window(
                         };
                         let digests: Vec<u64> = uuids.iter().map(|uuid| PrefixIds::digest(uuid)).collect();
                         let held = library.digests_among(name, *generation, &digests).map_err(std::io::Error::other)?;
-                        Ok(uuids.iter().zip(&digests).filter(|(_, digest)| held.contains(digest)).map(|(uuid, _)| uuid.clone()).collect())
+                        Ok(uuids
+                            .iter()
+                            .zip(&digests)
+                            .filter(|(_, digest)| held.contains(digest))
+                            .map(|(uuid, _)| uuid.clone())
+                            .collect())
                     };
                     // The record ids the seam moves past kept in the store
                     // by their digests, not held; what the rows before the
@@ -418,7 +428,8 @@ pub(crate) async fn window(
     // How long the rows a reading from the seam takes up are: what it parses
     // and places — not what the disk gave, which reading again, the seam's
     // checks and earlier sessions add to.
-    fastctx_platform::readings::counter("timeline.claude.from_the_seam_bytes").add(tail.end.saturating_sub(seam.offset));
+    fastctx_platform::readings::counter("timeline.claude.from_the_seam_bytes")
+        .add(tail.end.saturating_sub(seam.offset));
     // Stopped before a line larger than World reads (§28.49): not followed
     // past a seam, read whole as ever, where a reading short of the record
     // takes nothing away and is tried again (`hosted`).
@@ -449,7 +460,10 @@ pub(crate) async fn window(
         // merges a window held in memory.
         let (directory, session, world) = (node.world.conversation(resident), id.clone(), world.clone());
         let held = fastctx_platform::task::blocking(move || {
-            let mut reading = Arc::try_unwrap(held).map_err(|_| "the reading is held still".to_string())?.into_inner().expect("never poisoned");
+            let mut reading = Arc::try_unwrap(held)
+                .map_err(|_| "the reading is held still".to_string())?
+                .into_inner()
+                .expect("never poisoned");
             // As above (EE04), the earlier sessions' ids as they stood
             // before the last's join them, kept with those the seam moved
             // past (`Placed`'s store: `Spill::moved_bytes`).
@@ -464,16 +478,22 @@ pub(crate) async fn window(
             world.view((!whole).then_some(since))?;
             let (names, sent) = world.name()?;
             let failed = std::cell::RefCell::new(None);
-            let heard = |turn: &str, text: &str| world.heard_in(turn, text).unwrap_or_else(|error| {
-                failed.borrow_mut().get_or_insert(error);
-                false
-            });
+            let heard = |turn: &str, text: &str| {
+                world.heard_in(turn, text).unwrap_or_else(|error| {
+                    failed.borrow_mut().get_or_insert(error);
+                    false
+                })
+            };
             let placed = fastctx_platform::roles::in_place("placing Claude history", || {
-                let projection = crate::context::input::Projection::open(&directory).map_err(|error| error.to_string())?;
-                let mut restore = |event: &mut SessionEvent| projection.restore(event).map_err(|error| error.to_string());
+                let projection =
+                    crate::context::input::Projection::open(&directory).map_err(|error| error.to_string())?;
+                let mut restore =
+                    |event: &mut SessionEvent| projection.restore(event).map_err(|error| error.to_string());
                 let told = |event: &SessionEvent| told(event, began, title.as_deref(), problem.as_deref());
                 let world = kept::Placing::Kept { turns: world.turns(&heard), sent, names };
-                reading.place(world, &mut restore, &kept::Fresh(directory.clone()), early.as_ref(), &told).map(|placed| (placed, early))
+                reading
+                    .place(world, &mut restore, &kept::Fresh(directory.clone()), early.as_ref(), &told)
+                    .map(|placed| (placed, early))
             });
             match failed.into_inner() {
                 Some(error) => Err(error),
@@ -482,9 +502,31 @@ pub(crate) async fn window(
         })
         .await?;
         let told = held.0.told.clone();
-        return Ok(Some(Window { session: id, events: Vec::new(), told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: Some(held), read }));
+        return Ok(Some(Window {
+            session: id,
+            events: Vec::new(),
+            told,
+            whole,
+            since,
+            seam: next,
+            settled,
+            kept,
+            kept_here,
+            earlier,
+            prefix_ids,
+            held: Some(held),
+            read,
+        }));
     }
-    let (events, problem) = session_events(node, resident, &id, began, title.clone(), transcript.events, (&transcript.problems, transcript.problems_omitted));
+    let (events, problem) = session_events(
+        node,
+        resident,
+        &id,
+        began,
+        title.clone(),
+        transcript.events,
+        (&transcript.problems, transcript.problems_omitted),
+    );
     before.extend(events);
     // Held whole, as the history read is.
     let recorded = {
@@ -497,8 +539,23 @@ pub(crate) async fn window(
         .await?
     };
     let events = place(before, &recorded);
-    let told = events.iter().filter(|event| told(event, began, title.as_deref(), problem.as_deref())).cloned().collect();
-    Ok(Some(Window { session: id, events, told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: None, read: None }))
+    let told =
+        events.iter().filter(|event| told(event, began, title.as_deref(), problem.as_deref())).cloned().collect();
+    Ok(Some(Window {
+        session: id,
+        events,
+        told,
+        whole,
+        since,
+        seam: next,
+        settled,
+        kept,
+        kept_here,
+        earlier,
+        prefix_ids,
+        held: None,
+        read: None,
+    }))
 }
 
 /// The most of a record read on from a place inside a turn at one look:
@@ -565,15 +622,20 @@ pub(crate) fn read_on(
     // A record id of a row before the seam, or of one between the seam and
     // the place.
     let seen = |uuids: &[String]| -> std::io::Result<HashSet<String>> {
-        let mut before: HashSet<String> = uuids.iter().filter(|uuid| held.contains(&key(&format!("{}{uuid}", follow::KEY_ROW)))).cloned().collect();
+        let mut before: HashSet<String> =
+            uuids.iter().filter(|uuid| held.contains(&key(&format!("{}{uuid}", follow::KEY_ROW)))).cloned().collect();
         if let Some((library, name, generation)) = seen {
             let digests: Vec<u64> = uuids.iter().map(|uuid| PrefixIds::digest(uuid)).collect();
             let kept = library.digests_among(name, *generation, &digests).map_err(std::io::Error::other)?;
-            before.extend(uuids.iter().zip(&digests).filter(|(_, digest)| kept.contains(digest)).map(|(uuid, _)| uuid.clone()));
+            before.extend(
+                uuids.iter().zip(&digests).filter(|(_, digest)| kept.contains(digest)).map(|(uuid, _)| uuid.clone()),
+            );
         }
         Ok(before)
     };
-    let before = |keys: &[String]| -> std::io::Result<HashSet<String>> { Ok(keys.iter().filter(|left| held.contains(&key(left))).cloned().collect()) };
+    let before = |keys: &[String]| -> std::io::Result<HashSet<String>> {
+        Ok(keys.iter().filter(|left| held.contains(&key(left))).cloned().collect())
+    };
     let mut rows = follow::HeldRows::default();
     let (mut events, mut passed) = (Vec::new(), Vec::new());
     let tail = follow::tail_kept(
@@ -627,9 +689,12 @@ pub(crate) async fn onward(
     let asked: Vec<String> = kept.iter().cloned().collect();
     let mut unsteady = 0;
     let (tail, events, passed) = loop {
-        let (reading, from, node, whose, asked, held, seen) = (path.clone(), read.clone(), node.clone(), resident.clone(), asked.clone(), held.clone(), seen.clone());
+        let (reading, from, node, whose, asked, held, seen) =
+            (path.clone(), read.clone(), node.clone(), resident.clone(), asked.clone(), held.clone(), seen.clone());
         let read = fastctx_platform::task::blocking(move || {
-            read_on(&reading, &from, &held, seen.as_ref(), &asked, ended, &mut |event| crate::user_images::claude(&node, &whose, event))
+            read_on(&reading, &from, &held, seen.as_ref(), &asked, ended, &mut |event| {
+                crate::user_images::claude(&node, &whose, event)
+            })
         })
         .await;
         match read {
@@ -650,7 +715,16 @@ pub(crate) async fn onward(
         return Ok(Err("a line larger than World reads"));
     }
     let kept_here = kept.as_ref().is_some_and(|kept| tail.transcript.uuids.contains(kept));
-    Ok(Ok(Onward { events, next: tail.seam, passed, title: tail.transcript.title, kept, kept_here, path, end: tail.end }))
+    Ok(Ok(Onward {
+        events,
+        next: tail.seam,
+        passed,
+        title: tail.transcript.title,
+        kept,
+        kept_here,
+        path,
+        end: tail.end,
+    }))
 }
 
 /// Whether `event`, as placed, is one a session's reading tells again at
@@ -666,7 +740,11 @@ fn told(event: &SessionEvent, began: Timestamp, title: Option<&str>, problem: Op
 
 /// The reading kept in `keep`, begun, where there is one (taken from it):
 /// what puts its large events' objects as they are read in `early`.
-async fn begin(keep: &mut Option<Keep>, early: &mut Option<Early>, resident: &ResidentId) -> Result<Option<Shared>, String> {
+async fn begin(
+    keep: &mut Option<Keep>,
+    early: &mut Option<Early>,
+    resident: &ResidentId,
+) -> Result<Option<Shared>, String> {
     let Some(Keep { spill, library, .. }) = keep.take() else { return Ok(None) };
     let reading = fastctx_platform::task::blocking(move || kept::Reading::new(spill)).await?;
     *early = Early::new(library, resident);
@@ -676,15 +754,25 @@ async fn begin(keep: &mut Option<Keep>, early: &mut Option<Early>, resident: &Re
 /// `sessions` read whole into `reading` and accepted there, as `earlier`
 /// reads them (`read_whole_kept`): false where one could not be read whole,
 /// so that all is read as ever.
-async fn earlier_kept(node: &Arc<Node>, resident: &ResidentId, sessions: Vec<Session>, reading: &Shared) -> Result<bool, String> {
+async fn earlier_kept(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    sessions: Vec<Session>,
+    reading: &Shared,
+) -> Result<bool, String> {
     let root = exchange::sessions(node.world.path());
     for Session { id, began, process, kept } in sessions {
-        let Ok((read, whole)) = super::read_whole_kept(node, resident, &id, root.join(&id), kept, process, reading).await else { return Ok(false) };
+        let Ok((read, whole)) =
+            super::read_whole_kept(node, resident, &id, root.join(&id), kept, process, reading).await
+        else {
+            return Ok(false);
+        };
         if !whole {
             return Ok(false);
         }
         let holding = reading.clone();
-        fastctx_platform::task::blocking(move || holding.lock().expect("never poisoned").accept(&id, began, &read)).await?;
+        fastctx_platform::task::blocking(move || holding.lock().expect("never poisoned").accept(&id, began, &read))
+            .await?;
     }
     Ok(true)
 }

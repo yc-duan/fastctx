@@ -101,14 +101,7 @@ impl Timers for SentinelTimers {
     fn list<'a>(&'a self, owner: &'a str) -> FutureResult<'a, Vec<Timer>> {
         Box::pin(async move {
             let owner = Owner::Sentinel { id: owner.into() };
-            Ok(self
-                .store()?
-                .list(&owner)
-                .await
-                .map_err(|e| e.to_string())?
-                .iter()
-                .filter_map(sentinel_timer)
-                .collect())
+            Ok(self.store()?.list(&owner).await.map_err(|e| e.to_string())?.iter().filter_map(sentinel_timer).collect())
         })
     }
 }

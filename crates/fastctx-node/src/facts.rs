@@ -63,13 +63,7 @@ fn connection(link: &Link, machine: &MachineName) -> Option<(PublicKey, Way)> {
     Some((member.key, way))
 }
 
-fn remember(
-    node: &Node,
-    link: &Link,
-    machine: &MachineName,
-    before: Option<(PublicKey, Way)>,
-    facts: &MachineFacts,
-) {
+fn remember(node: &Node, link: &Link, machine: &MachineName, before: Option<(PublicKey, Way)>, facts: &MachineFacts) {
     let Some((key, way)) = before.filter(|before| connection(link, machine).as_ref() == Some(before)) else {
         return;
     };
@@ -97,7 +91,8 @@ pub(crate) async fn declared(
         let index = (link.membership().id.clone(), machine.clone());
         let current = node.facts.current.lock().expect("current machine declarations");
         if let Some(declaration) = current.get(&index)
-            && declaration.key == *key && declaration.way == *way
+            && declaration.key == *key
+            && declaration.way == *way
         {
             return Ok(Ok(RemoteReply::Facts(declaration.facts.clone())));
         }

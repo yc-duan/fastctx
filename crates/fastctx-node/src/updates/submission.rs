@@ -87,7 +87,8 @@ pub(crate) async fn local(node: &Arc<Node>, update: UpdateCall) -> Result<State,
         let Asked::Local { update } = &asked else { unreachable!() };
         allowed(update).map_err(Failure::new)?;
         Ok(("this-machine".to_string(), ()))
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn remote(
@@ -107,7 +108,8 @@ pub(crate) async fn remote(
         let effective = update.clone().unwrap_or(UpdateCall::Kernel { version: None });
         allowed(&effective).map_err(Failure::new)?;
         Ok(("this-machine".to_string(), ()))
-    }).await
+    })
+    .await
 }
 
 fn unit<T: Serialize>(kind: &str, value: &T) -> String {

@@ -81,8 +81,12 @@ pub async fn query(
         events.extend(ledger_events(node, since, town, &mut issues).await?);
     }
     let reachable = crate::around::reachable_each(node, acting, Purpose::Look);
-    let heard =
-        crate::around::ask_known(reachable, |_| RemoteCall::Since { since, town: town.clone() }, crate::around::WAITED_ON).await;
+    let heard = crate::around::ask_known(
+        reachable,
+        |_| RemoteCall::Since { since, town: town.clone() },
+        crate::around::WAITED_ON,
+    )
+    .await;
     for group in fastctx_net::around::answers::collect(heard) {
         let source = group.source.clone();
         let (status, read) = group.since();

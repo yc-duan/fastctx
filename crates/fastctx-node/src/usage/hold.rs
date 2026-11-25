@@ -126,31 +126,77 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
 /// conversation here.
 const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Rechecks on hub-view changes, and at an active hold's expiry. The periodic
-/// pass also covers a new session registered while no usage report was arriving.
-/// Each check goes through every conversation here: heavy work, done on a
-/// thread that may block.
+/// The longest the holds go unchecked with nothing told: a safety net.
+const QUIET: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Rechecks on hub-view changes, at an active hold's expiry, and when a
+/// conversation is born here or its session is bound (one that no usage
+/// report has reached yet must still be held: its `hold.json` goes with its
+/// session; usage reports check their own login, `allowance`). Each check
+/// goes through every conversation here: heavy work, done on a thread that
+/// may block, and never on a timer with nothing to look at.
 pub(crate) fn watch(node: &Arc<Node>) {
     let mut views = node.views.subscribe();
+    let mut residents = node.residents.changes();
     let weak = Arc::downgrade(node);
     fastctx_platform::task::spawn(async move {
         loop {
-            let delay = {
+            let (delay, mut known, mut seen) = {
                 let Some(node) = weak.upgrade() else { return };
+                // Where the residents stand as the check begins: one born or
+                // bound since is looked at by the next.
+                let seen = node.residents.changed_since(u64::MAX).at;
+                let known: std::collections::HashMap<ResidentId, bool> = node
+                    .residents
+                    .ids()
+                    .into_iter()
+                    .map(|id| {
+                        let bound = node.residents.about(&id).is_some_and(|(about, _)| about.session.is_some());
+                        (id, bound)
+                    })
+                    .collect();
                 let until = fastctx_platform::task::blocking(move || refresh(&node, None)).await;
-                until
-                    .map(|until| until.duration_since(Timestamp::now()).as_millis().clamp(1, 30_000) as u64)
-                    .unwrap_or(30_000)
+                let delay = until.map_or(QUIET, |until| {
+                    let millis = until.duration_since(Timestamp::now()).as_millis().clamp(1, QUIET.as_millis() as i128);
+                    std::time::Duration::from_millis(millis as u64)
+                });
+                (delay, known, seen)
             };
-            tokio::select! {
-                result = views.changed() => {
-                    if result.is_err() {
-                        return;
+            let deadline = tokio::time::Instant::now() + delay;
+            loop {
+                tokio::select! {
+                    result = views.changed() => {
+                        if result.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(VIEWS_SETTLE).await;
+                        views.borrow_and_update();
+                        break;
                     }
-                    tokio::time::sleep(VIEWS_SETTLE).await;
-                    views.borrow_and_update();
+                    result = residents.changed() => {
+                        if result.is_err() {
+                            return;
+                        }
+                        let Some(node) = weak.upgrade() else { return };
+                        let changed = node.residents.changed_since(seen);
+                        seen = changed.at;
+                        if changed.everyone {
+                            break;
+                        }
+                        let mut anew = false;
+                        for id in changed.residents {
+                            let bound = node.residents.about(&id).is_some_and(|(about, _)| about.session.is_some());
+                            match known.insert(id, bound) {
+                                None => anew = true,
+                                Some(was) => anew |= bound && !was,
+                            }
+                        }
+                        if anew {
+                            break;
+                        }
+                    }
+                    () = tokio::time::sleep_until(deadline) => break,
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => {},
             }
         }
     });

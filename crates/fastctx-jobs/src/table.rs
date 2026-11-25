@@ -85,8 +85,12 @@ pub fn submit_unless_waiting(db: &Connection, job: &Job, after: std::time::Durat
         return Ok(());
     }
     submit(db, job)?;
-    db.prepare_cached("UPDATE jobs SET due = ?3 WHERE kind = ?1 AND key = ?2 AND state = ?4")?
-        .execute(params![job.kind, job.key, now() + after.as_millis() as i64, WAITING])?;
+    db.prepare_cached("UPDATE jobs SET due = ?3 WHERE kind = ?1 AND key = ?2 AND state = ?4")?.execute(params![
+        job.kind,
+        job.key,
+        now() + after.as_millis() as i64,
+        WAITING
+    ])?;
     Ok(())
 }
 
@@ -126,6 +130,7 @@ pub fn submit(db: &Connection, job: &Job) -> Result<()> {
             .execute(params![id, job.payload, now()])?;
         }
     }
+    crate::stirred(job.kind);
     Ok(())
 }
 
@@ -133,11 +138,13 @@ pub fn submit(db: &Connection, job: &Job) -> Result<()> {
 /// such as a way to another machine, may be there. `Jobs::stir` then has
 /// them looked at.
 pub fn rouse(db: &Connection, kind: &str) -> Result<usize> {
-    Ok(db.prepare_cached("UPDATE jobs SET due = ?2 WHERE kind = ?1 AND state = ?3 AND due > ?2")?.execute(params![
-        kind,
-        now(),
-        WAITING
-    ])?)
+    let roused = db
+        .prepare_cached("UPDATE jobs SET due = ?2 WHERE kind = ?1 AND state = ?3 AND due > ?2")?
+        .execute(params![kind, now(), WAITING])?;
+    if roused > 0 {
+        crate::stirred(kind);
+    }
+    Ok(roused)
 }
 
 /// Takes back a unit's jobs of a kind that have not begun, and names them:

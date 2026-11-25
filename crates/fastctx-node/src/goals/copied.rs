@@ -72,7 +72,9 @@ fn answered(
     }
     let record = |kind: &str| {
         record_in(library, &scope.key, ConversationGoal::STREAM, kind).map(|record| {
-            record.filter(|record| !record.metadata.deleted && record.metadata.kind == kind && record.metadata.key == resident.as_str())
+            record.filter(|record| {
+                !record.metadata.deleted && record.metadata.kind == kind && record.metadata.key == resident.as_str()
+            })
         })
     };
     let goal = match record(super::operations::KIND)? {

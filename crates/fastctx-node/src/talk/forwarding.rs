@@ -164,23 +164,25 @@ impl Forwarder {
     /// leaves its place and goes at the end, carrying the newer mark, so the
     /// marks a watcher sees still only rise. The piece as it goes on, merged
     /// or as it came, its size, and what it took of the budget so far.
-    fn merged(&mut self, piece: Watched, size: usize) -> (Watched, usize, Vec<fastctx_platform::event_queue::Reservation>) {
+    fn merged(
+        &mut self,
+        piece: Watched,
+        size: usize,
+    ) -> (Watched, usize, Vec<fastctx_platform::event_queue::Reservation>) {
         let Watched::Live { event, mark, likeness } = piece else { return (piece, size, Vec::new()) };
         let Happened::Grew { turn, item, part, text, revision } = event.happened else {
             return (Watched::Live { event, mark, likeness }, size, Vec::new());
         };
-        let earlier = self
-            .items
-            .get(&(turn.clone(), item.clone()))
-            .copied()
-            .filter(|number| *number > self.barrier)
-            .filter(|number| {
-                self.waiting.get(number).is_some_and(|waiting| {
-                    matches!(&waiting.piece, Watched::Live { event: before, .. }
+        let earlier =
+            self.items.get(&(turn.clone(), item.clone())).copied().filter(|number| *number > self.barrier).filter(
+                |number| {
+                    self.waiting.get(number).is_some_and(|waiting| {
+                        matches!(&waiting.piece, Watched::Live { event: before, .. }
                         if matches!(&before.happened, Happened::Grew { turn: t, item: i, part: p, .. }
                             if *t == turn && *i == item && *p == part))
-                })
-            });
+                    })
+                },
+            );
         let at = event.at;
         let Some(number) = earlier else {
             let event = fastctx_types::session::SessionEvent {

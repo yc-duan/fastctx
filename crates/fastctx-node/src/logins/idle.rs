@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use fastctx_platform::{Permissions, publish};
+use fastctx_types::AgentName;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::MachineLogins;
 use fastctx_types::logins::idle::IdleCompaction;
-use fastctx_types::AgentName;
 use serde::{Deserialize, Serialize};
 
 use crate::Node;

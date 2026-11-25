@@ -103,7 +103,10 @@ pub(crate) async fn prepare(
             _ => continue,
         }
         match crate::record_changes::transport::on(
-            node, &subject, &machine, Purpose::Hands,
+            node,
+            &subject,
+            &machine,
+            Purpose::Hands,
             RemoteCall::WorkingCopy { owner: owner.clone(), placement: 0, resource: resource.clone() },
         )
         .await

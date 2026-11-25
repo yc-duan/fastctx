@@ -79,7 +79,13 @@ pub(crate) async fn answer_here(
                 Ok(BookAnswer::Deeds { machine, deeds, more })
             }
             BookQuery::Hours { from, to } => {
-                let hours = hours(connection, from.as_millisecond(), to.as_millisecond(), visible.as_deref(), unnamed.as_ref())?;
+                let hours = hours(
+                    connection,
+                    from.as_millisecond(),
+                    to.as_millisecond(),
+                    visible.as_deref(),
+                    unnamed.as_ref(),
+                )?;
                 Ok(BookAnswer::Hours { machine, hours })
             }
         })

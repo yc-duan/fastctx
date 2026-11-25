@@ -98,7 +98,8 @@ pub(crate) async fn born(
     // machine, as kept now.
     crate::assists::host::starting(node, &id, &acting)?;
     let (mut words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &origin, &acting, false, started.callee.kind()).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &origin, &acting, false, started.callee.kind())
+            .await?;
     words.push_str(&crate::colleagues::added_rules(&started));
     let born_at = Timestamp::now();
     let about = About {
@@ -160,7 +161,10 @@ pub(crate) async fn born(
     let written = fastctx_platform::disk::write(directory.claude_settings(), super::settings_json(&id))
         .and_then(|()| fastctx_platform::disk::write(directory.claude_instructions(), words));
     written.map_err(|error| Failure::new(format!("writing the colleague's settings: {error}")))?;
-    let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn } };
+    let asked = MessageLine {
+        at: born_at,
+        what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn },
+    };
     // The asker's words are its first, kept before the asker hears of it, and
     // the end of the turn they start is the asker's answer.
     let first = Pending {
@@ -228,7 +232,14 @@ async fn launch(node: &Arc<Node>, id: &ResidentId, first: Pending) {
         node,
         id,
         "",
-        TurnEnd { facts: None, error: None, how: TurnHow::Failed, reason: Some(why), duration_ms: None, last_message: None },
+        TurnEnd {
+            facts: None,
+            error: None,
+            how: TurnHow::Failed,
+            reason: Some(why),
+            duration_ms: None,
+            last_message: None,
+        },
     )
     .await;
 }

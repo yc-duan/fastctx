@@ -15,12 +15,12 @@
 use super::{order, preview};
 use crate::Node;
 use crate::assets::Proposal;
-use fastctx_content::v2::{EVENT, Entry, Kind as _, LEASE, Library, Network, OVERSIZED, PAGE, Timeline, Write, Writer};
 use fastctx_content::RECORD_BYTES;
+use fastctx_content::v2::{EVENT, Entry, Kind as _, LEASE, Library, Network, OVERSIZED, PAGE, Timeline, Write, Writer};
+use fastctx_types::ResidentId;
 use fastctx_types::access::HubId;
 use fastctx_types::assets::Readers;
 use fastctx_types::ipc::Failure;
-use fastctx_types::ResidentId;
 use fastctx_types::residents::About;
 use fastctx_types::session::SessionEvent;
 use sha2::{Digest, Sha256};
@@ -42,7 +42,8 @@ const QUEUED_PUT_BYTES: usize = 8 * 1024 * 1024;
 const QUEUED_WRITES: usize = 256;
 
 /// The objects being put on this machine: how many, how many bytes.
-static PUTTING: (std::sync::Mutex<(usize, usize)>, std::sync::Condvar) = (std::sync::Mutex::new((0, 0)), std::sync::Condvar::new());
+static PUTTING: (std::sync::Mutex<(usize, usize)>, std::sync::Condvar) =
+    (std::sync::Mutex::new((0, 0)), std::sync::Condvar::new());
 
 /// A place among the objects being put (`PUTS_AT_ONCE`, `PUT_BYTES_IN_FLIGHT`),
 /// held while one of `bytes` is put; one larger than the budget goes alone.
@@ -258,13 +259,15 @@ type Leases = Vec<Option<fastctx_content::v2::Lease>>;
 /// write's lease, in their order. One failed, the leases of the others are
 /// let go.
 fn put_all(library: &Library, resident: &ResidentId, queued: &mut [Queued]) -> Result<Leases, Failure> {
-    let puts: Vec<usize> = queued.iter().enumerate().filter(|(_, queued)| queued.put.is_some()).map(|(at, _)| at).collect();
+    let puts: Vec<usize> =
+        queued.iter().enumerate().filter(|(_, queued)| queued.put.is_some()).map(|(at, _)| at).collect();
     let mut leases: Leases = queued.iter_mut().map(|queued| queued.leased.take()).collect();
     let queued: &[Queued] = queued;
     if !puts.is_empty() {
         let holder = format!("timeline:{resident}");
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let put: std::sync::Mutex<Vec<(usize, Result<fastctx_content::v2::Lease, Failure>)>> = std::sync::Mutex::new(Vec::with_capacity(puts.len()));
+        let put: std::sync::Mutex<Vec<(usize, Result<fastctx_content::v2::Lease, Failure>)>> =
+            std::sync::Mutex::new(Vec::with_capacity(puts.len()));
         let lined: &[Queued] = queued;
         std::thread::scope(|scope| {
             for _ in 0..PUTS_AT_ONCE.min(puts.len()) {
@@ -276,7 +279,11 @@ fn put_all(library: &Library, resident: &ResidentId, queued: &mut [Queued]) -> R
                             library.put(&mut encoded.as_slice(), &holder, LEASE).map_err(failure)
                         };
                         let result = result.and_then(|lease| {
-                            if lease.object == *object { Ok(lease) } else { Err(failure("an event's object is not what it was taken for")) }
+                            if lease.object == *object {
+                                Ok(lease)
+                            } else {
+                                Err(failure("an event's object is not what it was taken for"))
+                            }
                         });
                         let failed = result.is_err();
                         put.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((at, result));
@@ -520,7 +527,12 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
         .as_ref()
         .and_then(|born| born.iter().find(|one| one.hub == account.hub && one.account == account.account))
         .map(|one| one.generation.as_millisecond());
-    Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes, born }, network }))
+    Ok(Some(Placed {
+        scope,
+        hub: account.hub.clone(),
+        proposal: Proposal { hub: account.hub.to_string(), readers, classes, born },
+        network,
+    }))
 }
 
 /// The readers and key of the scope of the conversation `id` of `account`
@@ -557,9 +569,9 @@ fn scope_for(
         // one: another's of the same id is not this conversation (AU05).
         let opened_here = |key: &String| {
             assets.library.held_listing(key).ok().flatten().is_some_and(|listing| {
-                serde_json::from_slice::<fastctx_types::assets::Descriptor>(&listing.description).is_ok_and(|described| {
-                    matches!(&described.readers, Readers::Body { opener, .. } if opener == account)
-                })
+                serde_json::from_slice::<fastctx_types::assets::Descriptor>(&listing.description).is_ok_and(
+                    |described| matches!(&described.readers, Readers::Body { opener, .. } if opener == account),
+                )
             })
         };
         // Of the body the machine it was born on was as it was born, never
@@ -659,7 +671,11 @@ pub(super) struct Wrote {
 /// and time), every item before them ordered below `floor`.
 pub(super) enum Span<'a> {
     Whole,
-    From { since: jiff::Timestamp, before: &'a [(Vec<u8>, jiff::Timestamp)], floor: u64 },
+    From {
+        since: jiff::Timestamp,
+        before: &'a [(Vec<u8>, jiff::Timestamp)],
+        floor: u64,
+    },
     /// The whole timeline as far as it could be read, a source of it
     /// unreadable now: what was read is written, nothing is taken away.
     Kept,
@@ -707,13 +723,16 @@ pub(super) fn write(
         Span::Whole | Span::Kept | Span::Added(_) => held(library, &placed.scope)?,
         // The window's items and those before it, read together.
         Span::From { before, .. } => {
-            let mut asked: Vec<Vec<u8>> = identities.iter().chain(before.iter().map(|(identity, _)| identity)).cloned().collect();
+            let mut asked: Vec<Vec<u8>> =
+                identities.iter().chain(before.iter().map(|(identity, _)| identity)).cloned().collect();
             asked.sort_unstable();
             asked.dedup();
             library.items(&placed.scope, Timeline::STREAM, &asked).map_err(failure)?
         }
     };
-    let key_of = |identity: &Vec<u8>| had.get(identity).and_then(|entry| entry.order.as_slice().try_into().ok().map(u64::from_be_bytes));
+    let key_of = |identity: &Vec<u8>| {
+        had.get(identity).and_then(|entry| entry.order.as_slice().try_into().ok().map(u64::from_be_bytes))
+    };
     // The window's events take keys past every item before it; one of its
     // own below that is placed again.
     // An event from before the window keeps the place it has; one new to
@@ -723,18 +742,21 @@ pub(super) fn write(
     let early: Vec<bool> = history
         .iter()
         .zip(&identities)
-        .map(|(event, identity)| since.is_some_and(|since| event.at < since) && had.contains_key(identity) && !again.contains(identity))
+        .map(|(event, identity)| {
+            since.is_some_and(|since| event.at < since) && had.contains_key(identity) && !again.contains(identity)
+        })
         .collect();
     let window: Vec<usize> = (0..history.len()).filter(|index| !early[*index]).collect();
     // Added: the events of a record stopped short whose items the timeline
     // has, in any state, are not written (`Span::Added`).
     let untouched: HashSet<Vec<u8>> = match &span {
         Span::Added(frozen) => {
-            let mut events = history
-                .iter()
-                .zip(&identities)
-                .map(|(event, identity)| (identity.clone(), super::names::frozen(event), super::names::key(event).is_some()));
-            untouched(frozen, &mut events, &mut |asked| library.had_items(&placed.scope, Timeline::STREAM, asked).map_err(failure))?
+            let mut events = history.iter().zip(&identities).map(|(event, identity)| {
+                (identity.clone(), super::names::frozen(event), super::names::key(event).is_some())
+            });
+            untouched(frozen, &mut events, &mut |asked| {
+                library.had_items(&placed.scope, Timeline::STREAM, asked).map_err(failure)
+            })?
         }
         _ => HashSet::new(),
     };
@@ -743,7 +765,9 @@ pub(super) fn write(
     if let Some(floor) = floor {
         keyed.push(Some(floor));
     }
-    keyed.extend(window.iter().map(|&index| key_of(&identities[index]).filter(|key| floor.is_none_or(|floor| *key > floor))));
+    keyed.extend(
+        window.iter().map(|&index| key_of(&identities[index]).filter(|key| floor.is_none_or(|floor| *key > floor))),
+    );
     let assigned = order::assign(&keyed);
     let assigned = if floor.is_some() { &assigned[1..] } else { &assigned[..] };
     let mut keys = vec![0u64; history.len()];
@@ -756,8 +780,10 @@ pub(super) fn write(
     // Not written, an event left as the timeline has it keeps the key it
     // has: placed between two of them without room, a new one may share a
     // key with the next (as with an unread rest, §28.49).
-    let fixed: Vec<Option<u64>> =
-        window.iter().map(|&index| if untouched.contains(&identities[index]) { key_of(&identities[index]) } else { None }).collect();
+    let fixed: Vec<Option<u64>> = window
+        .iter()
+        .map(|&index| if untouched.contains(&identities[index]) { key_of(&identities[index]) } else { None })
+        .collect();
     for (&index, key) in window.iter().zip(&fixed) {
         if let Some(key) = key {
             keys[index] = *key;
@@ -780,11 +806,16 @@ pub(super) fn write(
     };
     // Every commit in the period it was read for: held anew meanwhile, the
     // rest is refused, not written into the new one.
-    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
+    let writer =
+        Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
     let mut pending = Pending { library, writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
     let gone = gone_items.len();
     for (identity, entry) in gone_items {
-        pending.push(Write { item: identity.clone(), order: entry.order.clone(), value: None, objects: Vec::new() }, None, 0)?;
+        pending.push(
+            Write { item: identity.clone(), order: entry.order.clone(), value: None, objects: Vec::new() },
+            None,
+            0,
+        )?;
     }
     // Lined up so that their objects are put a few at once (`lined`); handed
     // on in the history's order.
@@ -809,7 +840,12 @@ pub(super) fn write(
             let put = object.map(|(object, bytes)| (bytes, object));
             let bytes = body.len();
             phase("bodies", &mut since_phase);
-            lining.push(Queued { write: Write { item: identities[index].clone(), order, value: Some(body), objects }, put, leased: None, bytes })?;
+            lining.push(Queued {
+                write: Write { item: identities[index].clone(), order, value: Some(body), objects },
+                put,
+                leased: None,
+                bytes,
+            })?;
             phase("waiting on puts and commits", &mut since_phase);
             written += 1;
         }
@@ -861,7 +897,8 @@ pub(super) fn refresh_runs(
     }
     let _writing = Writing::take(resident);
     let holding = holding(library, placed, expected)?;
-    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
+    let writer =
+        Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
     let mut pending = Pending { library, writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
     let written = lined(library, resident, &mut pending, |lining| {
         let mut written = 0;
@@ -871,7 +908,9 @@ pub(super) fn refresh_runs(
             while !asking.is_empty() {
                 let mut asked: Vec<Vec<u8>> = asking
                     .iter()
-                    .flat_map(|(base, from)| (*from..from + AGAIN_ASKED).map(|before| super::names::again(*base, before).to_vec()))
+                    .flat_map(|(base, from)| {
+                        (*from..from + AGAIN_ASKED).map(|before| super::names::again(*base, before).to_vec())
+                    })
                     .collect();
                 asked.sort_unstable();
                 asked.dedup();
@@ -919,7 +958,8 @@ pub(super) fn refresh_every_run(
 ) -> Result<usize, Failure> {
     let _writing = Writing::take(resident);
     let holding = holding(library, placed, expected)?;
-    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
+    let writer =
+        Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
     let mut pending = Pending { library, writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
     let written = lined(library, resident, &mut pending, |lining| {
         let mut written = 0;
@@ -993,7 +1033,11 @@ fn refreshed(
 
 /// The write that gives `event`, the item `entry` holds, its run's facts as
 /// `attach` gives them, where they change its record.
-fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEvent) -> Result<(), Failure>) -> Result<Option<Queued>, Failure> {
+fn given(
+    entry: &Entry,
+    mut event: SessionEvent,
+    attach: &dyn Fn(&mut SessionEvent) -> Result<(), Failure>,
+) -> Result<Option<Queued>, Failure> {
     // As kept, which may be without its pictures' bytes: unchanged by its
     // run's facts, it is not written again in another form.
     let before = event.clone();
@@ -1009,7 +1053,12 @@ fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEve
     }
     let put = object.map(|(object, bytes)| (bytes, object));
     let bytes = body.len();
-    Ok(Some(Queued { write: Write { item: entry.item.clone(), order: entry.order.clone(), value: Some(body), objects }, put, leased: None, bytes }))
+    Ok(Some(Queued {
+        write: Write { item: entry.item.clone(), order: entry.order.clone(), value: Some(body), objects },
+        put,
+        leased: None,
+        bytes,
+    }))
 }
 
 /// The most an event kept whole in an object is read into memory.
@@ -1088,7 +1137,8 @@ pub(super) fn untouched(
             }
         }
     }
-    let asked: Vec<Vec<u8>> = records.iter().flat_map(|(named, moments)| named.iter().chain(moments)).chain(&alone).cloned().collect();
+    let asked: Vec<Vec<u8>> =
+        records.iter().flat_map(|(named, moments)| named.iter().chain(moments)).chain(&alone).cloned().collect();
     let mut found = had(&asked)?;
     for (named, moments) in records {
         if named.iter().any(|identity| found.contains(identity)) {
@@ -1112,7 +1162,10 @@ fn holding(library: &Library, placed: &Placed, expected: Option<i64>) -> Result<
         None => {
             let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
             library.propose_on(&placed.network, &placed.scope, proposal).map_err(failure)?;
-            library.holding(&placed.scope).map_err(failure)?.ok_or_else(|| failure("the timeline's scope is not held here"))?
+            library
+                .holding(&placed.scope)
+                .map_err(failure)?
+                .ok_or_else(|| failure("the timeline's scope is not held here"))?
         }
     };
     if expected.is_some_and(|expected| expected != holding) {
@@ -1293,7 +1346,8 @@ pub(super) fn write_kept(
     };
     keyed.keys_made();
     phase("keys", &mut since);
-    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
+    let writer =
+        Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
     let mut pending = Pending { library, writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
     let mut gone = 0;
     let mut last: Option<Vec<u8>> = None;
@@ -1302,7 +1356,12 @@ pub(super) fn write_kept(
     if matches!(reach, Reach::Whole | Reach::From { .. }) {
         let window = matches!(reach, Reach::From { .. });
         loop {
-            let page = if window { spill.gone_before(last.as_deref(), WRITES_AT_ONCE) } else { spill.gone(last.as_deref(), WRITES_AT_ONCE) }.map_err(kept)?;
+            let page = if window {
+                spill.gone_before(last.as_deref(), WRITES_AT_ONCE)
+            } else {
+                spill.gone(last.as_deref(), WRITES_AT_ONCE)
+            }
+            .map_err(kept)?;
             let Some((identity, _)) = page.last() else { break };
             last = Some(identity.clone());
             for (identity, order) in page {
@@ -1323,14 +1382,22 @@ pub(super) fn write_kept(
                 break;
             }
             let taken = finals.len();
-            let asked: Vec<Vec<u8>> = finals.iter().filter(|kept| kept.had.is_some()).map(|kept| kept.identity.clone()).collect();
-            let had = if asked.is_empty() { HashMap::new() } else { library.items(&placed.scope, Timeline::STREAM, &asked).map_err(failure)? };
+            let asked: Vec<Vec<u8>> =
+                finals.iter().filter(|kept| kept.had.is_some()).map(|kept| kept.identity.clone()).collect();
+            let had = if asked.is_empty() {
+                HashMap::new()
+            } else {
+                library.items(&placed.scope, Timeline::STREAM, &asked).map_err(failure)?
+            };
             phase("had bodies", &mut since);
             for (offset, kept) in finals.into_iter().enumerate() {
                 let (key, left) = (keys[from + offset], keyed.left(from + offset));
                 // A tombstone left as it is is not among the window's items.
                 // Nor one from before a window, which keeps its place.
-                if (!left || keyed.live(from + offset)) && !keyed.early(from + offset) && !held(&kept.identity, kept.at, key)? {
+                if (!left || keyed.live(from + offset))
+                    && !keyed.early(from + offset)
+                    && !held(&kept.identity, kept.at, key)?
+                {
                     floor = floor.max(key);
                 }
                 if left {
@@ -1351,7 +1418,12 @@ pub(super) fn write_kept(
                 let put = if leased.is_some() { None } else { kept.object.map(|(object, encoded)| (encoded, object)) };
                 let bytes = body.len();
                 phase("bodies", &mut since);
-                lining.push(Queued { write: Write { item: kept.identity, order, value: Some(body), objects }, put, leased, bytes })?;
+                lining.push(Queued {
+                    write: Write { item: kept.identity, order, value: Some(body), objects },
+                    put,
+                    leased,
+                    bytes,
+                })?;
                 phase("waiting on puts and commits", &mut since);
                 written += 1;
             }
@@ -1373,8 +1445,9 @@ pub(super) fn write_kept(
 /// over all in place.
 fn window_keys(keyed: &super::spill::Keyed, floor: u64) -> Vec<u64> {
     let window: Vec<u32> = (0..keyed.len()).filter(|index| !keyed.early(*index)).map(|index| index as u32).collect();
-    let mut keys =
-        order::assign_with(window.len() + 1, &|place| if place == 0 { Some(floor) } else { keyed.key(window[place - 1] as usize).filter(|key| *key > floor) });
+    let mut keys = order::assign_with(window.len() + 1, &|place| {
+        if place == 0 { Some(floor) } else { keyed.key(window[place - 1] as usize).filter(|key| *key > floor) }
+    });
     let mut next = window.len();
     drop(window);
     // From the last back: a window's event never stands before where its
@@ -1448,7 +1521,12 @@ struct Pending<'a> {
 }
 
 impl Pending<'_> {
-    fn push(&mut self, write: Write<Timeline>, lease: Option<fastctx_content::v2::Lease>, bytes: usize) -> Result<(), Failure> {
+    fn push(
+        &mut self,
+        write: Write<Timeline>,
+        lease: Option<fastctx_content::v2::Lease>,
+        bytes: usize,
+    ) -> Result<(), Failure> {
         self.bytes += 128 + bytes;
         self.writes.push(write);
         self.leases.extend(lease);
@@ -1492,8 +1570,8 @@ impl Drop for Pending<'_> {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use fastctx_types::session::{Happened, Health, HealthKind};
     use fastctx_types::session::UserMessage;
+    use fastctx_types::session::{Happened, Health, HealthKind};
 
     pub(in crate::timeline) struct Device;
     impl fastctx_content::v2::Signer for Device {
@@ -1525,13 +1603,23 @@ pub(super) mod tests {
         };
         SessionEvent {
             at: at(seconds),
-            happened: Happened::Heard { delivery: None, turn: None, from: None, text: text.into(), message: Some(Box::new(message)), notice: None },
+            happened: Happened::Heard {
+                delivery: None,
+                turn: None,
+                from: None,
+                text: text.into(),
+                message: Some(Box::new(message)),
+                notice: None,
+            },
         }
     }
 
     /// An event known only by its moment.
     pub(in crate::timeline) fn note(text: &str, seconds: i64) -> SessionEvent {
-        SessionEvent { at: at(seconds), happened: Happened::Health { turn: None, health: Health { kind: HealthKind::Warning, text: text.into() } } }
+        SessionEvent {
+            at: at(seconds),
+            happened: Happened::Health { turn: None, health: Health { kind: HealthKind::Warning, text: text.into() } },
+        }
     }
 
     /// A record stopped short (`Span::Added`) writes only what the timeline
@@ -1558,19 +1646,42 @@ pub(super) mod tests {
         write(&library, signer.clone(), &resident, &placed, &whole, Span::Whole, &none, None).unwrap();
         // B taken back since, by a reading of all.
         let taken = vec![whole[0].clone(), whole[2].clone(), whole[3].clone()];
-        assert_eq!(write(&library, signer.clone(), &resident, &placed, &taken, Span::Whole, &none, None).unwrap().gone, 1);
+        assert_eq!(
+            write(&library, signer.clone(), &resident, &placed, &taken, Span::Whole, &none, None).unwrap().gone,
+            1
+        );
         let before = held(&library, "s").unwrap();
         assert_eq!(before.len(), 3);
         // The record stopped short: A shows less, B is there again, the note
         // made at another moment from less of it, N new.
-        let short = vec![words("a", "fir", 1), words("b", "second", 2), note("noted from less", 5), words("n", "new", 6), words("f", "fourth", 4)];
+        let short = vec![
+            words("a", "fir", 1),
+            words("b", "second", 2),
+            note("noted from less", 5),
+            words("n", "new", 6),
+            words("f", "fourth", 4),
+        ];
         let frozen: HashSet<String> = short.iter().map(super::super::names::frozen).collect();
-        let wrote = write(&library, signer.clone(), &resident, &placed, &short, Span::Added(std::slice::from_ref(&frozen)), &none, None).unwrap();
+        let wrote = write(
+            &library,
+            signer.clone(),
+            &resident,
+            &placed,
+            &short,
+            Span::Added(std::slice::from_ref(&frozen)),
+            &none,
+            None,
+        )
+        .unwrap();
         assert_eq!((wrote.written, wrote.gone), (1, 0), "N alone written");
         let after = held(&library, "s").unwrap();
         assert_eq!(after.len(), 4, "A, the note, F and N; B still gone");
         for (item, entry) in &before {
-            assert_eq!(after.get(item).map(|entry| (&entry.order, &entry.body)), Some((&entry.order, &entry.body)), "left as it was");
+            assert_eq!(
+                after.get(item).map(|entry| (&entry.order, &entry.body)),
+                Some((&entry.order, &entry.body)),
+                "left as it was"
+            );
         }
         let identities = super::super::names::identities(&short);
         assert!(!after.contains_key(&identities[1]), "the tombstone not brought back");
@@ -1601,7 +1712,13 @@ pub(super) mod tests {
             status: fastctx_types::session::ToolStatus::Done,
             duration_ms: None,
         };
-        let item = fastctx_types::session::Item { id: id.into(), draft: None, started_at: None, detail: None, what: fastctx_types::session::What::Tool(Box::new(tool)) };
+        let item = fastctx_types::session::Item {
+            id: id.into(),
+            draft: None,
+            started_at: None,
+            detail: None,
+            what: fastctx_types::session::What::Tool(Box::new(tool)),
+        };
         SessionEvent { at: at(seconds), happened: Happened::Finished { turn: "t".into(), item } }
     }
 
@@ -1693,8 +1810,16 @@ pub(super) mod tests {
             Ok(())
         };
         let calls = vec!["c9".to_string()];
-        assert_eq!(refresh_runs(&library, signer.clone(), &resident, &placed, &attach, &calls, floor, None).unwrap(), 10, "all ten of c9");
-        assert_eq!(refresh_every_run(&library, signer.clone(), &resident, &placed, &attach, floor, None).unwrap(), 1, "c1: c2 is no run, c4 is past the floor, c9 had its facts");
+        assert_eq!(
+            refresh_runs(&library, signer.clone(), &resident, &placed, &attach, &calls, floor, None).unwrap(),
+            10,
+            "all ten of c9"
+        );
+        assert_eq!(
+            refresh_every_run(&library, signer.clone(), &resident, &placed, &attach, floor, None).unwrap(),
+            1,
+            "c1: c2 is no run, c4 is past the floor, c9 had its facts"
+        );
         let after = held(&library, "s").unwrap();
         let detail = |index: usize| match event_of(&library, &after[&identities[index]]).unwrap().unwrap().happened {
             Happened::Finished { item, .. } => item.detail.is_some(),
@@ -1752,7 +1877,11 @@ pub(super) mod tests {
 
     /// Every live item of the timeline.
     pub(in crate::timeline) fn all(library: &Library) -> Vec<Item> {
-        let mut items: Vec<_> = held(library, "s").unwrap().into_values().map(|entry| (entry.item, entry.order, entry.body, entry.objects)).collect();
+        let mut items: Vec<_> = held(library, "s")
+            .unwrap()
+            .into_values()
+            .map(|entry| (entry.item, entry.order, entry.body, entry.objects))
+            .collect();
         items.sort_by(|one, other| one.0.cmp(&other.0));
         items
     }
@@ -1780,15 +1909,17 @@ pub(super) mod tests {
             }
             let now = history(&mut choices);
             let known: Vec<String> = now.iter().map(super::super::names::frozen).collect();
-            let frozen: Vec<HashSet<String>> =
-                (0..1 + choices.pick(2)).map(|_| known.iter().filter(|_| choices.pick(2) == 0).cloned().collect()).collect();
+            let frozen: Vec<HashSet<String>> = (0..1 + choices.pick(2))
+                .map(|_| known.iter().filter(|_| choices.pick(2) == 0).cloned().collect())
+                .collect();
             let span = choices.pick(3);
             let pick = |span| match span {
                 0 => Span::Whole,
                 1 => Span::Kept,
                 _ => Span::Added(&frozen),
             };
-            let wrote = write(&held_library, signer.clone(), &resident, &held_placed, &now, pick(span), &none, None).unwrap();
+            let wrote =
+                write(&held_library, signer.clone(), &resident, &held_placed, &now, pick(span), &none, None).unwrap();
             let spill_root = base.join(format!("spill-{round}"));
             let mut spill = super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0");
             spill.begin().unwrap();
@@ -1797,7 +1928,9 @@ pub(super) mod tests {
                 let encoded = serde_json::to_vec(event).unwrap();
                 let (record, object) = body(event, encoded).unwrap();
                 let frozen_key = (super::super::names::frozen(event), super::super::names::key(event).is_some());
-                spill.push_final(identity.as_slice().try_into().unwrap(), event.at, record, object, Some(frozen_key)).unwrap();
+                spill
+                    .push_final(identity.as_slice().try_into().unwrap(), event.at, record, object, Some(frozen_key))
+                    .unwrap();
             }
             for (record, set) in frozen.iter().enumerate() {
                 for key in set {
@@ -1809,9 +1942,23 @@ pub(super) mod tests {
                 1 => Reach::Kept,
                 _ => Reach::Added,
             };
-            let kept = write_kept(&kept_library, signer.clone(), &resident, &kept_placed, &mut spill, None, reach, &mut |_, _, _| Ok(false)).unwrap();
+            let kept = write_kept(
+                &kept_library,
+                signer.clone(),
+                &resident,
+                &kept_placed,
+                &mut spill,
+                None,
+                reach,
+                &mut |_, _, _| Ok(false),
+            )
+            .unwrap();
             let floor = wrote.items.iter().map(|(_, _, key)| *key).max().unwrap_or(0);
-            assert_eq!((kept.written, kept.gone, kept.floor), (wrote.written, wrote.gone, floor), "round {round}, span {span}");
+            assert_eq!(
+                (kept.written, kept.gone, kept.floor),
+                (wrote.written, wrote.gone, floor),
+                "round {round}, span {span}"
+            );
             assert_eq!(all(&kept_library), all(&held_library), "round {round}, span {span}");
             drop(spill);
             let _ = super::super::spill::clear(&spill_root);
@@ -1849,11 +1996,20 @@ pub(super) mod tests {
             // Where the last reading left it: a floor among the keys there,
             // the items past it, and some told then wherever they stand.
             let had = all(&held_library);
-            let keys: Vec<u64> = had.iter().filter_map(|(_, order, ..)| order.as_slice().try_into().ok().map(u64::from_be_bytes)).collect();
-            let floor = if keys.is_empty() || choices.pick(4) == 0 { 0 } else { keys[choices.pick(keys.len() as u64) as usize] };
+            let keys: Vec<u64> = had
+                .iter()
+                .filter_map(|(_, order, ..)| order.as_slice().try_into().ok().map(u64::from_be_bytes))
+                .collect();
+            let floor = if keys.is_empty() || choices.pick(4) == 0 {
+                0
+            } else {
+                keys[choices.pick(keys.len() as u64) as usize]
+            };
             let mut before: Vec<Vec<u8>> = had
                 .iter()
-                .filter(|(_, order, ..)| order.as_slice().try_into().ok().map(u64::from_be_bytes).is_some_and(|key| key > floor))
+                .filter(|(_, order, ..)| {
+                    order.as_slice().try_into().ok().map(u64::from_be_bytes).is_some_and(|key| key > floor)
+                })
                 .map(|(identity, ..)| identity.clone())
                 .collect();
             for (identity, ..) in &had {
@@ -1867,9 +2023,21 @@ pub(super) mod tests {
             let again: HashSet<Vec<u8>> = identities.iter().filter(|_| choices.pick(5) == 0).cloned().collect();
             let expected = if choices.pick(2) == 0 { held_library.holding("s").unwrap() } else { None };
             let settled = at(choices.pick(9) as i64);
-            let held_at = |identity: &[u8], at: jiff::Timestamp| at >= settled || at < since || again.contains(identity);
-            let timed: Vec<(Vec<u8>, jiff::Timestamp)> = before.iter().map(|identity| (identity.clone(), since)).collect();
-            let wrote = write(&held_library, signer.clone(), &resident, &held_placed, &now, Span::From { since, before: &timed, floor }, &again, expected).unwrap();
+            let held_at =
+                |identity: &[u8], at: jiff::Timestamp| at >= settled || at < since || again.contains(identity);
+            let timed: Vec<(Vec<u8>, jiff::Timestamp)> =
+                before.iter().map(|identity| (identity.clone(), since)).collect();
+            let wrote = write(
+                &held_library,
+                signer.clone(),
+                &resident,
+                &held_placed,
+                &now,
+                Span::From { since, before: &timed, floor },
+                &again,
+                expected,
+            )
+            .unwrap();
 
             let spill_root = base.join(format!("spill-{round}"));
             let mut spill = super::super::spill::Spill::new(spill_root.clone(), "claude-a0a0");
@@ -1883,24 +2051,45 @@ pub(super) mod tests {
                 spill.push_before(identity.clone()).unwrap();
             }
             let mut kept_held = Vec::new();
-            let kept = write_kept(&kept_library, signer.clone(), &resident, &kept_placed, &mut spill, None, Reach::From { since, floor, again: &again, expected }, &mut |identity, at, key| {
-                let held = held_at(identity, at);
-                if held {
-                    kept_held.push((identity.to_vec(), at, key));
-                }
-                Ok(held)
-            })
+            let kept = write_kept(
+                &kept_library,
+                signer.clone(),
+                &resident,
+                &kept_placed,
+                &mut spill,
+                None,
+                Reach::From { since, floor, again: &again, expected },
+                &mut |identity, at, key| {
+                    let held = held_at(identity, at);
+                    if held {
+                        kept_held.push((identity.to_vec(), at, key));
+                    }
+                    Ok(held)
+                },
+            )
             .unwrap();
             // As `tail::place` settles and holds the window's items.
-            let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held_at(identity, *at)).map(|(_, _, key)| *key).fold(floor, u64::max);
-            let mut held_items: Vec<_> = wrote.items.iter().filter(|(identity, at, _)| held_at(identity, *at)).cloned().collect();
+            let settled_floor = wrote
+                .items
+                .iter()
+                .filter(|(identity, at, _)| !held_at(identity, *at))
+                .map(|(_, _, key)| *key)
+                .fold(floor, u64::max);
+            let mut held_items: Vec<_> =
+                wrote.items.iter().filter(|(identity, at, _)| held_at(identity, *at)).cloned().collect();
             held_items.sort();
             kept_held.sort();
             met[0] += usize::from(wrote.items.len() < now.len());
             met[1] += usize::from(wrote.gone > 0);
-            met[2] += usize::from(now.iter().zip(&identities).any(|(event, identity)| event.at < since && again.contains(identity)));
+            met[2] += usize::from(
+                now.iter().zip(&identities).any(|(event, identity)| event.at < since && again.contains(identity)),
+            );
             met[3] += usize::from(!held_items.is_empty());
-            assert_eq!((kept.written, kept.gone, kept.floor.max(floor)), (wrote.written, wrote.gone, settled_floor), "round {round}");
+            assert_eq!(
+                (kept.written, kept.gone, kept.floor.max(floor)),
+                (wrote.written, wrote.gone, settled_floor),
+                "round {round}"
+            );
             assert_eq!(kept_held, held_items, "round {round}");
             assert_eq!(all(&kept_library), all(&held_library), "round {round}");
             drop(spill);

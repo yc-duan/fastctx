@@ -71,7 +71,10 @@ pub(super) async fn hand_back(assets: &Assets, hub: &HubId, link: &Arc<Link>, re
     });
     let mut failed = None;
     for (scope, _, holding) in held {
-        let _handing = fastctx_platform::doing::waiting_outside(format!("handing back {scope}"), std::time::Duration::from_secs(60));
+        let _handing = fastctx_platform::doing::waiting_outside(
+            format!("handing back {scope}"),
+            std::time::Duration::from_secs(60),
+        );
         match scope_back(assets, link, recovery, &scope, holding).await {
             Ok(true) => {}
             Ok(false) => return Ok(()),
@@ -85,7 +88,13 @@ pub(super) async fn hand_back(assets: &Assets, hub: &HubId, link: &Arc<Link>, re
 
 /// Hands back what this machine holds of the streams the hub orders of
 /// `scope` past where the hub stands; whether the hub went on answering.
-async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &str, holding: i64) -> Result<bool, String> {
+async fn scope_back(
+    assets: &Assets,
+    link: &Arc<Link>,
+    recovery: u64,
+    scope: &str,
+    holding: i64,
+) -> Result<bool, String> {
     let scope = scope.to_string();
     let key = scope.clone();
     let standing = blocking(&assets.library, move |library| library.standing(&key)).await?;
@@ -103,7 +112,9 @@ async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &st
         }
     }
     if !asking.is_empty() {
-        let Reply::Standing { streams } = ask(assets, link, Request::Cursors { scope: scope.clone(), holding, streams: asking }).await? else {
+        let Reply::Standing { streams } =
+            ask(assets, link, Request::Cursors { scope: scope.clone(), holding, streams: asking }).await?
+        else {
             return Ok(false);
         };
         for standing in streams {
@@ -112,7 +123,8 @@ async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &st
                 keep_mark(assets, &name, &Mark::Done { why: "the hub holds where this machine stands".into() }).await?;
                 continue;
             }
-            let ends: Vec<(u64, [u8; 32])> = standing.ends.iter().filter_map(|(end, head)| Some((*end, head.array()?))).collect();
+            let ends: Vec<(u64, [u8; 32])> =
+                standing.ends.iter().filter_map(|(end, head)| Some((*end, head.array()?))).collect();
             // The hub holds nothing of the stream up to where this
             // machine stands: it goes on from the stream's start.
             if ends.is_empty() {
@@ -126,7 +138,12 @@ async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &st
                     from.push((standing.stream, end + 1, head));
                 }
                 None => {
-                    keep_mark(assets, &name, &Mark::Done { why: "what this machine holds forks before the hub's tail".into() }).await?;
+                    keep_mark(
+                        assets,
+                        &name,
+                        &Mark::Done { why: "what this machine holds forks before the hub's tail".into() },
+                    )
+                    .await?;
                 }
             }
         }
@@ -142,7 +159,14 @@ async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &st
 /// Hands back the frames of `stream` of `scope` from `at` (the next
 /// sequence, and the chain value the frame there follows); whether the
 /// hub went on answering.
-async fn stream_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &str, stream: &str, at: (u64, [u8; 32])) -> Result<bool, String> {
+async fn stream_back(
+    assets: &Assets,
+    link: &Arc<Link>,
+    recovery: u64,
+    scope: &str,
+    stream: &str,
+    at: (u64, [u8; 32]),
+) -> Result<bool, String> {
     let name = mark_name(recovery, scope, stream);
     let (mut next, mut previous) = at;
     loop {
@@ -157,7 +181,8 @@ async fn stream_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &s
                 continue;
             }
             if header.first != next || header.previous != previous {
-                keep_mark(assets, &name, &Mark::Done { why: "this machine's frames do not go on from there".into() }).await?;
+                keep_mark(assets, &name, &Mark::Done { why: "this machine's frames do not go on from there".into() })
+                    .await?;
                 return Ok(true);
             }
             let mut bytes = (frame.header.len() + frame.signature.len() + frame.body.len()) as u64;
@@ -166,7 +191,12 @@ async fn stream_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &s
                 let Some(size) = blocking(&assets.library, move |library| library.size(&hash)).await? else { continue };
                 bytes += size;
                 if bytes > MOST_BYTES {
-                    keep_mark(assets, &name, &Mark::Done { why: "a frame with its objects is larger than one is handed back in".into() }).await?;
+                    keep_mark(
+                        assets,
+                        &name,
+                        &Mark::Done { why: "a frame with its objects is larger than one is handed back in".into() },
+                    )
+                    .await?;
                     return Ok(true);
                 }
                 let read = blocking(&assets.library, move |library| {

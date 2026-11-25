@@ -55,7 +55,12 @@ pub(crate) async fn stop(
         crate::talk::stop_here(node, &id).await?
     } else {
         let reply = node
-            .call(&acting, &machine, Purpose::Agents, RemoteCall::Stop { resident: id.clone(), turn: None, words: None })
+            .call(
+                &acting,
+                &machine,
+                Purpose::Agents,
+                RemoteCall::Stop { resident: id.clone(), turn: None, words: None },
+            )
             .await
             .map_err(|error| Failure::new(error.to_string()))??;
         let RemoteReply::Stopped { stopped } = reply else {

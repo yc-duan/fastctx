@@ -139,10 +139,9 @@ pub(crate) async fn call(
                             .await
                             {
                                 Ok(answer) => answer,
-                                Err(_) => Err(failed(format!(
-                                    "{machine} did not say within {} s",
-                                    STATUS_WITHIN.as_secs()
-                                ))),
+                                Err(_) => {
+                                    Err(failed(format!("{machine} did not say within {} s", STATUS_WITHIN.as_secs())))
+                                }
                             },
                         )
                     } else {

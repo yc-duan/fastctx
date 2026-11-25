@@ -48,13 +48,23 @@ pub(super) fn engine(node: &Arc<Node>) -> Result<Arc<Host>, String> {
         })
         .clone())
 }
+/// The longest the discovery of accounts to watch sleeps with nothing told:
+/// new ways, and every change of the sentinels here (the SENTINELS topic,
+/// which a registration made here moves too), wake it first.
+const DISCOVERY_QUIET: Duration = Duration::from_secs(10 * 60);
+/// The longest an account's watch goes without listing its sentinels anew:
+/// a safety net under the watch, which tells every change.
+const LIST_QUIET: Duration = Duration::from_secs(30 * 60);
+
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
         let mut watchers = HashMap::new();
         let mut timers_started = false;
         let mut ways = node.ways.subscribe();
+        let mut moved = node.topics.watch();
         loop {
+            let sentinels = node.topics.revision(fastctx_types::topics::SENTINELS);
             if let Ok(host) = engine(&node) {
                 if !timers_started {
                     start_timers(&node);
@@ -89,7 +99,18 @@ pub(crate) fn start(node: &Arc<Node>) {
                     }
                 }
             }
-            tokio::select! { _=ways.changed()=>{}, ()=tokio::time::sleep(Duration::from_secs(10))=>{} }
+            let quiet = tokio::time::sleep(DISCOVERY_QUIET);
+            tokio::pin!(quiet);
+            loop {
+                tokio::select! {
+                    changed = ways.changed() => { if changed.is_err() { return } break }
+                    changed = moved.changed() => {
+                        if changed.is_err() { return }
+                        if node.topics.revision(fastctx_types::topics::SENTINELS) != sentinels { break }
+                    }
+                    () = &mut quiet => break,
+                }
+            }
         }
     });
 }
@@ -110,30 +131,71 @@ async fn watch_scope(node: Arc<Node>, scope: HubAccount) {
                     .map_err(|_| "subscribing to sentinel settings timed out")?
                     .map_err(|e| e.to_string())?;
             let mut ways = node.ways.subscribe();
+            // Listed whole as the watch begins, when it lagged, when the ways
+            // change, and as a safety net; between those each change the
+            // watch tells is taken up alone, without listing every one.
+            let mut listed = BTreeSet::new();
+            let mut relist = true;
             loop {
-                let heads = tokio::time::timeout(Duration::from_secs(60), records.list(&scope, lifecycle::KIND))
-                    .await
-                    .map_err(|_| "listing sentinel assignments timed out")?
-                    .map_err(|e| e.to_string())?;
-                let mut ids = BTreeSet::new();
-                for head in heads {
-                    ids.insert(head.key.parse::<SentinelId>().map_err(|e| e.to_string())?);
-                }
-                for registration in host.known()? {
-                    if registration.scope == scope {
-                        ids.insert(registration.definition.id);
+                if relist {
+                    let heads = tokio::time::timeout(Duration::from_secs(60), records.list(&scope, lifecycle::KIND))
+                        .await
+                        .map_err(|_| "listing sentinel assignments timed out")?
+                        .map_err(|e| e.to_string())?;
+                    listed.clear();
+                    for head in heads {
+                        listed.insert(head.key.parse::<SentinelId>().map_err(|e| e.to_string())?);
                     }
+                    let mut ids = listed.clone();
+                    for registration in host.known()? {
+                        if registration.scope == scope {
+                            ids.insert(registration.definition.id);
+                        }
+                    }
+                    for id in ids {
+                        enqueue(&node, scope.clone(), id, None).await;
+                    }
+                    report(&node, &key, None);
+                    super::keys::forget_if_moved(&node, &scope).await;
+                    relist = false;
                 }
-                for id in ids {
-                    enqueue(&node, scope.clone(), id, None).await;
-                }
-                report(&node, &key, None);
-                super::keys::forget_if_moved(&node, &scope).await;
+                use tokio::sync::broadcast::error::RecvError;
                 tokio::select! {
-                    changed=changes.recv()=>{changed.map_err(|e|e.to_string())?;},
-                    changed=settings.recv()=>{changed.map_err(|e|e.to_string())?;},
-                    changed=ways.changed()=>{changed.map_err(|e|e.to_string())?;},
-                    ()=tokio::time::sleep(Duration::from_secs(60))=>{},
+                    changed = changes.recv() => match changed {
+                        Ok(change) => {
+                            if let Ok(id) = change.key.parse::<SentinelId>() {
+                                if change.version.is_some() {
+                                    listed.insert(id.clone());
+                                } else {
+                                    listed.remove(&id);
+                                }
+                                enqueue(&node, scope.clone(), id, None).await;
+                            }
+                        }
+                        Err(RecvError::Lagged(_)) => relist = true,
+                        Err(error) => return Err(error.to_string()),
+                    },
+                    changed = settings.recv() => match changed {
+                        // The account's settings bear on each of its sentinels.
+                        Ok(_) => {
+                            let mut ids = listed.clone();
+                            for registration in host.known()? {
+                                if registration.scope == scope {
+                                    ids.insert(registration.definition.id);
+                                }
+                            }
+                            for id in ids {
+                                enqueue(&node, scope.clone(), id, None).await;
+                            }
+                        }
+                        Err(RecvError::Lagged(_)) => relist = true,
+                        Err(error) => return Err(error.to_string()),
+                    },
+                    changed = ways.changed() => {
+                        changed.map_err(|e| e.to_string())?;
+                        relist = true;
+                    }
+                    () = tokio::time::sleep(LIST_QUIET) => relist = true,
                 }
             }
         }

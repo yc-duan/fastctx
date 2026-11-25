@@ -27,6 +27,8 @@ use std::time::Duration;
 
 /// How often the jobs here are looked at.
 const EVERY: Duration = Duration::from_secs(10);
+/// How long the look sleeps with no job moving: it takes in a scope held anew.
+const QUIET: Duration = Duration::from_secs(5 * 60);
 
 /// The most bytes a piece of output holds, and each part of one job writes
 /// in a look: neither part starves the other (K11).
@@ -140,13 +142,42 @@ pub(crate) fn start(node: &Arc<Node>) {
         node.log.line(format_args!("keeping since when the jobs here are written: {error}"));
     }
     let weak: Weak<Node> = Arc::downgrade(node);
+    // Every job that starts, writes output or ends says so here: the look
+    // follows them, and with no job moving there is nothing to look at.
+    let mut moving = node.jobs.subscribe();
     fastctx_platform::task::spawn(async move {
         // The first look takes in every job since then, as does one after a
         // scope is held anew (NN07, L04).
         let mut whole = true;
         let mut held = 0u64;
         let mut written = Whole::new();
+        let mut first = true;
+        // Whether a job here is still open after the last look: running, its
+        // output not all taken in, or its conversation's scope not writable
+        // yet. Those are looked at again every `EVERY`, as they always were;
+        // with none open nothing moves here until a job does.
+        let mut open = false;
         loop {
+            if !first && !open {
+                // A scope held anew (`holdings`) is taken up by the quiet look.
+                tokio::select! {
+                    job = moving.recv() => if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return },
+                    () = tokio::time::sleep(QUIET) => {}
+                }
+            }
+            if !first {
+                // Output comes many times a second: one look takes in all
+                // of it that came within `EVERY`.
+                tokio::time::sleep(EVERY).await;
+                loop {
+                    match moving.try_recv() {
+                        Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return,
+                    }
+                }
+            }
+            first = false;
             let Some(node) = weak.upgrade() else { return };
             if node.assets.is_some() {
                 let working = node.clone();
@@ -158,15 +189,18 @@ pub(crate) fn start(node: &Arc<Node>) {
                 .await;
                 written = known;
                 match looked {
-                    Ok(now) => {
+                    Ok((now, still_open)) => {
                         whole = false;
                         held = now;
+                        open = still_open;
                     }
-                    Err(error) => node.log.line(format_args!("writing the jobs here into the asset library: {error}")),
+                    Err(error) => {
+                        open = true;
+                        node.log.line(format_args!("writing the jobs here into the asset library: {error}"));
+                    }
                 }
             }
             drop(node);
-            tokio::time::sleep(EVERY).await;
         }
     });
 }
@@ -198,8 +232,8 @@ fn holdings(library: &Library) -> Result<u64, String> {
 /// `held`, every job since the jobs here are written (NN07, L04). What the
 /// scopes are held as now. `written` is what the looks before found written
 /// whole, and what this one finds.
-fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result<u64, String> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(held) };
+fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result<(u64, bool), String> {
+    let Some(kept) = node.assets.as_ref() else { return Ok((held, false)) };
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let written_since = library
@@ -234,6 +268,10 @@ fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result
     }
     let mut failed = None;
     let mut homes = Homes::default();
+    // Whether a job this machine writes the assets of is left open: that
+    // one is looked at again soon. One open of before whose conversation is
+    // elsewhere waits for its record to go, and wants no look.
+    let mut writing = !still.is_empty();
     written.retain(|key, _| jobs.contains_key(key));
     for (key, (job, path)) in jobs {
         let Some(home) = home_of(node, &job) else {
@@ -245,9 +283,11 @@ fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result
         match write_job(node, &home, &job, &key, &mut homes, written) {
             Ok(true) => {}
             Ok(false) => {
+                writing = true;
                 still.insert(key, path);
             }
             Err(error) => {
+                writing = true;
                 failed.get_or_insert(format!("{}: {error}", job.id));
                 still.insert(key, path);
             }
@@ -259,7 +299,7 @@ fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result
     if still != open {
         library.keep_checkpoint(OPEN, serde_json::to_vec(&still).map_err(|error| error.to_string())?).map_err(error)?;
     }
-    failed.map_or(Ok(now_held), Err)
+    failed.map_or(Ok((now_held, writing)), Err)
 }
 
 /// The scope a job's assets go in at `home`, and its holding, when this
