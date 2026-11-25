@@ -221,6 +221,9 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
     });
 }
 
+/// How long what moved waits for a turn of its scope under way to end.
+const TURN_WAITED: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Takes the frames of the replica `stream` of `scope` up to `next`, where
 /// the scope is held and pulled whole here and no turn of it is under way.
 async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, next: u64) -> Result<(), String> {
@@ -229,7 +232,10 @@ async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Pub
     // Gone through now, it is brought there to where the hub stands; a
     // stream its machine keeps (`direct`) is brought no further than that
     // machine said as the going through asked it, and is left to the pass.
-    let Ok(_turn) = turning.try_lock() else {
+    // A turn that ends soon is waited for: one takes a stream or two, and
+    // what moved meanwhile need not wait for the driver's next round to be
+    // shown (codex-79f63b53); one taken further meanwhile asks for nothing.
+    let Ok(_turn) = tokio::time::timeout(TURN_WAITED, turning.lock()).await else {
         return if super::direct::stays(link, scope, stream) { Err("left to the pass".into()) } else { Ok(()) };
     };
     let (key_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
