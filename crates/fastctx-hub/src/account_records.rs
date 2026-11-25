@@ -476,7 +476,7 @@ async fn asked_of(
                     && before.is_some_and(|entry| entry.metadata.deleted);
                 let mut history_author = None;
                 if kind == fastctx_types::history::RECORD_KIND && !deleted {
-                    let stored: fastctx_types::history::stored::Stored =
+                    let mut stored: fastctx_types::history::stored::Stored =
                         serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
                     stored.validate()?;
                     crate::history_author::check(
@@ -491,10 +491,19 @@ async fn asked_of(
                     history_author = Some((stored.revision.author.clone(), stored.submission.is_some()));
                     fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
                     crate::history_limits::conversation(&records, &key)?;
-                    if stored.revision.version != version
-                        || key.rsplit('/').next() != Some(stored.revision.name.as_str())
+                    // A writer numbers its revision next after the one it
+                    // read. Where the hub was put back since, the hub numbers
+                    // it above every one written before, and the revision
+                    // kept takes that number, which the writer is told.
+                    let next = before.map_or(0, |entry| entry.metadata.version).saturating_add(1);
+                    if key.rsplit('/').next() != Some(stored.revision.name.as_str())
+                        || (stored.revision.version != version && stored.revision.version != next)
                     {
                         return Err("the history revision does not match its record key and version".into());
+                    }
+                    if stored.revision.version != version {
+                        stored.revision.version = version;
+                        body = serde_json::to_value(&stored).map_err(|error| error.to_string())?;
                     }
                 }
                 let record = Record {

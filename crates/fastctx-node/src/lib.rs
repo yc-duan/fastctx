@@ -579,6 +579,15 @@ pub async fn run_replacing(
     run_prepared(fastctx_root, supervision, successor, None, None).await
 }
 
+/// Whether this node was started by the system's service manager for its
+/// fastctx service: systemd names each start of a unit, launchd the job a
+/// process runs for.
+fn started_by_service_manager() -> bool {
+    (cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some())
+        || (cfg!(target_os = "macos")
+            && std::env::var("XPC_SERVICE_NAME").is_ok_and(|job| job.starts_with("fastctx-service-node-")))
+}
+
 /// Another node serves the World already: this one ends, having taken
 /// nothing of it.
 #[derive(Debug)]
@@ -672,11 +681,11 @@ pub async fn run_prepared(
             let lock = world.node_lock();
             fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
-        // A Linux service manager starts its node again the moment one
-        // ends, as when a node hands the World to the newer program it
-        // renewed to: the one it starts waits a while for the World rather
-        // than ending at once, refused, to be started again.
-        false if cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some() => {
+        // A Linux service manager, or launchd, starts its node again the
+        // moment one ends, as when a node hands the World to the newer
+        // program it renewed to: the one it starts waits a while for the
+        // World rather than ending at once, refused, to be started again.
+        false if started_by_service_manager() => {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             world_holder::take(fastctx_root, &world, Some(deadline))
                 .await?

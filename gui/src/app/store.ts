@@ -7,7 +7,7 @@
 
 import { keep, knownMachines, recall, remember, unreachedOf } from "./answered";
 import { indexOf, pair } from "./world-index";
-import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
+import { inShell, watchWorld, worldNow, type WorldNow, type WorldPiece } from "../world/bridge";
 import { applyChange } from "../world/change";
 import { lendTitles } from "../world/names";
 import type { Address } from "../world/events";
@@ -45,6 +45,10 @@ export interface Store {
 /** How often what is shown as so long ago moves on: the World itself comes
  *  as it changes. */
 const tick = 2000;
+/** The first pause before a refused or ended World watch is asked for
+ *  again, and the longest. */
+const REWATCH_FIRST = 1000;
+const REWATCH_MOST = 30_000;
 
 export function createStore(specimen?: () => { world: WorldNow; now: Date }): Store {
   const live = !import.meta.env.DEV || inShell();
@@ -136,7 +140,7 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
       if (watched) came(watched);
     });
   };
-  void watchWorld((piece) => {
+  const take = (piece: WorldPiece) => {
     pieces += 1;
     if (piece.kind === "world" || piece.kind === "changed") {
       if (piece.kind === "changed" && !watched) return;
@@ -146,6 +150,7 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
       // Answered: a break after this, in the same batch, counts from its own
       // start.
       waiting = null;
+      rewatchIn = REWATCH_FIRST;
       say();
       showSoon();
       return;
@@ -154,10 +159,24 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
     say();
     waiting ??= piece.since;
     moveOn();
-  }, knownMachines()).catch((error: unknown) => {
-    broken = String(error);
+  };
+  // A watch the shell refused or ended is asked for again, after a pause
+  // that grows while it keeps failing: the World is never left unfollowed.
+  let rewatchIn = REWATCH_FIRST;
+  const watchAgain = (why: string) => {
+    broken = why;
     say();
-  });
+    waiting ??= Date.now();
+    moveOn();
+    window.setTimeout(begin, rewatchIn);
+    rewatchIn = Math.min(rewatchIn * 2, REWATCH_MOST);
+  };
+  const begin = () => {
+    watchWorld(take, knownMachines(), () => watchAgain("the World's watch ended; asking for it again")).catch(
+      (error: unknown) => watchAgain(String(error)),
+    );
+  };
+  begin();
   const refresh = async () => {
     const before = pieces;
     try {

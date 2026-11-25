@@ -124,8 +124,12 @@ export type WorldPiece =
 /** Follows the World: first as it is, then after each change, nothing
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
-export function watchWorld(onPiece: (piece: WorldPiece) => void, known: string[] = []): Promise<number> {
-  return observe<WorldPiece, number>("world_watch", { known }, onPiece);
+export function watchWorld(
+  onPiece: (piece: WorldPiece) => void,
+  known: string[] = [],
+  onClosed?: () => void,
+): Promise<number> {
+  return observe<WorldPiece, number>("world_watch", { known }, onPiece, onClosed);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it
@@ -267,6 +271,12 @@ export function pause(tries: number, machine: MachineName | null, done: () => vo
 export function retryNow(): Promise<void> {
   retryDeliveries();
   return invoke("reconnect");
+}
+
+/** Asks this computer's node service to start the node anew, as its user may
+ *  with no administrator; resolves once asked. */
+export function restartLocalService(): Promise<void> {
+  return invoke("restart_local_service");
 }
 
 /** An upload as the shell takes it: where the file goes, when it goes to a

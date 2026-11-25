@@ -35,11 +35,19 @@ pub(super) struct Requests {
     pub adopt: AtomicBool,
     /// Its user said the next stop is planned.
     pub planned: AtomicBool,
+    /// Its user asked it to start the node anew (`super::restart`).
+    pub restart: AtomicBool,
     /// A hub's guardian took a newer World program by itself and ends, to be
     /// started again on it at once (`super::adopt::offered`).
     pub renewed: AtomicBool,
     pub wake_queued: AtomicBool,
 }
+
+/// The first pause before a node that could not be prepared is tried again,
+/// the longest, and how long it is tried before the host ends.
+const UNPREPARED_FIRST: std::time::Duration = std::time::Duration::from_secs(1);
+const UNPREPARED_MOST: std::time::Duration = std::time::Duration::from_secs(30);
+const UNPREPARED_AT_MOST: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 struct Node {
     child: Child,
@@ -74,9 +82,14 @@ pub(super) fn run(
     let mut profile_lease = None;
     let mut refresh = true;
     let mut ready = Some(ready);
-    // What a hub's guardian last said of a newer program it did not take,
-    // said once rather than every minute.
+    // What the guardian last said of a newer program it did not take, said
+    // once rather than each time it is asked again.
     let mut refused: Option<String> = None;
+    // A node that cannot be prepared with none running, as while Windows
+    // shuts down or its logon service is still starting, is tried again here
+    // after a growing pause, rather than at once by the service manager.
+    let mut unprepared: Option<(std::time::Instant, std::time::Duration)> = None;
+    let mut unprepared_said: Option<String> = None;
     let result = (|| {
         loop {
             if requests.stop.load(Ordering::SeqCst) || requests.shutdown.load(Ordering::SeqCst) {
@@ -85,10 +98,34 @@ pub(super) fn run(
             if requests.refresh.swap(false, Ordering::SeqCst) {
                 refresh = true;
             }
+            if requests.restart.swap(false, Ordering::SeqCst) && config.kind == Kind::Node {
+                line(&mut log, "starting the node anew, as its user asked");
+                for node in [candidate.take(), active.take()].into_iter().flatten() {
+                    if let Err(error) = node.child.terminate() {
+                        line(&mut log, &format!("ending process {}: {error:#}", node.child.pid));
+                    }
+                }
+                match super::restart::end_holder(&config) {
+                    Ok(Some(pid)) => line(&mut log, &format!("ended process {pid}, which held the World unkept")),
+                    Ok(None) => {}
+                    Err(error) => line(&mut log, &format!("ending what holds the World: {error:#}")),
+                }
+                unprepared = None;
+                refresh = true;
+            }
             if requests.adopt.swap(false, Ordering::SeqCst) {
                 match super::adopt::adopt(&config) {
-                    Ok(()) => line(&mut log, "took the newer World program its user asked for"),
-                    Err(error) => line(&mut log, &format!("did not take the World program: {error:#}")),
+                    Ok(()) => {
+                        refused = None;
+                        line(&mut log, "took the newer World program its user asked for");
+                    }
+                    Err(error) => {
+                        let said = format!("did not take the World program: {error:#}");
+                        if refused.as_deref() != Some(said.as_str()) {
+                            line(&mut log, &said);
+                            refused = Some(said);
+                        }
+                    }
                 }
             }
             if refresh && config.kind == Kind::Hub && super::adopt::offered(&config) {
@@ -110,13 +147,33 @@ pub(super) fn run(
             if refresh || active.is_none() && candidate.is_none() {
                 refresh = false;
                 let reconcile = reconcile(&config, &mut active, &mut candidate, &sender, &mut log);
-                if let Err(error) = reconcile {
-                    line(&mut log, &format!("cannot prepare a node: {error:#}"));
-                    // A failed successor must never take a working node down.
-                    // Session changes and the independent periodic check retry
-                    // it; without any node, SCM immediately retries the host.
-                    if active.is_none() {
-                        return Err(error);
+                match reconcile {
+                    Ok(()) => {
+                        unprepared = None;
+                        unprepared_said = None;
+                    }
+                    Err(error) => {
+                        // A failed successor must never take a working node
+                        // down. Session changes and the independent periodic
+                        // check retry it; without any node, this host tries
+                        // again after a pause, and the service manager starts
+                        // it anew once it has tried for `UNPREPARED_AT_MOST`.
+                        let said = format!("cannot prepare a node: {error:#}");
+                        if unprepared_said.as_deref() != Some(said.as_str()) {
+                            line(&mut log, &said);
+                            unprepared_said = Some(said);
+                        }
+                        if active.is_none() {
+                            let (since, pause) = match unprepared {
+                                Some((since, pause)) => (since, (pause * 2).min(UNPREPARED_MOST)),
+                                None => (std::time::Instant::now(), UNPREPARED_FIRST),
+                            };
+                            if since.elapsed() >= UNPREPARED_AT_MOST {
+                                return Err(error);
+                            }
+                            refresh = true;
+                            unprepared = Some((since, pause));
+                        }
                     }
                 }
             }
@@ -129,7 +186,17 @@ pub(super) fn run(
             {
                 ready()?;
             }
-            match events.recv()? {
+            let event = match unprepared.filter(|_| active.is_none() && candidate.is_none()) {
+                Some((_, pause)) => match events.recv_timeout(pause) {
+                    Ok(event) => event,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(anyhow::anyhow!("the guardian's events ended"));
+                    }
+                },
+                None => events.recv()?,
+            };
+            match event {
                 Event::Wake => {
                     requests.wake_queued.store(false, Ordering::SeqCst);
                     refresh = true;

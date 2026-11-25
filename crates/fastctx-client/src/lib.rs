@@ -153,6 +153,9 @@ pub struct Client {
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
 
+/// How long a node is given to answer a client's introduction.
+const HANDSHAKE: std::time::Duration = std::time::Duration::from_secs(15);
+
 impl Client {
     /// Connects to the node of the World in `world` and introduces `peer`.
     pub async fn connect(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
@@ -182,12 +185,22 @@ impl Client {
             notices: NOTICES,
             shapes: fastctx_types::ipc::SHAPES,
         };
-        connection.send(&to_json(&hello)).await.map_err(io_error)?;
-        let welcome = connection
-            .recv()
-            .await
-            .map_err(io_error)?
-            .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
+        // A node that took the connection and says nothing, as one stuck or
+        // still starting, ends this attempt rather than holding it for good:
+        // whoever connects tries again as it would after any failure.
+        let welcome = tokio::time::timeout(HANDSHAKE, async {
+            connection.send(&to_json(&hello)).await?;
+            connection.recv().await
+        })
+        .await
+        .map_err(|_| {
+            io_error(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("the node took the connection and said nothing for {} seconds", HANDSHAKE.as_secs()),
+            ))
+        })?
+        .map_err(io_error)?
+        .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
             Welcome::Accepted {
                 machine,

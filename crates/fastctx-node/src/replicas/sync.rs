@@ -112,6 +112,9 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
     // left as it is until they are asked again.
     let mut unasked = std::collections::HashSet::new();
     let mut here = std::collections::HashSet::new();
+    // Refused for a new reason, by reason: one line each, however many
+    // conversations, as when the hub went away during the pass.
+    let mut newly_refused: std::collections::BTreeMap<String, (usize, ResidentId)> = Default::default();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         here.insert(resident.id.clone());
         if refused_lately(&resident.id) {
@@ -124,9 +127,15 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
             }
             Err(error) => {
                 if refused(&resident.id, &error.message) {
-                    node.log.line(format_args!("registering the records of {}: {error}", resident.id));
+                    newly_refused.entry(error.message.clone()).or_insert((0, resident.id.clone())).0 += 1;
                 }
             }
+        }
+    }
+    for (why, (count, first)) in newly_refused {
+        match count {
+            1 => node.log.line(format_args!("registering the records of {first}: {why}")),
+            _ => node.log.line(format_args!("registering the records of {count} conversations, {first} first: {why}")),
         }
     }
     // What was refused to a conversation no longer here is kept no longer.

@@ -381,6 +381,30 @@ impl Service {
         }
     }
 
+    /// Starts the node anew where its own user may, with no administrator:
+    /// on Windows its guardian is asked, and ends with its nodes any node
+    /// holding the World without being kept; on Linux by the restart its
+    /// install allows; on macOS through the user's launch agent. False where
+    /// nothing runs to be started anew.
+    pub fn restart_node(&self) -> anyhow::Result<bool> {
+        self.validate()?;
+        let normalized = self.normalized()?;
+        #[cfg(windows)]
+        return windows::restart::ask(&normalized);
+        #[cfg(target_os = "linux")]
+        {
+            linux_restart::restart(&normalized.id(&normalized.uid.to_le_bytes()))?;
+            Ok(true)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            macos::restart(&normalized)?;
+            Ok(true)
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
+    }
+
     /// Physical directory spelling is fixed before deriving a registration.
     /// Windows' verbatim prefix is transport syntax, not part of its identity.
     fn normalized(&self) -> anyhow::Result<Self> {

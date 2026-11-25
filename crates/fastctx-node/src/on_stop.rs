@@ -241,7 +241,14 @@ pub(crate) async fn resume(node: &Arc<Node>) {
             })
             .await;
             match result {
-                Ok(Ok(())) => break,
+                Ok(Ok(())) => {
+                    let settling = recovering.clone();
+                    let _ = fastctx_platform::task::spawn_blocking(move || {
+                        crate::obligations::settled(&settling, &settling.world.path().join("local-stop-recovery"))
+                    })
+                    .await;
+                    break;
+                }
                 Ok(Err(_)) => {}
                 Err(error) => recovering.log.line(format_args!("recovering local stops: {error}")),
             }
@@ -253,7 +260,17 @@ pub(crate) async fn resume(node: &Arc<Node>) {
         let mut again = Again::default();
         loop {
             match resume_pending_stops(&recovering).await {
-                Ok(()) => break,
+                Ok(()) => {
+                    let settling = recovering.clone();
+                    let _ = fastctx_platform::task::spawn_blocking(move || {
+                        crate::obligations::settled(&settling, &settling.world.path().join("outgoing-stop-recovery"))
+                    })
+                    .await;
+                    break;
+                }
+                // The records being moved to their newer form fill the queue
+                // for a while after an update: waited for, not a failure.
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => {
                     let working = recovering.clone();
                     let _ = fastctx_platform::task::spawn_blocking(move || {

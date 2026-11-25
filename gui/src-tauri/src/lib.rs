@@ -30,6 +30,8 @@ mod kept;
 mod layers;
 #[cfg(desktop)]
 mod local_repair;
+#[cfg(desktop)]
+mod local_service;
 mod plan;
 mod profile;
 mod projects;
@@ -1232,6 +1234,8 @@ pub fn run() {
             local_repair::repair_here,
             #[cfg(desktop)]
             local_repair::repair_state,
+            #[cfg(desktop)]
+            local_service::restart_local_service,
             updates::update_state,
             updates::update_repair,
             updates::update_progress,

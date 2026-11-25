@@ -128,13 +128,16 @@ impl Link {
                 )
                 .await?;
             return match response {
+                // A hub put back since numbers the revision above every one
+                // written before (`number_floor`): the revision is the number
+                // it gave.
                 Response::Record { response: RecordResponse::Written { metadata } }
-                    if metadata.version == revision.version =>
+                    if metadata.version >= revision.version =>
                 {
                     self.inner.history_catalogs.invalidate(|(_, source)| {
                         matches!(source, super::history_catalogs::Source::Conversation(address) if address.resident == conversation.resident)
                     });
-                    Ok(revision)
+                    Ok(HistoryRevision { version: metadata.version, ..revision })
                 }
                 // A name deleted for good is written again from its deletion,
                 // as a new document.

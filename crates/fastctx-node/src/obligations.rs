@@ -155,9 +155,11 @@ pub(crate) fn retry_record(node: &Node, path: &Path, reason: &str) -> io::Result
     Ok(())
 }
 
+/// Why each obligation whose retry reason could not be kept waits, said once.
+static UNWRITABLE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
 pub(crate) fn retry(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
-    static UNWRITABLE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>> =
-        std::sync::LazyLock::new(Default::default);
     let marker = path.with_extension("retry");
     let written = (|| -> io::Result<bool> {
         match fastctx_platform::disk::read_to_string(&marker) {
@@ -187,6 +189,18 @@ pub(crate) fn retry(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The obligation at `path` that waited (`retry`) went: why it waited goes
+/// too, so a reason kept from before does not say it waits still.
+pub(crate) fn settled(node: &Node, path: &Path) {
+    UNWRITABLE.lock().expect("never poisoned").remove(path);
+    let marker = path.with_extension("retry");
+    match fastctx_platform::disk::remove_file(&marker) {
+        Ok(()) => node.log.line(format_args!("delivered what waited for {}", path.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => node.log.line(format_args!("removing {}: {error}", marker.display())),
+    }
 }
 
 /// A local conversation receives the same durable failure fact once, even

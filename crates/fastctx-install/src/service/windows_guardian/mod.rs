@@ -11,6 +11,7 @@ mod host;
 mod owner;
 mod policy;
 mod renewal;
+pub(crate) mod restart;
 mod runtime;
 mod scm;
 mod security;

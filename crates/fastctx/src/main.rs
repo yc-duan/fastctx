@@ -33,6 +33,7 @@ mod left_nodes;
 mod mcp;
 mod mcp_child;
 mod mcp_relay;
+mod node_probe;
 mod on;
 mod output;
 mod paths;
