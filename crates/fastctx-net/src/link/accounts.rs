@@ -38,7 +38,7 @@ impl Link {
                 .ok_or_else(|| format!("there is no project {name} on {}", self.hub_name()))
         };
         if matches!(&change, AccountChange::UpdateDue { batch: Some(_), .. }) {
-            self.inner.refresh().await?;
+            self.refresh_unless_current().await?;
         }
         self.check_account_change(&change)?;
         let wire = match change {

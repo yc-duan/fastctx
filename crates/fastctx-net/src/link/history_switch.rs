@@ -29,7 +29,7 @@ impl Link {
             return Err("the hub did not confirm the notes setting".into());
         }
         // Read the authoritative view: another writer's later choice wins.
-        self.refresh().await?;
+        self.refresh_unless_current().await?;
         self.inner.node.directory_changed();
         Ok(())
     }

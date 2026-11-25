@@ -272,8 +272,9 @@ async fn checked(
 async fn machines(node: &Arc<Node>, acting: &fastctx_types::access::Acting, hub: Option<&HubId>) -> Vec<MachineName> {
     match hub.and_then(|hub| node.link_of(hub)) {
         Some(link) => {
-            // Asked afresh, or as last heard when the hub cannot be asked.
-            let _ = link.refresh().await;
+            // As the hub tells it while the line is up, else asked afresh, or
+            // as last heard when the hub cannot be asked.
+            let _ = link.refresh_unless_current().await;
             let accounts = node.accounts_on(&link, acting);
             let view = link.view();
             view.machines()

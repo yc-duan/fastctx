@@ -869,6 +869,14 @@ impl Link {
         self.inner.refresh().await
     }
 
+    /// Asks the hub for this machine's view again only where the view held is
+    /// not of the connection up now (`view_current`): while it is, the hub
+    /// tells each change of it as it happens, and asking again tells nothing
+    /// new.
+    pub async fn refresh_unless_current(&self) -> Result<(), String> {
+        if self.view_current() { Ok(()) } else { self.refresh().await }
+    }
+
     /// Proves this machine is on the connection whose TLS exporter is
     /// `binding`.
     pub fn prove(&self, binding: &[u8; 32]) -> crate::sign::Signature {

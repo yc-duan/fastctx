@@ -321,7 +321,7 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
     }
     for scope in scopes {
         let link = node.link_of(&scope.hub).ok_or_else(|| Failure::new(words::ROUTE))?;
-        link.refresh().await.map_err(Failure::new)?;
+        link.refresh_unless_current().await.map_err(Failure::new)?;
         // Earlier hubs never held plans; their conversations retain their former deletion behavior.
         if !link.view().conversation_plans {
             continue;

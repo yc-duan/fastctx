@@ -18,7 +18,7 @@ impl Link {
         if !self.view().layers {
             return Err(HUB_TOO_OLD.into());
         }
-        self.refresh().await?;
+        self.refresh_unless_current().await?;
         let mut profile = self.profile_read(account)?.profile;
         let answer = self
             .inner
