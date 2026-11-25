@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use fastctx_platform::ipc::Connection;
 use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, Welcome};
-use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::remote::RemoteCall;
 use fastctx_types::residents::{Activity, PendingState};
 use fastctx_types::run::{RunReply, RunRequest};
 use fastctx_types::town::{MachineWho, WhoReply, WhoScope, WorldWho};
@@ -1389,9 +1389,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery })
         }
-        Call::Agents { machine } => {
+        Call::Agents { machine, at_once } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::agents::query(node, &acting, machine).await.map(Reply::Agents)
+            crate::agents::query(node, &acting, machine, at_once).await.map(Reply::Agents)
         }
         Call::ClaudeConsent { machine, accept, home } => {
             users_voice(node, peer)?;
@@ -1405,9 +1405,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::homes::call(node, machine, change).await.map(|()| Reply::Done)
         }
-        Call::AgentLogins { machine } => {
+        Call::AgentLogins { machine, at_once } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::logins::query(node, &acting, machine).await.map(Reply::AgentLogins)
+            crate::logins::query(node, &acting, machine, at_once).await.map(Reply::AgentLogins)
         }
         Call::ScanAgents { machine, stop } => {
             users_voice(node, peer)?;
@@ -2434,7 +2434,10 @@ pub async fn who_here(
     let (world, machine) = (node.world.clone(), node.machine());
     let place = town.clone();
     let mut reply = blocking("looking around", move || {
-        crate::who::who(&world, &machine, reading.residents.everyone(), reading.residents.former(), all, place.as_ref())
+        // Those who moved away are listed only for a town, with all: none
+        // else walks every resident's places for them (codex-1c5d39f1).
+        let former = if all && place.is_some() { reading.residents.former() } else { Vec::new() };
+        crate::who::who(&world, &machine, reading.residents.everyone(), former, all, place.as_ref())
     })
     .await?;
     for resident in &mut reply.residents {
@@ -2494,7 +2497,9 @@ async fn who(
         });
     }
     let reachable = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look);
-    let heard = crate::around::ask_each(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }).await;
+    let heard =
+        crate::around::ask_known(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }, crate::around::WAITED_ON)
+            .await;
     machines
         .extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())));
     let mut reply =
@@ -2585,8 +2590,6 @@ async fn nodes(
     acting: &fastctx_types::access::Acting,
     works_here: bool,
 ) -> Result<NodesReply, Failure> {
-    use fastctx_net::around::{self, Heard, Reachable};
-
     let here = node.machine();
     let links: Vec<_> = node
         .links()
@@ -2596,88 +2599,70 @@ async fn nodes(
         })
         .collect();
     let workbench = crate::logins::workbench::shown(node, &links, acting, works_here);
-    let hubs = around::on_hubs(links, |link, fresh| async move {
-        let view = link.view();
-        let logins = node.accounts_on(&link, acting);
-        // A hub that cannot be asked now still has its machines, as its
-        // view last had them (`Link::last_view`).
-        let listed = link.last_view().is_some();
-        let reachable = view
-            .machines()
-            .filter(|machine| listed && !view.is_me(&machine.name))
-            .filter_map(|machine| {
-                view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands).map(
-                    |account| Reachable {
-                        link: link.clone(),
-                        name: machine.name.clone(),
-                        account,
-                        key: machine.key,
-                        written: (&machine.name).into(),
-                    },
-                )
-            })
-            .collect();
-        let online_known = fresh.is_ok();
-        let heard = around::ask_refreshed(reachable, |_| RemoteCall::Facts, fresh).await;
-        let machines = heard
-            .into_iter()
-            .map(|(asked, heard)| {
-                let name = asked.source.written.name;
-                let seen = view
-                    .machines()
-                    .find(|machine| machine.key.to_string() == asked.source.key)
-                    .expect("a machine selected from this view");
-                let facts = match heard {
-                    Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
-                    Heard::Answered(_) => Err("it answered something else".to_string()),
-                    Heard::Offline(_) => Err("it is offline".to_string()),
-                    // With the hub not asked, none of its machines was:
-                    // what each said of itself when it last connected.
-                    Heard::NoAnswer(_) if !online_known => crate::facts::of(node, &link, seen, None),
-                    Heard::NoAnswer(reason) => Err(reason),
-                };
-                NodeView {
-                    written: node.written(&link, &name).to_string(),
-                    online: online_known.then_some(seen.online),
-                    since: seen.since,
-                    // The machine its link goes through is said only when
-                    // the asker may work on it too.
-                    through: seen.through.clone().filter(|through| {
-                        MachineName::try_from(through.clone()).is_ok_and(|through| {
-                            (works_here && view.is_me(&through))
-                                || view
-                                    .account_for(&logins, &view.me, &through, fastctx_types::access::Purpose::Hands)
-                                    .is_some()
-                        })
-                    }),
-                    strain: seen.strain.filter(|_| online_known && seen.online),
-                    allows_direct: !seen.direct.is_empty(),
-                    path: Some(link.path_to(&name)),
-                    facts,
-                    owner: seen.home.clone(),
-                    group: seen.group.clone(),
-                    rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
-                    name,
-                }
-            })
-            .collect();
-        let here = if works_here {
-            logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect()
-        } else {
-            Vec::new()
-        };
-        fastctx_types::world::HubNodes {
-            hub: link.membership().id.clone(),
-            name: view.hub_name.clone(),
-            link: link.state(),
-            here,
-            logins,
-            // Whose this computer is, to whom may work on it alone.
-            home: view.me().and_then(|me| me.home.clone()).filter(|_| works_here),
-            machines,
-        }
-    })
-    .await;
+    // What is here answers: each hub's directory as it last told it, which
+    // follows its changes on its own, and what each machine said of itself
+    // when it connected (`crate::facts`), asked again in the background where
+    // that is from an earlier connection. No hub and no machine is waited on.
+    let hubs = links
+        .into_iter()
+        .map(|link| {
+            let view = link.view();
+            let logins = node.accounts_on(&link, acting);
+            // A hub that cannot be asked now still has its machines, as its
+            // view last had them (`Link::last_view`).
+            let listed = link.last_view().is_some();
+            // Who is online is known from a view taken on the connection
+            // running now; one from before is told as not known.
+            let online_known = listed && link.view_current();
+            let machines = view
+                .machines()
+                .filter(|machine| listed && !view.is_me(&machine.name))
+                .filter_map(|seen| {
+                    let account = view.account_for(&logins, &view.me, &seen.name, fastctx_types::access::Purpose::Hands)?;
+                    let name = seen.name.clone();
+                    let facts = crate::facts::of(node, &link, seen, Some(account));
+                    Some(NodeView {
+                        written: node.written(&link, &name).to_string(),
+                        online: online_known.then_some(seen.online),
+                        since: seen.since,
+                        // The machine its link goes through is said only when
+                        // the asker may work on it too.
+                        through: seen.through.clone().filter(|through| {
+                            MachineName::try_from(through.clone()).is_ok_and(|through| {
+                                (works_here && view.is_me(&through))
+                                    || view
+                                        .account_for(&logins, &view.me, &through, fastctx_types::access::Purpose::Hands)
+                                        .is_some()
+                            })
+                        }),
+                        strain: seen.strain.filter(|_| online_known && seen.online),
+                        allows_direct: !seen.direct.is_empty(),
+                        path: Some(link.path_to(&name)),
+                        facts,
+                        owner: seen.home.clone(),
+                        group: seen.group.clone(),
+                        rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
+                        name,
+                    })
+                })
+                .collect();
+            let here = if works_here {
+                logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect()
+            } else {
+                Vec::new()
+            };
+            fastctx_types::world::HubNodes {
+                hub: link.membership().id.clone(),
+                name: view.hub_name.clone(),
+                link: link.state(),
+                here,
+                logins,
+                // Whose this computer is, to whom may work on it alone.
+                home: view.me().and_then(|me| me.home.clone()).filter(|_| works_here),
+                machines,
+            }
+        })
+        .collect();
     let facts = if works_here {
         let telling = node.clone();
         Some(fastctx_platform::task::blocking(move || crate::world::facts(&telling)).await)

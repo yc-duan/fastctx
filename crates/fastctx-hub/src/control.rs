@@ -285,9 +285,9 @@ pub(crate) async fn session(
         loop {
             let next = queue.next().await;
             let Some(next) = next else { break };
-            let (preparing, reader) = (telling.clone(), member_name.clone());
+            let (preparing, reader, preparing_queue) = (telling.clone(), member_name.clone(), queue.clone());
             let (frames, last) = match fastctx_platform::task::spawn_blocking(move || {
-                encoding::prepare(&preparing, &reader, member, next)
+                encoding::prepare(&preparing, &reader, member, &preparing_queue, next)
             })
             .await
             {
@@ -345,9 +345,10 @@ pub(crate) async fn session(
             changed = transport.heartbeat.changed() => {
                 if changed.is_err() { break (None, false); }
                 let Some(frame) = transport.heartbeat.borrow_and_update().clone() else { continue };
-                if let Up::Ping { health, workbench, .. } = &frame {
+                if let Up::Ping { health, workbench, logins_number, .. } = &frame {
                     heard.heartbeat(&hub, &name, key, generation, health.as_ref());
                     crate::workbench::heard(&hub, &name, *workbench);
+                    crate::workbench::logins_heard(&hub, &name, *logins_number);
                 }
                 Some(Err(frame))
             },
@@ -1536,12 +1537,41 @@ fn lines(hub: &Hub, name: &MachineName, generation: u64, paths: fastctx_net::dir
             return;
         };
         let changed = session.paths.as_ref().map(linked) != Some(linked(&paths));
-        session.paths = Some(paths);
+        session.paths = Some(steady(session.paths.as_ref(), paths));
         changed
     };
     if changed {
         hub.present(name);
     }
+}
+
+/// `paths` as they are kept and told: a round trip that moved little from
+/// the one kept stays as it was, and one that moved is rounded, so how a
+/// line jitters — 28 ms one moment, 30 the next — is not told every few
+/// seconds to everyone who sees the machine, in each view and presence
+/// given meanwhile.
+fn steady(kept: Option<&fastctx_net::directory::Paths>, mut paths: fastctx_net::directory::Paths) -> fastctx_net::directory::Paths {
+    fn round(ms: u32) -> u32 {
+        let step = match ms {
+            0..100 => 10,
+            100..400 => 25,
+            _ => 100,
+        };
+        (ms.saturating_add(step / 2) / step * step).max(1)
+    }
+    fn kept_or_rounded(kept: Option<u32>, ms: Option<u32>) -> Option<u32> {
+        let ms = ms?;
+        match kept {
+            Some(kept) if ms.abs_diff(kept) <= (kept / 4).max(5) => Some(kept),
+            _ => Some(round(ms)),
+        }
+    }
+    paths.hub_ms = kept_or_rounded(kept.and_then(|kept| kept.hub_ms), paths.hub_ms);
+    for link in &mut paths.links {
+        let before = kept.and_then(|kept| kept.links.iter().find(|held| held.peer == link.peer)).and_then(|held| held.ms);
+        link.ms = kept_or_rounded(before, link.ms);
+    }
+    paths
 }
 
 /// Whether `message` is a letter telling a resident what came of work its

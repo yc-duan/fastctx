@@ -606,7 +606,7 @@ async fn agents(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
 ) -> Result<fastctx_types::agents::WorldAgents, String> {
-    shell.world().agents(machine(machine_name)?).await.map_err(|error| error.to_string())
+    shell.world().agents_at_once(machine(machine_name)?).await.map_err(|error| error.to_string())
 }
 
 /// Stops the turn a resident is running; says whether one was. Seeing no

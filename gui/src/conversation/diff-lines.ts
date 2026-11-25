@@ -6,7 +6,9 @@
 
 import hljs from "highlight.js/lib/common";
 import type { LineChange, LineCursor, LineExtent, LineMatch, LinePaint, LineSource } from "../longview";
-import type { DiffLine } from "../world/run-facts";
+import type { DiffLine, DiffRef } from "../world/run-facts";
+import { MemoryLines } from "../longview/source";
+import { readText } from "../world/bridge";
 import { language, type DiffRow } from "./diff";
 
 /** Between a row's fields; a row's text never holds it, since the writer
@@ -148,6 +150,26 @@ export class DiffLines implements LineSource {
  *  JSON object a line, as `RemoteLines` reads them. */
 export interface RawLines extends LineSource {
   close(): Promise<void>;
+}
+
+/** The most bytes of a change's rows read whole in one request. */
+const WHOLE_MOST = 1024 * 1024;
+
+/** A change's rows read whole in one request and held here (`readText`):
+ *  the machine keeping them neither opens nor indexes them as lines, which
+ *  took three requests and a scan of the file there before the first row
+ *  came. None for one larger, unread or not text: those are read as lines. */
+export async function wholeDiff(diff: DiffRef): Promise<RawLines | null> {
+  if (diff.bytes === undefined || diff.bytes > WHOLE_MOST) return null;
+  try {
+    const read = await readText(diff.machine, diff.path, { kind: "all" });
+    if (read.text === null) return null;
+    const lines = read.text.split("\n");
+    if (lines[lines.length - 1] === "") lines.pop();
+    return Object.assign(new MemoryLines(lines), { close: async () => {} });
+  } catch {
+    return null;
+  }
 }
 
 /** Rows read from the machine holding the change, a screen at a time: each

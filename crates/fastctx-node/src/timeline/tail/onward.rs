@@ -804,7 +804,7 @@ pub(super) async fn advance(
     // Read again after a while that grows as it goes on unwritten (a record
     // its mod saw may never reach the file under its UUID): as the job that
     // brought it says (`brought`), not a viewer.
-    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false, on: true };
+    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false, on: true, waits_listing: false };
     if !holds {
         left_to_the_seam("a window too long to hold");
         return Ok(Step::Done(produced));

@@ -139,7 +139,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             }
         })
     };
-    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES, ready: None }, Arc::new(run));
 }
 
 /// Brings the timelines of the conversations whose history grew to it, read

@@ -569,6 +569,13 @@ pub enum Call {
     /// Agent programs on one machine, or every online machine in the World.
     Agents {
         machine: Option<Written>,
+        /// The reader takes what is known of each machine at once: one not
+        /// heard from lately that is slow to answer is told as being asked
+        /// (`crate::agents::MachineAgents::Asking`), and the reader reads
+        /// again once it answered (`crate::topics::LOGINS`). Without it,
+        /// each machine is waited on.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        at_once: bool,
     },
     /// The user's word, from one of the user's devices, on whether Claude
     /// Code on `machine` may run the World's sessions without approvals: its
@@ -591,6 +598,9 @@ pub enum Call {
     /// to ask again a login whose sign-in changed since it was asked.
     AgentLogins {
         machine: Option<Written>,
+        /// As `Agents::at_once` (`crate::logins::MachineLoginsHeard::Asking`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        at_once: bool,
     },
     /// Scans `machine`, one of the user's own, for its agents: answered
     /// once the usual places are done, while the folders the user chose are

@@ -644,8 +644,9 @@ async fn connected(
                     let paths = inner.view().direct_links.then(|| inner.paths());
                     let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
                     let health = inner.view().health.then(fastctx_platform::health::summary);
-                    let workbench = inner.node.workbench();
-                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench });
+                    let (workbench, logins_number) = (inner.node.workbench(), inner.node.logins_number());
+                    let _ =
+                        up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench, logins_number });
                 }
                 continue;
             },
@@ -1147,8 +1148,9 @@ async fn heartbeat(
                 // pong measures nothing.
                 let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
                 let health = inner.view().health.then(fastctx_platform::health::summary);
-                let workbench = inner.node.workbench();
-                if up.send_first(Up::Ping { n: 0, paths: None, took: Some(pulse.taken()), held, health, workbench }).is_err() {
+                let (workbench, logins_number) = (inner.node.workbench(), inner.node.logins_number());
+                let ping = Up::Ping { n: 0, paths: None, took: Some(pulse.taken()), held, health, workbench, logins_number };
+                if up.send_first(ping).is_err() {
                     return;
                 }
                 continue;
@@ -1160,8 +1162,8 @@ async fn heartbeat(
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
         let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
         let health = inner.view().health.then(fastctx_platform::health::summary);
-        let workbench = inner.node.workbench();
-        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health, workbench }).is_err() {
+        let (workbench, logins_number) = (inner.node.workbench(), inner.node.logins_number());
+        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health, workbench, logins_number }).is_err() {
             return;
         }
     }

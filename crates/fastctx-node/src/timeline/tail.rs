@@ -90,6 +90,27 @@ static SCOPE_LOOKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::n
 /// half a core, not all of one).
 static REST_UNTIL: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(Mutex::default);
 static LATE_REST_UNTIL: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(Mutex::default);
+
+/// How long until a check asked for at the time its job's `payload` keeps
+/// may begin: once the rest of the checks is over, a late one's own rest
+/// for one late (`LATE_REST_UNTIL`); one not late yet no later than it
+/// turns late, and then as one late. The jobs' runner takes none before,
+/// so a check resting is neither taken nor put back (codex-7d36e00c).
+fn check_ready(payload: &[u8]) -> Option<Duration> {
+    let asked = payload.get(..16).and_then(|bytes| bytes.try_into().ok()).map(i128::from_le_bytes);
+    let waited = asked
+        .and_then(|asked| Timestamp::from_nanosecond(asked).ok())
+        .map(|asked| Timestamp::now().duration_since(asked).unsigned_abs());
+    let left = |rest: &Mutex<Option<Instant>>| {
+        rest.lock().expect("checks' rest").and_then(|until| until.checked_duration_since(Instant::now()))
+    };
+    if waited.is_some_and(|waited| waited >= CHECK_LATE) {
+        return left(&LATE_REST_UNTIL);
+    }
+    let rest = left(&REST_UNTIL)?;
+    let until_late = waited.map_or(CHECK_LATE, |waited| CHECK_LATE.saturating_sub(waited));
+    Some(if rest <= until_late { rest } else { until_late.max(left(&LATE_REST_UNTIL).unwrap_or_default()) })
+}
 /// When each history's check was last asked for, in this run of the node.
 static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
@@ -122,6 +143,9 @@ fn resting(node: &Node, resident: &ResidentId) -> Option<Duration> {
 /// leaves them as they are unless one of these says otherwise — or they
 /// were not made for `BESIDE_EVERY`, which finds a change no one told of.
 static BESIDE: LazyLock<Mutex<std::collections::HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+/// The conversations whose draft alone was asked for since their last look
+/// (`wanted_draft`).
+static DRAFTED: LazyLock<Mutex<std::collections::HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
 static BESIDE_MADE: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 const BESIDE_EVERY: Duration = Duration::from_secs(60);
 
@@ -243,6 +267,13 @@ struct Following {
 fn waited_for_scope(resident: &ResidentId) -> bool {
     let mut first = SCOPE_LOOKED.lock().expect("scopes looked for");
     first.entry(resident.clone()).or_insert_with(Instant::now).elapsed() < SCOPE_WAIT
+}
+
+/// Whether `scope` waits for a hub's listing to be held here again
+/// (`fastctx_content::v2::Library::awaits_listing`).
+async fn awaits_listing(library: &fastctx_content::v2::Library, scope: &str) -> Result<bool, Failure> {
+    let (asking, scope) = (library.clone(), scope.to_string());
+    fastctx_platform::task::blocking(move || asking.awaits_listing(&scope)).await.map_err(failure)
 }
 
 /// The holding period the producer last finished making the timeline in,
@@ -484,6 +515,10 @@ pub(super) struct Produced {
     /// Written on from inside a turn (`onward`): read just now too, as far
     /// as how long a history read short of a source waits (`brought`).
     pub(super) on: bool,
+    /// Its scope was described by the hub and is not held here now: nothing
+    /// is brought, nor its history read, until a hub's listing holds it
+    /// again, which asks for it then (`assets::copies::hold_listed`).
+    pub(super) waits_listing: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -878,6 +913,13 @@ async fn produce_step(
         let (asking, scope) = (library.clone(), placed.scope.clone());
         fastctx_platform::task::blocking(move || asking.holding(&scope)).await.map_err(failure)?
     };
+    // Described by the hub and not held here now — the network left, the
+    // scope taken back — nothing can be written until a listing holds it
+    // again: its history is not read only to be refused at the write
+    // (codex-1c5d39f1).
+    if holding.is_none() && awaits_listing(&library, &placed.scope).await? {
+        return Ok(Done(Produced { waits_listing: true, ..Produced::default() }));
+    }
     let (state, whole, stood) = if state.holding.is_some() && state.holding != holding { (Following::default(), true, None) } else { (state, whole, stood) };
     // A check's finding stands only for the record and seam it was made of.
     let checked = checked.is_some_and(|checked| {
@@ -1456,7 +1498,17 @@ async fn produce_step(
         Some((through, recorded, told)) => codex_onward::seed(node, resident, &library, &written_to, &state, through, recorded, told, producing.clone()).await,
         None => codex_onward::forget_of(resident),
     }
-    Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true, on: false }))
+    Ok(Done(Produced {
+        written: wrote.written,
+        gone: wrote.gone,
+        unread,
+        long_changed,
+        verified,
+        handing: false,
+        read: true,
+        on: false,
+        waits_listing: false,
+    }))
 }
 
 /// The facts of the runs `resident`'s conversation tells of brought to the
@@ -1588,7 +1640,7 @@ pub(super) fn register(node: &Arc<Node>) {
             }
         })
     };
-    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES, ready: None }, Arc::new(run));
 }
 
 /// Names the check of whole histories, before the node's jobs start: one at
@@ -1676,7 +1728,7 @@ pub(super) fn register_check(node: &Arc<Node>) {
             }
         })
     };
-    jobs.register(Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES }, Arc::new(run));
+    jobs.register(Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES, ready: Some(check_ready) }, Arc::new(run));
 }
 
 /// Checks `resident`'s history (§10, design §28.53). A Claude record
@@ -1689,6 +1741,18 @@ pub(super) fn register_check(node: &Arc<Node>) {
 /// Found otherwise, or any other history — a Codex thread, whose old turns
 /// only a listing tells; one read as the World recorded it — is read whole.
 async fn check(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Failure> {
+    // Its scope not held here, nothing can be checked against: asked for
+    // again once a hub's listing holds it (`Produced::waits_listing`).
+    if let Some(kept) = node.assets.as_ref()
+        && let Some((about, _)) = node.residents.about(resident)
+        && let Some(placed) = assets::placed(node, &about)?
+    {
+        let (asking, scope) = (kept.library.clone(), placed.scope.clone());
+        let holding = fastctx_platform::task::blocking(move || asking.holding(&scope)).await.map_err(failure)?;
+        if holding.is_none() && awaits_listing(&kept.library, &placed.scope).await? {
+            return Ok(Produced { waits_listing: true, ..Produced::default() });
+        }
+    }
     if let Some((path, state)) = followed_record(node, resident).await? {
         let beside = {
             let path = path.clone();
@@ -1817,6 +1881,7 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     let begun = Instant::now();
     // Asked for before the look: what is asked during it is the next one's.
     let asked = BESIDE.lock().expect("beside timelines").remove(resident);
+    let drafted = DRAFTED.lock().expect("drafted timelines").remove(resident);
     let produced = produce(node, resident, false).await;
     // What is kept beside the timeline is made when it was asked for, when
     // its history was read (a reading may begin its scope, or hand it
@@ -1834,6 +1899,18 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
                     beside_failed = true;
                     BESIDE.lock().expect("beside timelines").insert(resident.clone());
                     node.log.line(format_args!("{resident}'s file changes: {error}"));
+                }
+            }
+        }
+        // Its draft alone changed: written, and nothing else beside it made.
+        if drafted {
+            match super::draft::produce(node, resident, &PRODUCING).await {
+                Ok(0) => {}
+                Ok(written) => node.log.line(format_args!("{resident}'s draft: {written} written")),
+                Err(error) => {
+                    beside_failed = true;
+                    DRAFTED.lock().expect("drafted timelines").insert(resident.clone());
+                    node.log.line(format_args!("{resident}'s draft: {error}"));
                 }
             }
         }
@@ -1932,6 +2009,7 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
 /// `produced` says, in the look begun at `begun`.
 fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Result<Produced, Failure>, beside_failed: bool) -> Outcome {
     match produced {
+        Ok(produced) if produced.waits_listing => Outcome::Done,
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
         Ok(produced) => {
             if produced.read || produced.on || produced.written + produced.gone > 0 {
@@ -2041,6 +2119,16 @@ pub(super) fn wanted(node: &Node, resident: &ResidentId) {
     }
     // Whatever asks so may have changed what is kept beside the timeline.
     BESIDE.lock().expect("beside timelines").insert(resident.clone());
+    wanted_history(node, resident);
+}
+
+/// As `wanted`, asked by a change of the conversation's draft alone: the
+/// look writes the draft and makes nothing else beside the timeline again.
+pub(super) fn wanted_draft(node: &Node, resident: &ResidentId) {
+    if node.assets.is_none() {
+        return;
+    }
+    DRAFTED.lock().expect("drafted timelines").insert(resident.clone());
     wanted_history(node, resident);
 }
 

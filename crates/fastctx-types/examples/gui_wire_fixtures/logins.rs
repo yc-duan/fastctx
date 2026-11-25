@@ -410,7 +410,7 @@ pub fn fixtures() -> Fixtures {
     };
     Fixtures {
         calls: vec![
-            Call::AgentLogins { machine: None },
+            Call::AgentLogins { machine: None, at_once: false },
             Call::ScanAgents { machine: machine.clone().into(), stop: false },
             Call::AddAgentLogin {
                 machine: machine.clone().into(),

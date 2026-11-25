@@ -47,6 +47,17 @@ pub(crate) async fn ready(node: &Node, acting: &Acting) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Whether `acting` is the one account of a hub this machine is on that its
+/// view says it may not act for now.
+fn refused(node: &Node, acting: &Acting) -> bool {
+    let Acting::Accounts { accounts } = acting else { return false };
+    let [account] = accounts.as_slice() else { return false };
+    node.link_of(&account.hub).is_some_and(|link| {
+        let view = link.view();
+        !view.may_act_for(&account.account, &view.me)
+    })
+}
+
 pub(crate) fn get(node: &Node, acting: &Acting) -> Profile {
     let Acting::Accounts { accounts } = acting else { return Profile::default() };
     let [account] = accounts.as_slice() else { return Profile::default() };
@@ -302,6 +313,13 @@ async fn refresh(
             continue;
         }
         if seen.get(&resident.id) == Some(&signature) {
+            continue;
+        }
+        // An account this machine may not act for, as its hub's view has it
+        // now, is not asked of the hub again on every change of the views:
+        // it is refused again each time (codex-f3c66db9), and the view
+        // changes once it may, which brings this here again.
+        if refused(node, &resident.about.acting) {
             continue;
         }
         let Ok(gate) = node.residents.management(&resident.id) else {

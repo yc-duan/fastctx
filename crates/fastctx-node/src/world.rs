@@ -801,6 +801,9 @@ impl fastctx_net::link::Node for Handler {
     fn workbench(&self) -> Option<bool> {
         self.node.upgrade().and_then(|node| crate::logins::workbench::told(&node))
     }
+    fn logins_number(&self) -> Option<u64> {
+        self.node.upgrade().map(|node| crate::elsewhere::here(&node))
+    }
     fn acquire(
         &self,
         request: fastctx_net::link::admission::Request,
@@ -1803,12 +1806,16 @@ impl fastctx_net::link::Node for Handler {
     fn presence_changed(&self) {
         if let Some(node) = self.node.upgrade() {
             node.tools_changed(None);
+            if let Some(link) = node.link_of(&self.hub) {
+                crate::elsewhere::view_changed(&node, &link);
+            }
         }
     }
 
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         let Some(link) = node.link_of(&self.hub) else { return };
+        crate::elsewhere::view_changed(&node, &link);
         // An account made again is seen so before anything is asked here
         // for it (`incarnations`).
         node.incarnations.saw(&node, &self.hub, &link.view().directory);

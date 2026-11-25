@@ -422,6 +422,12 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
     holds_as(directory, machine, scope, class, Some(stream))
 }
 
+/// Whether the hub gives `stream` of the scope to `machine` to read: one it
+/// may hold that is not retired from every device (`super::retired`).
+pub(crate) fn serves(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
+    !super::retired::stream(scope, stream) && holds(directory, machine, scope, stream)
+}
+
 /// Whether `machine` may hold some stream of the class `class` of the scope:
 /// what a listing of what it holds names (§6.6).
 pub(crate) fn holds_class(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, class: &StreamClass) -> bool {

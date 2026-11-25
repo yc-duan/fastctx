@@ -55,7 +55,7 @@ pub async fn stop(
                 return Err(Failure::new(format!("{here} has no job {job}")));
             }
             let machines = crate::around::reachable(node, acting, Purpose::Hands);
-            crate::around::ask_each(machines, |_| call.clone())
+            crate::around::ask_known(machines, |_| call.clone(), crate::around::SEARCHED)
                 .await
                 .into_iter()
                 .map(|(asked, heard)| (asked.source.written, heard))

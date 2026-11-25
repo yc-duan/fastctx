@@ -159,6 +159,7 @@ fn first(base: &Path, dir: &Path) {
         home: Some(root()), managed: false, code: None, group: None, direct: Vec::new(), relay: Vec::new(),
         added: jiff::Timestamp::now(), online: false, since: None, through: None, reach: None, paths: None, strain: None,
         workbench: None, settled: None,
+        logins_number: None,
     });
     store.book.directory.members.push(member);
     store.book_edit = crate::store::BookEdit::Full;

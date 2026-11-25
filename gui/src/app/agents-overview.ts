@@ -208,7 +208,7 @@ export class AgentsOverview implements Page {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
         this.problem = null;
-      } else if (heard) {
+      } else if (heard && heard.kind !== "asking") {
         this.record = null;
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }

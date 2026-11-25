@@ -29,10 +29,14 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
-/// `resident`'s composer changed: its draft is written again.
+/// `resident`'s composer changed: its draft is written again. Asked for
+/// once until it is written: what is typed meanwhile goes in the same
+/// writing, which reads the composer as it stands then, and nothing else
+/// kept beside the timeline is made again for it (codex-1c5d39f1).
 pub(crate) fn changed(node: &Node, resident: &ResidentId) {
-    CHANGED.lock().expect("changed drafts").insert(resident.clone());
-    super::tail::wanted(node, resident);
+    if CHANGED.lock().expect("changed drafts").insert(resident.clone()) {
+        super::tail::wanted_draft(node, resident);
+    }
 }
 
 /// Brings `resident`'s draft in the asset library to its composer here;

@@ -467,7 +467,7 @@ fn may_hold(
     memo: &mut HashMap<String, Option<Scope>>,
 ) -> bool {
     let scope = memo.entry(key.to_string()).or_insert_with(|| scopes::scope(assets, key).ok().flatten());
-    scope.as_ref().is_some_and(|scope| scopes::readable(directory, machine, scope) && scopes::holds(directory, machine, scope, stream))
+    scope.as_ref().is_some_and(|scope| scopes::readable(directory, machine, scope) && scopes::serves(directory, machine, scope, stream))
 }
 
 /// What each owner library has after where a device stands, reckoned once
@@ -561,7 +561,7 @@ fn left(
             about = true;
             continue;
         };
-        for row in rows.into_iter().filter(|row| scopes::holds(directory, machine, &scope, &row.stream)) {
+        for row in rows.into_iter().filter(|row| scopes::serves(directory, machine, &scope, &row.stream)) {
             *parts.entry(part(row.class)).or_default() += row.bytes;
         }
         about = true;

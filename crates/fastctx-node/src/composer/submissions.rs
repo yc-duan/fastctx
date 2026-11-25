@@ -250,10 +250,26 @@ pub fn stop_asked(node: &Arc<Node>, id: &ResidentId, turn: &str) {
 /// words sent since wait for the turn those words start, and its end, as
 /// they wait for a stopped turn's.
 pub fn stop_coming(node: &Arc<Node>, id: &ResidentId) {
-    mark(node, id, Some(Stop::Coming(std::time::Instant::now())));
+    let since = std::time::Instant::now();
+    mark(node, id, Some(Stop::Coming(since)));
+    wait_coming(node, id, since);
+}
+
+/// Ends the wait for words on their way begun at `since`: the stop is no
+/// longer kept, unless another took its place meanwhile, and what waited
+/// behind it may go. A composer read again later finds no stop to wait for
+/// anew (`restore_stop`).
+fn wait_coming(node: &Arc<Node>, id: &ResidentId, since: std::time::Instant) {
     let (node, id) = (node.clone(), id.clone());
     fastctx_platform::task::spawn(async move {
-        tokio::time::sleep(COMING_WAITS).await;
+        tokio::time::sleep_until((since + COMING_WAITS).into()).await;
+        let over = matches!(
+            node.composers.stopping.lock().expect("composer stops").get(&id),
+            Some(Stop::Coming(at)) if *at == since
+        );
+        if over {
+            mark(&node, &id, None);
+        }
         schedule(&node, &id);
     });
 }
@@ -314,6 +330,13 @@ async fn keep_stop(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
 /// asked (`talk::stop_turn_as`). A wait for words on their way is given its
 /// end again.
 pub(super) fn restore_stop(node: &Arc<Node>, id: &ResidentId, state: &Stored) {
+    // Once taken, the stop in memory is the one that stands, and the state
+    // is written from it: a composer read again later is not taken again,
+    // which would wait anew for a wait already over, and again each time it
+    // is read (codex-955b2bcb).
+    if !node.composers.restored.lock().expect("composer stops").insert(id.clone()) {
+        return;
+    }
     let stop = match &state.stopped {
         Some(StopMark::Turn(turn)) => Some(Stop::Turn(turn.clone())),
         Some(StopMark::Coming) => Some(Stop::Coming(std::time::Instant::now())),
@@ -326,14 +349,21 @@ pub(super) fn restore_stop(node: &Arc<Node>, id: &ResidentId, state: &Stored) {
         .map(Stop::Turn),
     };
     let Some(stop) = stop else { return };
-    let coming = matches!(stop, Stop::Coming(_));
-    node.composers.stopping.lock().expect("composer stops").entry(id.clone()).or_insert(stop);
-    if coming {
-        let (node, id) = (node.clone(), id.clone());
-        fastctx_platform::task::spawn(async move {
-            tokio::time::sleep(COMING_WAITS).await;
-            schedule(&node, &id);
-        });
+    let since = match stop {
+        Stop::Coming(since) => Some(since),
+        Stop::Turn(_) => None,
+    };
+    // One asked in memory before the state was read stands, with its own
+    // wait.
+    let taken = match node.composers.stopping.lock().expect("composer stops").entry(id.clone()) {
+        std::collections::hash_map::Entry::Occupied(_) => false,
+        std::collections::hash_map::Entry::Vacant(vacant) => {
+            vacant.insert(stop);
+            true
+        }
+    };
+    if let (true, Some(since)) = (taken, since) {
+        wait_coming(node, id, since);
     }
 }
 

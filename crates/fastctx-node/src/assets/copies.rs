@@ -613,10 +613,17 @@ pub(crate) fn hold_listed(
         return Ok(false);
     }
     let here = assets.library.held_listing(scope).map_err(|error| error.to_string())?;
-    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice())
-        && assets.library.install_listed(network, scope, description, revision).map_err(|error| error.to_string())?.is_none()
-    {
-        return Ok(false);
+    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice()) {
+        if assets.library.install_listed(network, scope, description, revision).map_err(|error| error.to_string())?.is_none() {
+            return Ok(false);
+        }
+        // Held again: a timeline that waited for it is brought now
+        // (`timeline::tail::Produced::waits_listing`).
+        if here.is_none()
+            && let Some(id) = conversation_of(scope)
+        {
+            crate::timeline::described(node, &id);
+        }
     }
     let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
     if listed != Some((Some(holds), Some(said))) {

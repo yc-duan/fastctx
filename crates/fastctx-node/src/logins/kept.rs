@@ -315,7 +315,7 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
     publish(&path(node), &bytes, Permissions::Private)?;
     super::snapshot::kept(node, &prior, &kept);
     node.logins.sign_in_watch.notify_one();
-    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::logins::changed(node);
     Ok(())
 }
 
@@ -375,7 +375,7 @@ fn choose(node: &Node, edit: impl FnOnce(&mut Added)) -> io::Result<()> {
     }
     publish(&added_path(node), &bytes, Permissions::Private)?;
     super::snapshot::chosen(node, &added);
-    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::logins::changed(node);
     Ok(())
 }
 

@@ -20,6 +20,11 @@ type Draw = (state: CollaborationState) => void;
 
 const pools = new WeakMap<Store, Map<string, Following>>();
 
+/** What a followed collaboration stands on: the hub, the member as it is
+ *  keyed, and the logins this computer reads it with, each as it was
+ *  opened. While these stand and the machine may still be looked at, the
+ *  following goes on; the directory's revision, which moves every few
+ *  seconds with how lines go, is not part of it. */
 export function collaborationKey(world: WorldNow | null, address: Address): string | null {
   if (!world) return null;
   const [name, hubName] = address.machine.split(".");
@@ -28,14 +33,14 @@ export function collaborationKey(world: WorldNow | null, address: Address): stri
     return (!hubName || hub.name === hubName) && hub.members.some((member) => names(member, name));
   });
   const [hub] = hubs;
-  if (!hub || hubs.length !== 1 || hub.logins.length !== 1) return null;
+  if (!hub || hubs.length !== 1 || !hub.logins.length) return null;
   const member = hub.members.find((member) => names(member, name));
-  const login = hub.accounts.find((account) => account.name === hub.logins[0] && !account.locked);
+  const logins = hub.logins.flatMap((login) => hub.accounts.filter((account) => account.name === login && !account.locked)).map((login) => [login.name, login.opened]);
   const decision = world.machine_presence
     ?.find((machine) => machine.machine === address.machine)
     ?.hubs.find((one) => one.hub === hub.hub);
-  if (!member || !login || !decision?.current || decision.access !== "granted") return null;
-  return JSON.stringify([hub.hub, member.name, member.key, login.name, login.opened, decision.revision, address.resident]);
+  if (!member || !logins.length || !decision?.current || decision.access !== "granted") return null;
+  return JSON.stringify([hub.hub, member.name, member.key, logins.sort(), address.resident]);
 }
 
 export function followCollaboration(store: Store, address: Address, draw: Draw): () => void {

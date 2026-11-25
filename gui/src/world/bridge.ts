@@ -83,6 +83,9 @@ export type Piece =
   | { kind: "waiting"; events: SessionEvent[] }
   /** A request that waits for the user, or the end of one. */
   | { kind: "asked"; event: SessionEvent }
+  /** What the turn does as it happens, ahead of the timeline's record of
+   *  it: an item begun, changed or ended, its words as they are written. */
+  | { kind: "live"; event: SessionEvent }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }

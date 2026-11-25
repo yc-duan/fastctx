@@ -7,6 +7,7 @@ use std::any::Any;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fastctx_types::access::Written;
 use fastctx_types::observation::MachineSource;
@@ -19,6 +20,7 @@ use jiff::Timestamp;
 use crate::link::{CallFailure, Link};
 
 /// How one machine answered.
+#[derive(Clone)]
 pub enum Heard {
     Answered(RemoteReply),
     Offline(Option<Timestamp>),
@@ -68,16 +70,35 @@ impl Asked {
 pub async fn ask_each(machines: Vec<Reachable>, call: impl Fn(&MachineName) -> RemoteCall) -> Vec<(Asked, Heard)> {
     type Refresh = Shared<BoxFuture<'static, Result<(), String>>>;
     let mut refreshes: Vec<(Arc<Link>, Refresh)> = Vec::new();
-    ask(machines, call, |link| match refreshes.iter().find(|(asked, _)| Arc::ptr_eq(asked, link)) {
-        Some((_, fresh)) => fresh.clone(),
-        None => {
-            let asked = link.clone();
-            let fresh = async move { refresh(&asked).await }.boxed().shared();
-            refreshes.push((link.clone(), fresh.clone()));
-            fresh
-        }
-    })
+    ask(
+        machines,
+        call,
+        |link| match refreshes.iter().find(|(asked, _)| Arc::ptr_eq(asked, link)) {
+            Some((_, fresh)) => fresh.clone(),
+            None => {
+                let asked = link.clone();
+                let fresh = async move { refresh(&asked).await }.boxed().shared();
+                refreshes.push((link.clone(), fresh.clone()));
+                fresh
+            }
+        },
+        None,
+    )
     .await
+}
+
+/// Asks every machine concurrently as its hub last told who is connected,
+/// none of the hubs asked again first: what someone waits on is answered
+/// from what is here, and the directory follows its hub's changes on its
+/// own. Each call answers within `within` at most, besides its own
+/// contract; one that does not is told as no answer, the others not held
+/// for it. Results are sorted by machine name.
+pub async fn ask_known(
+    machines: Vec<Reachable>,
+    call: impl Fn(&MachineName) -> RemoteCall,
+    within: Duration,
+) -> Vec<(Asked, Heard)> {
+    ask(machines, call, |_| ready(Ok(())), Some(within)).await
 }
 
 /// Asks hubs concurrently, passing each one's fresh directory result to
@@ -101,7 +122,7 @@ pub async fn ask_refreshed(
     call: impl Fn(&MachineName) -> RemoteCall,
     fresh: Result<(), String>,
 ) -> Vec<(Asked, Heard)> {
-    ask(machines, call, |_| ready(fresh.clone())).await
+    ask(machines, call, |_| ready(fresh.clone()), None).await
 }
 
 async fn refresh(link: &Link) -> Result<(), String> {
@@ -122,6 +143,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
     machines: Vec<Reachable>,
     call: impl Fn(&MachineName) -> RemoteCall,
     mut refreshed: impl FnMut(&Arc<Link>) -> F,
+    cap: Option<Duration>,
 ) -> Vec<(Asked, Heard)> {
     let mut asks = FuturesUnordered::new();
     let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE));
@@ -153,7 +175,10 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                         let _turn = asking.acquire().await;
                         let name = &seen.name;
                         let purpose = call.purpose();
-                        let within = call.contract().within;
+                        let within = match (call.contract().within, cap) {
+                            (Some(within), Some(cap)) => Some(within.min(cap)),
+                            (within, cap) => within.or(cap),
+                        };
                         let work = link.call(name, &account, purpose, call);
                         let answer = match within {
                             Some(within) => {

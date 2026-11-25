@@ -391,7 +391,7 @@ pub(super) async fn advance(
         crate::assets::committed(node, &hub, &scope);
     }
     fastctx_platform::readings::counter("timeline.onward.looks").add(1);
-    let produced = Produced { written, gone, unread: false, long_changed, verified: state.verified, handing: false, read: false, on: true };
+    let produced = Produced { written, gone, unread: false, long_changed, verified: state.verified, handing: false, read: false, on: true, waits_listing: false };
     let due = judged.elapsed() >= onward::JUDGED_EVERY;
     keep(resident, Held { stood, thread, window, judged });
     if due {

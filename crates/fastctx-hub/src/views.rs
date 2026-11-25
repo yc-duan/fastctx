@@ -49,6 +49,12 @@ pub(crate) trait Online {
         let _ = name;
         None
     }
+    /// The number its agents and logins stand at, as it last told
+    /// (`crate::workbench::logins_heard`).
+    fn logins_number(&self, name: &MachineName) -> Option<u64> {
+        let _ = name;
+        None
+    }
 }
 impl Online for HashMap<MachineName, Presence> {
     fn get(&self, name: &MachineName, _key: &fastctx_net::sign::PublicKey) -> Option<Presence> {
@@ -61,6 +67,9 @@ impl Online for crate::Hub {
     }
     fn workbench(&self, name: &MachineName) -> Option<bool> {
         crate::workbench::of(self, name)
+    }
+    fn logins_number(&self, name: &MachineName) -> Option<u64> {
+        crate::workbench::logins_of(self, name)
     }
 }
 
@@ -608,6 +617,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.reach = (reach && member.kind.is_computer()).then(|| presence.reach.clone());
             member.paths = presence.paths.clone();
             member.strain = presence.strain;
+            member.logins_number = online.logins_number(&member.name);
         }
         None => {
             member.online = false;
@@ -616,6 +626,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.reach = None;
             member.paths = None;
             member.strain = None;
+            member.logins_number = None;
         }
     }
 }

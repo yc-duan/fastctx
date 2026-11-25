@@ -545,6 +545,19 @@ fn waits(event: &SessionEvent) -> bool {
     )
 }
 
+/// Whether `event` is content the page shows as it happens: an item begun,
+/// changed or ended, and the words of one as they are written. What a tool
+/// puts out as it goes is left to the timeline.
+fn shows(event: &SessionEvent) -> bool {
+    matches!(
+        event.happened,
+        Happened::Began { .. }
+            | Happened::Updated { .. }
+            | Happened::Finished { .. }
+            | Happened::Grew { part: fastctx_types::session::Part::Text, .. }
+    )
+}
+
 fn raw(event: &SessionEvent) -> Option<Box<RawValue>> {
     serde_json::value::to_raw_value(event).ok()
 }
@@ -631,6 +644,12 @@ async fn told(mut watching: Watching, pieces: &Sender<Piece>) -> Option<Error> {
                 (_, None) => Ok(()),
             },
             Watched::Now { busy, turn, kept, halted } => pieces.send(Piece::Now { busy, turn, kept, halted }),
+            // Shown as it happens, ahead of the timeline, which a host's
+            // record and the source's ingestion bring seconds later.
+            Watched::Live { event, .. } if shows(&event) => match raw(&event) {
+                Some(event) => pieces.send(Piece::Live { event }),
+                None => Ok(()),
+            },
             _ => Ok(()),
         };
         if sent.is_err() {

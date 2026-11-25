@@ -334,7 +334,7 @@ pub(crate) fn send_apart(
 /// the machine may hold (design §2.3), not merely through the scope.
 fn reachable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, library: &Library, object: &ObjectRef) -> Result<(), String> {
     let streams = library.streams_reading(&scope.descriptor.scope, &object.hash).map_err(|error| error.to_string())?;
-    if streams.iter().any(|stream| scopes::holds(directory, machine, scope, stream)) {
+    if streams.iter().any(|stream| scopes::serves(directory, machine, scope, stream)) {
         Ok(())
     } else {
         Err("the object is read through no stream of the scope this machine holds".into())

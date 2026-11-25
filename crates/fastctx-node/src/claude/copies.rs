@@ -240,5 +240,5 @@ pub(super) fn register(node: &Arc<Node>) {
         })
     };
     node.durable_jobs
-        .register(Kind { name: KIND, at_once: 4, within: Duration::from_secs(240), tries: 5 }, Arc::new(run));
+        .register(Kind { name: KIND, at_once: 4, within: Duration::from_secs(240), tries: 5, ready: None }, Arc::new(run));
 }

@@ -37,6 +37,8 @@ pub(crate) struct Health {
     pub view: crate::measure::Timing,
     pub presence: crate::measure::Timing,
     pub presence_queue: crate::measure::Timing,
+    /// What the hub wrote to each member, by kind (`crate::egress`).
+    pub egress: crate::egress::Egress,
     /// How long each of the latest letters took to keep, in milliseconds.
     kept: Mutex<VecDeque<u32>>,
     /// When sessions opened lately.
@@ -134,6 +136,7 @@ fn now(hub: &Hub) -> serde_json::Value {
         "at": jiff::Timestamp::now(),
         "view": hub.health.view.snapshot(), "presence": hub.health.presence.snapshot(), "presence_queue": hub.health.presence_queue.snapshot(),
         "sessions": queues.len(),
+        "egress": hub.health.egress.snapshot(),
         "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
         "lock_order_violations": fastctx_platform::doing::violations(),
         // The threads' rules broken, by kind and place (`fastctx_platform::conduct`).

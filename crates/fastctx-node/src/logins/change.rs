@@ -241,7 +241,7 @@ fn set(node: &Node, agent: &AgentName, dir: &Path, edit: impl FnOnce(&mut LoginC
     let progress = changes[index].2.clone();
     drop(changes);
     super::snapshot::progress(node, agent.as_str(), dir, progress);
-    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::logins::changed(node);
 }
 
 /// A step told: the same step told again while running replaces its state.

@@ -105,6 +105,13 @@ pub struct Member {
     /// views, and none from a machine that never told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
+    /// The number its agents and logins stand at, as it last told the hub,
+    /// while online: it moves whenever what the machine answers of them
+    /// does, so a member keeping an answer knows when to ask again
+    /// (`crate::wire::Up::Ping::logins_number`); none from a release that does not
+    /// tell it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logins_number: Option<u64>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -134,6 +141,8 @@ pub struct Presence {
     pub strain: Option<Strain>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logins_number: Option<u64>,
 }
 
 impl Presence {
@@ -147,6 +156,7 @@ impl Presence {
             paths: member.paths.clone(),
             strain: member.strain,
             workbench: member.workbench,
+            logins_number: member.logins_number,
         }
     }
 
@@ -159,6 +169,7 @@ impl Presence {
         member.paths = self.paths.clone();
         member.strain = self.strain;
         member.workbench = self.workbench;
+        member.logins_number = self.logins_number;
     }
 }
 

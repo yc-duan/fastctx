@@ -2523,6 +2523,11 @@ function liveTalk(address: Address): DeskTalk {
       conversation.asked(event);
       page.update();
     },
+    live: (event) => {
+      heardAt = Date.now();
+      conversation.ahead(event);
+      page.update();
+    },
     happened: (at, event) => {
       heardAt = Date.now();
       if (!conversation.happened(at, event) || conversation.stale) reading.again();

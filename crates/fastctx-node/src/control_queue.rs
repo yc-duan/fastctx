@@ -644,7 +644,7 @@ pub(crate) fn register(node: &Arc<Node>) {
         })
     };
     jobs.register(
-        Kind { name: DRAINING, at_once: DRAINED_AT_ONCE, within: DRAINS_WITHIN, tries: DRAIN_TRIES },
+        Kind { name: DRAINING, at_once: DRAINED_AT_ONCE, within: DRAINS_WITHIN, tries: DRAIN_TRIES, ready: None },
         Arc::new(run),
     );
 }

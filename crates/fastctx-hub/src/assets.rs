@@ -31,6 +31,7 @@ pub(crate) mod objects;
 mod owners;
 pub(crate) mod proving;
 mod reclaim;
+mod retired;
 mod scopes;
 mod sentinel_homes;
 pub(crate) mod serve;

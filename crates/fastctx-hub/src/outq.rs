@@ -29,7 +29,7 @@ mod afoot;
 mod versions;
 pub(crate) use versions::Snapshot as VersionSnapshot;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::wire::{Down, Refusal};
@@ -171,6 +171,9 @@ struct State {
     prompt_run: usize,
     /// Whether letters go before notices next.
     letters_next: bool,
+    /// What each answer queued in parts is (`crate::egress::told`), until
+    /// its last part is written.
+    part_kinds: HashMap<u64, &'static str>,
 }
 
 /// What a notice is of: a newer one of the same replaces it, or merges with
@@ -220,13 +223,18 @@ impl Outq {
     /// Queues `out`; an error once the session's writer is done, or when
     /// the member left so much untaken that it is let go.
     pub(crate) fn send(&self, out: Out) -> Result<(), ()> {
-        let frames = match out {
+        let mut told = None;
+        let frames: Vec<Out> = match out {
             Out::Frame(Down::Told { id, answer }) => {
+                told = Some((id, crate::egress::told(&answer)));
                 answers::frames(id, answer, self.0.parts).into_iter().map(Out::Frame).collect()
             }
             out => vec![out],
         };
         let whole = frames.len() == 1;
+        if !whole && let Some((id, kind)) = told {
+            self.0.state.lock().expect("never poisoned").part_kinds.insert(id, kind);
+        }
         let frames: Vec<_> = frames
             .into_iter()
             .map(|out| {
@@ -361,6 +369,17 @@ impl Outq {
         drop(old);
         self.0.shut.send_replace(true);
         self.0.ready.notify_waiters();
+    }
+
+    /// What the answer `id`, queued in parts, is; forgotten with its last
+    /// part.
+    pub(crate) fn part_kind(&self, id: u64, last: bool) -> &'static str {
+        let mut state = self.0.state.lock().expect("never poisoned");
+        let kind = state.part_kinds.get(&id).copied().unwrap_or("part");
+        if last {
+            state.part_kinds.remove(&id);
+        }
+        kind
     }
 
     /// How much waits in it now.

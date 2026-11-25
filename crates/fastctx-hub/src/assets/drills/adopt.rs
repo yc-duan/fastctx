@@ -25,7 +25,7 @@ fn member(name: &str, key: &SecretKey, account: &AccountName) -> Arc<Member> {
         name: MachineName::try_from(name.to_string()).unwrap(), was: Vec::new(), key: key.public(), kind: Kind::Computer,
         logins: [account.clone()].into_iter().collect(), home: Some(account.clone()), managed: false, code: None, group: None,
         direct: Vec::new(), relay: Vec::new(), added: jiff::Timestamp::now(), online: false, since: None, through: None,
-        reach: None, paths: None, strain: None, workbench: None, settled: None,
+        reach: None, paths: None, strain: None, workbench: None, logins_number: None, settled: None,
     })
 }
 

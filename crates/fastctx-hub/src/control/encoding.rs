@@ -2,7 +2,7 @@
 
 use crate::{
     Hub,
-    outq::Next,
+    outq::{Next, Outq},
     owned_records::hints::{self, Hint},
 };
 use fastctx_net::{
@@ -16,13 +16,14 @@ use super::sending::{Guard, Outgoing};
 
 type Encoded = (Vec<(Outgoing, bool)>, bool);
 
-pub(super) fn prepare(hub: &Hub, name: &MachineName, key: PublicKey, next: Next) -> Result<Encoded, String> {
+pub(super) fn prepare(hub: &Hub, name: &MachineName, key: PublicKey, queue: &Outq, next: Next) -> Result<Encoded, String> {
     let (frames, last) = match next {
         Next::Frames(frames) => (frames, false),
         Next::End(reason) => (vec![Down::Refused { reason }], true),
         Next::Overflowed(why) => return Err(why),
     };
     let mut encoded = Vec::with_capacity(frames.len());
+    let mut written = Vec::with_capacity(frames.len());
     for mut frame in frames {
         let mut guard = None;
         if let Down::HistoryChanged { town, .. } = &frame {
@@ -63,8 +64,14 @@ pub(super) fn prepare(hub: &Hub, name: &MachineName, key: PublicKey, next: Next)
                 wire::MAX_CONTROL_FRAME
             ));
         }
+        let kind = match &frame {
+            Down::Part { id, index, total, .. } => queue.part_kind(*id, index.saturating_add(1) >= *total),
+            frame => crate::egress::kind(frame),
+        };
+        written.push((kind, bytes.len()));
         let dissolved = matches!(&frame, Down::Refused { reason } if crate::dissolve::tells(reason));
         encoded.push((Outgoing { message: Message::Binary(bytes.into()), guard }, dissolved));
     }
+    hub.health.egress.wrote(name, &written);
     Ok((encoded, last))
 }

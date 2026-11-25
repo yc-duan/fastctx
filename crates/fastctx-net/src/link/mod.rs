@@ -139,6 +139,12 @@ pub trait Node: Send + Sync + 'static {
     fn workbench(&self) -> Option<bool> {
         None
     }
+    /// The number this machine's agents and logins stand at
+    /// (`crate::wire::Up::Ping::logins_number`): told the hub with each
+    /// heartbeat, so it must answer at once.
+    fn logins_number(&self) -> Option<u64> {
+        None
+    }
     /// Takes the place a call from `from` takes here while it is answered,
     /// of the kind `pool` (`fastctx_types::contract::Pool`), before anything
     /// waits on it; or says why there is none: this machine is answering as

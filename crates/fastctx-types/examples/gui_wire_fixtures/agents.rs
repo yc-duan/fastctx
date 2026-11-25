@@ -143,8 +143,8 @@ pub fn fixtures() -> Fixtures {
     };
     Fixtures {
         calls: vec![
-            Call::Agents { machine: None },
-            Call::Agents { machine: Some(machine.clone().into()) },
+            Call::Agents { machine: None, at_once: false },
+            Call::Agents { machine: Some(machine.clone().into()), at_once: false },
             Call::Open {
                 agent: "codex".parse().unwrap(),
                 town: None,

@@ -133,17 +133,27 @@ type ToolEntry = Extract<Entry, { kind: "tool" }>;
 /** The most bytes of events opened whole a page keeps. */
 const EXPANDED_BYTES = 8 * 1024 * 1024;
 
-/** A message the timeline just gained is shown as it would be written, a
- *  little at a time: how long that takes at most and at least, how often a
- *  little more is shown, how lately the message must have been written,
- *  how short it may be, and how many records may wait behind it before it
- *  is shown whole at once. */
-const TYPED_MOST_MS = 2400;
-const TYPED_LEAST_MS = 400;
-const TYPED_EVERY_MS = 32;
-const TYPED_WITHIN_MS = 120_000;
-const TYPED_LEAST_CHARS = 24;
-const TYPED_WAITING_MOST = 64;
+/** The most events told as they happen, ahead of the timeline, a page
+ *  keeps, and how long one is kept over a part read anew when no record of
+ *  its item came. */
+const AHEAD_MOST = 2000;
+const AHEAD_FOR_MS = 10 * 60_000;
+/** The most items whose ending the timeline recorded a page remembers. */
+const RECORDED_MOST = 5000;
+
+/** The item an event told as it happens is of, by turn and id. */
+function itemOf(event: SessionEvent): string | null {
+  switch (event.event) {
+    case "began":
+    case "updated":
+    case "finished":
+      return `${event.turn}/${event.item.id}`;
+    case "grew":
+      return `${event.turn}/${event.item}`;
+    default:
+      return null;
+  }
+}
 
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
@@ -185,11 +195,14 @@ export class Conversation {
   private nowTold: { busy: boolean; turn: string | null; kept: KeptWords[]; halted: string | null } | null = null;
   /** Events opened whole, by the object each is kept as. */
   private expanded = new Map<string, SessionEvent>();
-  /** The message being shown as it would be written, and the records that
-   *  came after it and wait for it. */
-  private typing: { shown: import("./replica").Shown; timer: ReturnType<typeof setTimeout> } | null = null;
-  private behind: ReplicaRecord[] = [];
   private source: PartSource | null = null;
+  /** What the turn did as it happened that the timeline holds no record of
+   *  yet (`ahead`): shown until it does, and again over the latest part
+   *  folded anew meanwhile. */
+  private aheadEvents: SessionEvent[] = [];
+  /** The items, by turn and id, whose ending the timeline recorded: what
+   *  comes of one as it happens after that is late, and not shown. */
+  private recordedItems = new Set<string>();
   /** Moves when parts come and go. */
   private structure = 0;
   private folds = 0;
@@ -334,7 +347,6 @@ export class Conversation {
   /** The latest part of its timeline, in place of all the page held:
    *  opened, or its timeline made anew. */
   openReplica(part: ReplicaPart, source: PartSource | null): void {
-    this.typed(false);
     this.searchVersion += 1;
     if (source !== this.source) this.searchSource += 1;
     this.generation = part.generation;
@@ -347,6 +359,9 @@ export class Conversation {
     span.last = true;
     const tail = this.live;
     tail.history([...span.events], [], span.keys, false, this.asks);
+    const now = Date.now();
+    this.aheadEvents = this.aheadEvents.filter((event) => now - Date.parse(event.at) < AHEAD_FOR_MS);
+    for (const event of this.aheadEvents) tail.late(event);
     const held = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold: tail }, span);
     this.spans = new Map([[held, span]]);
     this.parts = [held];
@@ -418,79 +433,10 @@ export class Conversation {
    *  gone is gone. What lies in a gap is read when the reader comes to it. */
   records(generation: number, records: readonly ReplicaRecord[]): void {
     if (!this.replica || generation !== this.generation) return;
-    // Behind a message being written out, they wait their turn; too many
-    // of them, and it is shown whole at once.
-    if (this.typing) {
-      this.behind.push(...records);
-      if (this.behind.length > TYPED_WAITING_MOST) this.typed(true);
-      return;
-    }
-    // A message just written, come by itself or with little else, is shown
-    // as it would be written: what came before it is taken first, what came
-    // after it waits.
-    const at = records.length <= 8 ? records.findIndex((record) => this.writes(record)) : -1;
-    if (at < 0) {
-      this.take(records);
-      return;
-    }
-    this.take(records.slice(0, at));
-    this.behind.push(...records.slice(at + 1));
-    this.write((records[at] as Extract<ReplicaRecord, { record: "is" }>).shown);
-  }
-
-  /** Whether `record` is a message the timeline just gained at its end,
-   *  written lately: one to show as it would be written. */
-  private writes(record: ReplicaRecord): boolean {
-    if (record.record !== "is" || typeof document === "undefined" || document.visibilityState !== "visible") return false;
-    const event = record.shown.event;
-    if (event.event !== "finished" || event.item.kind !== "message" || event.item.text.length < TYPED_LEAST_CHARS) return false;
-    if (Math.abs(Date.now() - Date.parse(event.at)) > TYPED_WITHIN_MS) return false;
-    const span = this.spans.get(this.tail);
-    if (!span || this.parts.some((part) => this.spans.get(part)?.keys.includes(record.shown.key))) return false;
-    const last = span.places[span.places.length - 1];
-    return !last || before(last, record.shown.place);
-  }
-
-  /** Shows the message `shown` as it would be written: begun empty, a
-   *  little more of its words every moment, then as the timeline holds it. */
-  private write(shown: import("./replica").Shown): void {
-    const event = shown.event;
-    if (event.event !== "finished" || event.item.kind !== "message") return;
-    const text = event.item.text;
-    const fold = this.tail.fold;
-    fold.event({ ...event, event: "began", item: { ...event.item, text: "" } }, shown.key);
-    const total = Math.min(TYPED_MOST_MS, Math.max(TYPED_LEAST_MS, text.length * 5));
-    const each = Math.max(2, Math.ceil(text.length / (total / TYPED_EVERY_MS)));
-    let at = 0;
-    const more = () => {
-      if (this.typing?.shown !== shown) return;
-      let end = Math.min(text.length, at + each);
-      // Never between the two halves of one character.
-      const code = text.charCodeAt(end - 1);
-      if (end < text.length && code >= 0xd800 && code <= 0xdbff) end += 1;
-      this.tail.fold.event({ at: event.at, event: "grew", turn: event.turn, item: event.item.id, part: "text", text: text.slice(at, end) }, shown.key);
-      at = end;
-      if (at >= text.length) this.typed(true);
-      else {
-        this.typing.timer = setTimeout(more, TYPED_EVERY_MS);
-        this.changed();
-      }
-    };
-    this.typing = { shown, timer: setTimeout(more, TYPED_EVERY_MS) };
-  }
-
-  /** The message being written out stands whole, as the timeline holds it,
-   *  and what waited behind it is taken; `drawn` when the page is to draw
-   *  again for it. */
-  private typed(drawn: boolean): void {
-    const typing = this.typing;
-    if (!typing) return;
-    clearTimeout(typing.timer);
-    this.typing = null;
-    const behind = this.behind;
-    this.behind = [];
-    this.take([{ record: "is", shown: typing.shown }, ...behind]);
-    if (drawn) this.changed();
+    // Shown as they come: a message that came whole is not written out a
+    // little at a time, which held what came after it back by up to 2.4 s;
+    // words still being written come as they are (`Fold`).
+    this.take(records);
   }
 
   /** Takes `records` in as they stand; `again` when they were taken before
@@ -499,6 +445,20 @@ export class Conversation {
     if (records.length === 0) return;
     if (!again) for (const since of this.meanwhile) since.push(...records);
     this.searchVersion += 1;
+    const tailFold = this.tail.fold;
+    // A turn the timeline recorded the end of stands as recorded: what was
+    // shown of it ahead goes, whatever names its items had as they happened.
+    const ended = new Set<string>();
+    for (const record of records) {
+      if (record.record !== "is") continue;
+      this.recorded(record.shown.event);
+      if (record.shown.event.event === "turn_ended") ended.add(record.shown.event.turn);
+    }
+    const ahead = this.aheadEvents.length;
+    if (ahead) {
+      this.aheadEvents = this.aheadEvents.filter((event) => !this.recordedItems.has(itemOf(event) ?? "") && !("turn" in event && typeof event.turn === "string" && ended.has(event.turn)));
+    }
+    const dropped = ahead > 0 && this.aheadEvents.length < ahead;
     const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
     const touch = (part: Held, span: Span) => {
       if (!touched.has(part)) touched.set(part, { events: this.shown(span), keys: [...span.keys] });
@@ -535,7 +495,15 @@ export class Conversation {
       touch(part, span);
       insert(span, record.shown);
     }
+    // What went of what was shown ahead leaves the latest part folded anew
+    // from its records alone.
+    if (dropped && !touched.has(this.tail)) {
+      const span = this.spans.get(this.tail);
+      if (span) touched.set(this.tail, { events: this.shown(span), keys: [...span.keys] });
+    }
     for (const [part, previous] of touched) this.refold(part, previous);
+    // Folded anew, the latest part is shown again what came ahead of it.
+    if (this.tail.fold !== tailFold) this.reahead();
     if (touched.size) {
       this.parts = [...this.parts];
       this.structure += 1;
@@ -582,14 +550,44 @@ export class Conversation {
   /** The requests that wait for the user now, all of them, as its machine
    *  tells them when the page begins to hear it. */
   waits(events: readonly SessionEvent[]): void {
-    this.typed(false);
     this.asks = [...events];
     const span = this.spans.get(this.tail);
     if (!this.replica || !span) return;
     const events_now = this.shown(span);
     this.tail.fold = this.tail.fold.revised(events_now, span.keys, events_now, span.keys, this.asks);
+    this.reahead();
     this.parts = [...this.parts];
     this.structure += 1;
+  }
+
+  /** What the turn does as it happens, ahead of its timeline: shown at once
+   *  at the end of the latest part, read there as a late event, until the
+   *  timeline's record of the same item comes (`take`). One whose record
+   *  came already is late, and not shown again. */
+  ahead(event: SessionEvent): void {
+    if (!this.replica) return;
+    const item = itemOf(event);
+    if (!item || this.recordedItems.has(item)) return;
+    this.aheadEvents.push(event);
+    if (this.aheadEvents.length > AHEAD_MOST) this.aheadEvents.splice(0, this.aheadEvents.length - AHEAD_MOST);
+    this.live.late(event);
+  }
+
+  /** The latest part was folded anew from its records: what was shown
+   *  ahead of them is shown again over it. */
+  private reahead(): void {
+    for (const event of this.aheadEvents) this.live.late(event);
+  }
+
+  /** The timeline recorded how `event`'s item ended: what was shown of it
+   *  ahead of the record goes, the record standing for it. */
+  private recorded(event: SessionEvent): void {
+    if (event.event !== "finished") return;
+    this.recordedItems.add(`${event.turn}/${event.item.id}`);
+    if (event.item.draft) this.recordedItems.add(`${event.turn}/${event.item.draft}`);
+    if (this.recordedItems.size > RECORDED_MOST) {
+      for (const old of [...this.recordedItems].slice(0, this.recordedItems.size - RECORDED_MOST)) this.recordedItems.delete(old);
+    }
   }
 
   /** A request that waits for the user, or the end of one, as it happens. */
@@ -970,7 +968,6 @@ export class Conversation {
   /** Lets go of what the latest part holds before its latest `events`
    *  events, where it can be cut there. */
   async trim(events: number): Promise<void> {
-    this.typed(false);
     const tail = this.tail;
     const span = this.spans.get(tail);
     if (span) {

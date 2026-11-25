@@ -46,7 +46,7 @@ fn amount(usd: Usd) -> String {
 
 /// Lists the logins the World uses on one machine or on all.
 pub fn logins(args: LoginsArgs) -> anyhow::Result<()> {
-    let call = Call::AgentLogins { machine: args.machine.map(Written::from) };
+    let call = Call::AgentLogins { machine: args.machine.map(Written::from), at_once: false };
     let machines: Vec<MachineLogins> = match crate::ask::call(call)?.0 {
         Reply::AgentLogins(world) => world
             .machines
@@ -59,6 +59,10 @@ pub fn logins(args: LoginsArgs) -> anyhow::Result<()> {
                 }
                 MachineLoginsHeard::NoAnswer { machine, reason, .. } => {
                     println!("{machine}: no answer ({reason})");
+                    None
+                }
+                MachineLoginsHeard::Asking { machine, .. } => {
+                    println!("{machine}: being asked");
                     None
                 }
             })

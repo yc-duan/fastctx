@@ -43,6 +43,7 @@ import type { Words } from "../words";
 import type { HubAccount, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
+import { followState, LOGINS, type Following } from "../world/topics";
 import type { Attachment, FilePlace, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
@@ -282,6 +283,12 @@ export class NewTalk {
   private asked = new Map<string, Asked>();
   /** Every machine is being asked about its agents. */
   private askingAll = false;
+  /** Which asking of every machine is the latest: an earlier one's answer
+   *  comes too late to be drawn. */
+  private askRound = 0;
+  /** What the machines say of their agents is read again as the logins
+   *  topic moves, while the page is shown. */
+  private following: Following | null = null;
   /** The label whose choices are open. */
   private opened: Pop | null = null;
   private busy = false;
@@ -445,8 +452,11 @@ export class NewTalk {
     if (pick) this.pick = pick;
     if (pick || machine) this.machine = machine;
     this.note.textContent = "";
-    this.asked.clear();
-    this.askAll();
+    // What each machine said before is shown at once, and replaced as it
+    // answers again: the node answers with what stands, asks only the
+    // machines whose logins moved, and the topic moves once they answered.
+    this.following?.();
+    this.following = followState(LOGINS, () => this.askAll(), () => false);
     this.stopDrops?.();
     this.stopDrops = this.listen();
     this.draw();
@@ -460,6 +470,8 @@ export class NewTalk {
    *  what was written and attached stays for when it is shown again. */
   leave(): void {
     this.shown = false;
+    this.following?.();
+    this.following = null;
     // A conversation begun from here opened on its own page; the next is
     // begun on an empty stage. One still beginning keeps the stage until it
     // has begun or failed (`submit`).
@@ -614,24 +626,31 @@ export class NewTalk {
     return homesOf(this.known(option.machine) ?? [], option.agent).find((facts) => homeChoice(facts) === option.home) ?? null;
   }
 
-  /** Asks every machine reached what agents it has, at once. */
-  private askAll(): void {
+  /** Asks every machine reached what agents it has, at once: one being
+   *  asked keeps what it said before, and is drawn once it answered. */
+  private askAll(): Promise<void> {
+    const round = ++this.askRound;
     this.askingAll = true;
-    this.options
+    return this.options
       .agents(null)
       .then((world) => {
+        if (round !== this.askRound) return;
         for (const answer of world.machines) {
           if (answer.kind === "answered") this.asked.set(answer.reply.machine, { state: "known", facts: answer.reply.agents, byLogin: !!answer.reply.by_login });
           else if (answer.kind === "offline") this.asked.set(answer.machine, { state: "offline" });
-          else this.asked.set(answer.machine, { state: "unknown", why: answer.reason });
+          else if (answer.kind === "asking") {
+            if (this.asked.get(answer.machine)?.state !== "known") this.asked.set(answer.machine, { state: "asking" });
+          } else this.asked.set(answer.machine, { state: "unknown", why: answer.reason });
         }
       })
       .catch((error: unknown) => {
+        if (round !== this.askRound) return;
         for (const line of this.lines(this.options.store.world.peek())) {
           if (!this.asked.has(line.machine)) this.asked.set(line.machine, { state: "unknown", why: String(error) });
         }
       })
       .finally(() => {
+        if (round !== this.askRound) return;
         this.askingAll = false;
         this.draw();
       });

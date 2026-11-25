@@ -819,6 +819,9 @@ pub(crate) fn ask_in(
         }
         Request::Frames { scope, stream, from, limit } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
+            if super::retired::stream(&kept, &stream) {
+                return Err(format!("the hub gives no device {stream} of the scope {scope} any more"));
+            }
             let library = scopes::library(assets, &kept)?;
             let (most, most_bytes) = match room {
                 Room::Control => (FRAMES_AT_ONCE as usize, FRAME_BYTES_AT_ONCE),
@@ -891,7 +894,7 @@ pub(crate) fn ask_in(
             let mut streams = Vec::new();
             for row in page.rows {
                 let Some(scope) = scopes::scope(assets, &row.scope)? else { continue };
-                if !scopes::readable(directory, machine, &scope) || !scopes::holds(directory, machine, &scope, &row.stream) {
+                if !scopes::readable(directory, machine, &scope) || !scopes::serves(directory, machine, &scope, &row.stream) {
                     continue;
                 }
                 streams.push(wire::ChangedStream {
@@ -919,7 +922,7 @@ pub(crate) fn ask_in(
                 .streams(&scope)
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .partition(|(stream, _)| scopes::holds(directory, machine, &kept, stream));
+                .partition(|(stream, _)| scopes::serves(directory, machine, &kept, stream));
             let mut streams = Vec::with_capacity(held.len());
             let remade = library.remade_of(&scope).map_err(|error| error.to_string())?;
             for (stream, next) in held {

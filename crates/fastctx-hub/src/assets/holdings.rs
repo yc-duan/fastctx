@@ -40,7 +40,7 @@ pub(crate) fn list(
     let (mut scopes, mut through) = (Vec::new(), None);
     for (key, seq) in rows {
         let at = HoldingsAt { seq: seq.max(0) as u64, scope: key.clone() };
-        if let Some(scope) = scopes::scope(assets, &key)? {
+        if let Some(scope) = scopes::scope(assets, &key)?.filter(|scope| !super::retired::whole(scope)) {
             // Whether the machine may hold it cannot be told now: the whole
             // listing is asked again, not passed by it (AD06).
             if let (Readers::Body { body, .. }, Some(bodies)) = (&scope.descriptor.readers, &scope.bodies)
@@ -54,7 +54,7 @@ pub(crate) fn list(
                     .descriptor
                     .classes
                     .iter()
-                    .filter(|class| scopes::holds_class(directory, machine, &scope, class))
+                    .filter(|class| !super::retired::class(&scope, class) && scopes::holds_class(directory, machine, &scope, class))
                     .map(|class| class.prefix.clone())
                     .collect();
                 let readers = readers_here(directory, machine, &scope);

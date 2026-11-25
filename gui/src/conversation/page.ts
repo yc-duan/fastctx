@@ -29,6 +29,7 @@ import type { ViewTab } from "../files/view";
 import { FileTabs, type Reading } from "../side/file-tabs";
 import type { DiffLine, WriteFact } from "../world/run-facts";
 import { TalkChanges } from "./changed";
+import { wholeDiff } from "./diff-lines";
 import { whyOf } from "../world/again";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { SideParts } from "../side/parts";
@@ -92,7 +93,7 @@ const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
 async function keptLines(lines: (machine: string, path: string, decoding: Decoding) => Promise<OutputLines>, write: WriteFact): Promise<DiffLine[] | null> {
   const diff = write.diff;
   if (!diff) return null;
-  const raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+  const raw = (await wholeDiff(diff)) ?? (await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" }));
   try {
     const length = Math.min(raw.extent.length, 2000);
     const read = length ? await raw.read(0, length, new AbortController().signal) : [];

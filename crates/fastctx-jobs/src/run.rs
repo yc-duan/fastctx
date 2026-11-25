@@ -127,6 +127,8 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
         })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;
     let mut taken = Vec::new();
+    // The earliest a job due now that the kind keeps waiting may begin.
+    let mut resting: Option<i64> = None;
     {
         let mut busy = registered.busy.lock().expect("busy units");
         let mut take = db.prepare_cached("UPDATE jobs SET state = ?2, tries = tries + 1 WHERE id = ?1")?;
@@ -135,6 +137,11 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
                 break;
             }
             if busy.contains(&unit) {
+                continue;
+            }
+            if let Some(wait) = registered.kind.ready.and_then(|ready| ready(&payload)) {
+                let begins = at.saturating_add(i64::try_from(wait.as_millis()).unwrap_or(i64::MAX)).max(at + 1);
+                resting = Some(resting.map_or(begins, |resting| resting.min(begins)));
                 continue;
             }
             take.execute(params![id, RUNNING])?;
@@ -146,9 +153,15 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
     if !taken.is_empty() {
         return Ok((taken, None));
     }
+    // Looked at as of the same time as the jobs due, so one falling due
+    // between the two is not missed (codex-955b2bcb).
     let earliest: Option<i64> = db
         .prepare_cached("SELECT MIN(due) FROM jobs WHERE kind = ?1 AND state = ?2 AND due > ?3")?
-        .query_row(params![kind, WAITING, now()], |row| row.get(0))?;
+        .query_row(params![kind, WAITING, at], |row| row.get(0))?;
+    let earliest = match (earliest, resting) {
+        (Some(due), Some(resting)) => Some(due.min(resting)),
+        (due, resting) => due.or(resting),
+    };
     Ok((taken, earliest))
 }
 

@@ -391,6 +391,6 @@ pub(crate) fn register(node: &Arc<Node>) {
         })
     };
     node.durable_jobs
-        .register(Kind { name: KIND, at_once: 32, within: Duration::from_secs(120), tries: 5 }, Arc::new(run));
+        .register(Kind { name: KIND, at_once: 32, within: Duration::from_secs(120), tries: 5, ready: None }, Arc::new(run));
     super::copies::register(node);
 }

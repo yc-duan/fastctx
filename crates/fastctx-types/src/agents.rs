@@ -55,6 +55,14 @@ pub enum MachineAgents {
         machine: MachineName,
         reason: String,
     },
+    /// Not heard from lately and asked now, told so to a reader that takes
+    /// what is known at once (`crate::calls::Call::Agents::at_once`), which
+    /// reads again once the machine answered (`crate::topics::LOGINS`).
+    Asking {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+        machine: MachineName,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

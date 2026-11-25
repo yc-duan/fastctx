@@ -37,6 +37,7 @@ mod control;
 mod data;
 mod direct;
 pub mod dissolve;
+mod egress;
 mod expiry;
 mod forget;
 mod health;
@@ -78,6 +79,7 @@ mod skill_files;
 mod skill_storage;
 mod store;
 mod strain;
+mod telling;
 #[cfg(feature = "submission-drill")]
 mod submission_drill;
 mod submitted;
@@ -302,10 +304,13 @@ pub(crate) struct Hub {
     /// told so (`dissolve`).
     dissolution: tokio::sync::Notify,
     /// Told when every member is to look at the directory again
-    /// (`tell_directory`).
+    /// (`telling`).
     directory_changed: Arc<tokio::sync::Notify>,
+    /// Set with `directory_changed` when what members may do changed: every
+    /// session is told at once, none spaced out (`telling`).
+    directory_authority: Arc<std::sync::atomic::AtomicBool>,
     /// Told when who is online changed, for the members whose sessions do
-    /// not read that as it changes (`tell_directory`).
+    /// not read that as it changes (`telling`).
     presence_changed: Arc<tokio::sync::Notify>,
     /// How many times who is online changed (`Hub::present`).
     presence: AtomicU64,
@@ -324,6 +329,9 @@ pub(crate) struct Hub {
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
+    /// The number each machine's agents and logins stand at, as it last
+    /// told (`workbench::logins_heard`).
+    logins: Mutex<HashMap<MachineName, u64>>,
 }
 
 /// Full views built at once when many sessions are told of a change.
@@ -709,6 +717,7 @@ impl Hub {
         afoot::directory_changed(self);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
+        self.directory_authority.store(true, Ordering::SeqCst);
         self.directory_changed.notify_one();
         control::cut_calls(self);
         data::cut_streams(self);
@@ -722,56 +731,13 @@ impl Hub {
         updates::directory_changed(self);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
+        self.directory_authority.store(true, Ordering::SeqCst);
         self.directory_changed.notify_one();
         control::cut_calls(self);
         data::cut_streams(self);
         moving::follow::settle(self);
         forget::prune(self);
         afoot::settle(self);
-    }
-}
-
-/// How long the hub waits after telling every member the directory changed
-/// before it tells them again.
-const DIRECTORY_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// Tells every member to look at the directory again whenever it changed,
-/// and the members whose sessions do not read who is online as it changes
-/// whenever that did, at most once each `DIRECTORY_SPACING`: a machine that
-/// keeps coming and going does not have every member read it all again each
-/// time (`specs/world-concurrency.md`, 机器之间). What lost its standing is cut
-/// at once, by `Hub::changed` itself.
-async fn tell_directory(
-    hub: std::sync::Weak<Hub>,
-    changed: Arc<tokio::sync::Notify>,
-    present: Arc<tokio::sync::Notify>,
-) {
-    loop {
-        let every = tokio::select! {
-            () = changed.notified() => true,
-            () = present.notified() => false,
-        };
-        let Some(hub) = hub.upgrade() else { return };
-        hub.blocking(move |hub| {
-            let mut outs: Vec<outq::Outq> = Vec::new();
-            let mut changes = Vec::new();
-            for (name, session) in hub.sessions().iter() {
-                if every && session.view_deltas {
-                    changes.push((name.clone(), session.key, session.generation, session.out.clone()));
-                } else if every || !session.presence {
-                    outs.push(session.out.clone());
-                }
-            }
-            for out in outs {
-                let _ = out.send(Out::Frame(Down::DirectoryChanged));
-            }
-            if !changes.is_empty() {
-                hub.push_views(changes);
-            }
-        })
-        .await;
-        drop(hub);
-        tokio::time::sleep(DIRECTORY_SPACING).await;
     }
 }
 
@@ -1044,6 +1010,7 @@ async fn serving(
         updates: Mutex::new("hub updates", Rank::HUB_UPDATES, updates),
         dissolution: tokio::sync::Notify::new(),
         directory_changed: Arc::new(tokio::sync::Notify::new()),
+        directory_authority: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
         pending_presence: Mutex::new("hub presence", Rank::HUB_PRESENCE, Default::default()),
@@ -1054,6 +1021,7 @@ async fn serving(
         assets,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
+        logins: Mutex::new("hub logins told", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     // Sealed while it runs, every machine is sent a view that says so, what
@@ -1085,10 +1053,11 @@ async fn serving(
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
-    fastctx_platform::task::spawn(tell_directory(
+    fastctx_platform::task::spawn(telling::run(
         Arc::downgrade(&hub),
         hub.directory_changed.clone(),
         hub.presence_changed.clone(),
+        hub.directory_authority.clone(),
     ));
     updates::start(&hub);
     afoot::start(&hub);

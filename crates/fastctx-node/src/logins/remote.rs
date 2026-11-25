@@ -21,8 +21,14 @@ use crate::Node;
 use crate::admission::Asker;
 
 /// The record of `machine`, or of this one and every machine `acting` may
-/// look at.
-pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Written>) -> Result<WorldLogins, Failure> {
+/// look at: each other machine's as it last said it while that stands
+/// (`crate::elsewhere`); `at_once`, as `Call::AgentLogins` says.
+pub(crate) async fn query(
+    node: &Arc<Node>,
+    acting: &Acting,
+    machine: Option<Written>,
+    at_once: bool,
+) -> Result<WorldLogins, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
     if machine.as_ref().is_none_or(|machine| node.is_here(machine)) {
@@ -67,8 +73,11 @@ pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Wri
         None if machine.is_none() => reachable,
         None => Vec::new(),
     };
-    let heard = crate::around::ask_each(reachable, |_| RemoteCall::AgentLogins).await;
-    machines.extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.logins()));
+    let reading = crate::elsewhere::Reading::of(machine.as_ref(), at_once);
+    let (heard, asking) = crate::elsewhere::ask(node, crate::elsewhere::Kind::Logins, reachable, reading).await;
+    machines.extend(crate::elsewhere::listed(heard, asking, |answers| answers.logins(), |machine, observation| {
+        MachineLoginsHeard::Asking { observation, machine }
+    }));
     Ok(WorldLogins { machine: here, machines })
 }
 
@@ -187,7 +196,13 @@ pub(crate) fn may_see(
 /// Asks `machine`'s node, of the user's own, for `call`, or this node when
 /// it is this machine.
 async fn ask(node: &Arc<Node>, machine: &Written, purpose: Purpose, call: RemoteCall) -> Result<RemoteReply, Failure> {
-    node.call(&Acting::Here, machine, purpose, call).await.map_err(|error| Failure::new(error.to_string()))?
+    let answer = node.call(&Acting::Here, machine, purpose, call).await.map_err(|error| Failure::new(error.to_string()));
+    // What it says of its logins once changed is asked again before what
+    // was kept of them here is told (`crate::elsewhere`).
+    if purpose != Purpose::Look {
+        crate::elsewhere::moved(node, machine);
+    }
+    answer?
 }
 
 fn other(machine: &Written) -> Failure {

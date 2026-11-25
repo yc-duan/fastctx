@@ -21,6 +21,7 @@ fn member(name: &str, key: &SecretKey, account: &AccountName) -> Arc<Member> {
         home: Some(account.clone()), managed: false, code: None, group: None, direct: Vec::new(), relay: Vec::new(),
         added: jiff::Timestamp::now(), online: false, since: None, through: None, reach: None, paths: None, strain: None,
         workbench: None, settled: None,
+        logins_number: None,
     })
 }
 

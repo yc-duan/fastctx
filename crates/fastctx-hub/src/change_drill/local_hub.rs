@@ -61,6 +61,7 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
         account_records,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
+        logins: Mutex::new("hub logins told", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     let members = hub.store().book.directory.members.clone();

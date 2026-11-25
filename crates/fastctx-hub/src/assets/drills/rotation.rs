@@ -45,6 +45,7 @@ fn hub_streams_go_on_after_a_key_rotation() {
         home: Some(root.clone()), managed: false, code: None, group: None, direct: Vec::new(), relay: Vec::new(),
         added: jiff::Timestamp::now(), online: false, since: None, through: None, reach: None, paths: None, strain: None,
         workbench: None, settled: None,
+        logins_number: None,
     });
     let mut store = store;
     store.book.directory.members.push(member);

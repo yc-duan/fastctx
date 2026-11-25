@@ -38,7 +38,16 @@ pub struct Kind {
     pub within: Duration,
     /// Failures in a row after which a job is set aside until it is asked for again.
     pub tries: u32,
+    /// How long until a job of the kind with this payload may begin, beyond
+    /// its own due time: what the kind paces all its jobs by. It is looked
+    /// at before a job is taken, so one that may not begin yet is not taken
+    /// only to be put back, a write each way (codex-7d36e00c). None for a
+    /// kind that paces nothing.
+    pub ready: Option<Ready>,
 }
+
+/// How long until a job with this payload may begin (`Kind::ready`).
+pub type Ready = fn(&[u8]) -> Option<Duration>;
 
 /// Work to be done: of a kind, named so asking again finds it, for a unit
 /// (a conversation, an account) whose jobs of a kind run one at a time.

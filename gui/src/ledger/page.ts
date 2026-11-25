@@ -297,7 +297,13 @@ export class AgentsPage implements Page {
     this.reading = true;
     try {
       const world = await this.options.read(null);
-      for (const heard of world.machines) this.seen.records.set(heard.kind === "answered" ? heard.logins.machine : heard.machine, heard);
+      for (const heard of world.machines) {
+        const name = heard.kind === "answered" ? heard.logins.machine : heard.machine;
+        // One being asked keeps what it answered before; the topic moves
+        // once it answers again.
+        if (heard.kind === "asking" && this.seen.records.get(name)?.kind === "answered") continue;
+        this.seen.records.set(name, heard);
+      }
       this.failed = false;
       this.rebuild();
     } catch (error) {

@@ -64,6 +64,7 @@ pub use ending::flush_log;
 mod asset_preservation;
 mod content_upkeep;
 mod conversation_store;
+mod elsewhere;
 mod facts;
 mod features;
 mod file_events;
@@ -358,6 +359,9 @@ pub(crate) struct Node {
     memory_changes: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
+    /// What the other machines last said of their agents and logins
+    /// (`elsewhere`).
+    elsewhere: elsewhere::Answers,
     /// Deletions of conversations still to be asked of hubs (`forget`).
     forget_asks: forget::Asks,
     /// What of the node's work is stuck, as it last looked at itself.
@@ -930,6 +934,7 @@ pub async fn run_prepared(
                 world_shown: Default::default(),
                 memory_changes: tokio::sync::watch::channel(0).0,
                 facts: facts::Facts::default(),
+                elsewhere: elsewhere::Answers::default(),
                 forget_asks: forget::Asks::default(),
                 stuck: Default::default(),
                 usage: usage::Usage::default(),

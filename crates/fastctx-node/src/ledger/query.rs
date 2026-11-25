@@ -76,8 +76,11 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
     .map_err(|error| format!("reading available projects: {error}"))
 }
 
+/// The projects this computer has a record of: what the ledgers' sync took
+/// (`super::syncing`), which follows the hubs' changes on its own. Listing
+/// them waits on no hub.
 pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
-    let towns = query(node, None).await.map_err(Failure::new)?;
+    let towns = available(node, None).await.map_err(Failure::new)?.into_keys().collect();
     summaries(node, towns).await
 }
 

@@ -56,6 +56,7 @@ fn a_look_that_finds_nothing_to_put_right_writes_nothing() {
         paths: None,
         strain: None,
         workbench: None,
+        logins_number: None,
         settled: None,
     }));
     let directory = store.book.directory.clone();

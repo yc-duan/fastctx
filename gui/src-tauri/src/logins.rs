@@ -27,7 +27,7 @@ pub(crate) async fn agent_logins(
     machine_name: Option<String>,
 ) -> Result<WorldLogins, String> {
     let machine = machine_name.map(machine).transpose()?;
-    shell.world().agent_logins(machine).await.map_err(|error| error.to_string())
+    shell.world().agent_logins_at_once(machine).await.map_err(|error| error.to_string())
 }
 
 /// Scans a machine for its agents, answered once the usual places are done

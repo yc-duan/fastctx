@@ -67,6 +67,7 @@ pub(super) fn member(
         paths: None,
         strain: None,
         workbench: None,
+        logins_number: None,
         settled: None,
     }
 }

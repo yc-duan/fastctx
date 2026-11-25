@@ -34,6 +34,8 @@ export interface ConversationFeed {
   waiting(events: SessionEvent[]): void;
   /** A request that waits for the user, or the end of one. */
   asked(event: SessionEvent): void;
+  /** What the turn does as it happens, ahead of its timeline. */
+  live(event: SessionEvent): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
   /** It came back. */
@@ -159,6 +161,9 @@ export const watched: ConversationSource = {
           return;
         case "asked":
           feed.asked(piece.event);
+          return;
+        case "live":
+          feed.live(piece.event);
           return;
         case "event":
           feed.happened(piece.at, piece.event);
