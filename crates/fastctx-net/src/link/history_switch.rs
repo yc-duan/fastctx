@@ -28,8 +28,9 @@ impl Link {
         if !matches!(told, Told::Done) {
             return Err("the hub did not confirm the notes setting".into());
         }
-        // Read the authoritative view: another writer's later choice wins.
-        self.refresh_unless_current().await?;
+        // Read the authoritative view, which this write just changed: another
+        // writer's later choice wins.
+        self.refresh().await?;
         self.inner.node.directory_changed();
         Ok(())
     }
