@@ -1571,7 +1571,6 @@ impl Call {
             | Self::GoalCommand { .. }
             | Self::HandOver { .. }
             | Self::History { .. }
-            | Self::HistoryDelete { .. }
             | Self::HistorySwitchRead { .. }
             | Self::HistorySwitchWrite { .. }
             | Self::HoldHost { .. }
@@ -1675,6 +1674,7 @@ impl Call {
             Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets when a machine deletes its conversations idle long enough.
             Self::ConversationRetention { .. } => Some(Purpose::ExecutionControl),
+            Self::HistoryDelete { .. } => Some(Purpose::ExecutionControl),
             // Sets what a login's assistances and its Fable line are held to.
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
                 Some(Purpose::ExecutionControl)
