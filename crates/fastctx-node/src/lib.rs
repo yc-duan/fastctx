@@ -216,6 +216,7 @@ mod workers;
 pub use workers::ROLES as WORKER_ROLES;
 mod world;
 mod world_format;
+mod world_holder;
 mod world_program;
 mod write;
 mod write_command;
@@ -661,7 +662,12 @@ pub async fn run_prepared(
     }
     let _lock = match waits {
         // A successor prepares, then waits to be let in, then waits for the
-        // node before it to let the World go.
+        // node before it to let the World go. One the guardian keeps asks a
+        // holder nobody keeps to let it go (`world_holder`); a successor's
+        // renewal hands the World on itself.
+        true if supervision.is_some() => world_holder::take(fastctx_root, &world, None)
+            .await?
+            .expect("a wait without a deadline ends with the lock"),
         true => {
             let lock = world.node_lock();
             fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
@@ -671,18 +677,10 @@ pub async fn run_prepared(
         // renewed to: the one it starts waits a while for the World rather
         // than ending at once, refused, to be started again.
         false if cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some() => {
-            let lock = world.node_lock();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            loop {
-                let trying = lock.clone();
-                if let Some(lock) = fastctx_platform::task::blocking(move || FileLock::try_acquire(&trying)).await? {
-                    break lock;
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(AlreadyServed(world.path().to_path_buf()).into());
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
+            world_holder::take(fastctx_root, &world, Some(deadline))
+                .await?
+                .ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?
         }
         false => {
             let lock = world.node_lock();
@@ -713,6 +711,20 @@ pub async fn run_prepared(
             lock = fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&taking)).await??;
         }
     };
+    // Who holds the World, for whoever must end a holder that no longer
+    // answers (`fastctx service node hold`).
+    {
+        let holding = world.clone();
+        let recorded = fastctx_platform::task::blocking(move || -> anyhow::Result<()> {
+            let me = serde_json::to_vec(&fastctx_platform::current_identity()?).expect("identities serialize");
+            fastctx_platform::publish(&holding.node_holder(), &me, fastctx_platform::Permissions::Private)?;
+            Ok(())
+        })
+        .await;
+        if let Err(error) = recorded {
+            eprintln!("fastctx node: recording this node as the World's holder: {error:#}");
+        }
+    }
     if renewal.successor && {
         let root = fastctx_root.to_path_buf();
         fastctx_platform::task::blocking(move || fastctx_install::renewal::read(&root))

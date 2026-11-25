@@ -249,8 +249,12 @@ fn reconcile(
             }
             None => None,
         };
+        let unadmitted = login.as_ref().and_then(|login| login.unadmitted.clone());
         let child = Child::spawn(config, login, sender.clone()).context("launching the user's foreground process")?;
         line(log, &format!("prepared process {} as {:?}", child.pid, child.identity));
+        if let Some(why) = unadmitted {
+            line(log, &format!("the user's desktop programs may not look at process {}: {why}", child.pid));
+        }
         let node = Node {
             child,
             prepared: config.kind == Kind::Hub,

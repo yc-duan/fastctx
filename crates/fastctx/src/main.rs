@@ -29,6 +29,7 @@ mod move_login;
 mod goal;
 mod history;
 mod keep;
+mod left_nodes;
 mod mcp;
 mod mcp_child;
 mod mcp_relay;

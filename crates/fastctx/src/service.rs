@@ -105,6 +105,15 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
     if kind == Kind::Node && matches!(args.action, Action::Install) && !kept_before {
         hand_over(&directory);
     }
+    // A held service stopped the nodes it keeps; one nobody keeps would hold
+    // the World on (`crate::left_nodes`).
+    if kind == Kind::Node && matches!(args.action, Action::Hold) {
+        match crate::left_nodes::end(&directory) {
+            Ok(Some(holder)) => eprintln!("fastctx: ended process {}, which still held the World", holder.pid),
+            Ok(None) => {}
+            Err(error) => eprintln!("fastctx: a node may still hold the World: {error:#}"),
+        }
+    }
     #[cfg(target_os = "linux")]
     if matches!(args.action, Action::Install)
         && let Some(owner) = args.package_owner

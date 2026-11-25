@@ -51,6 +51,10 @@ pub(super) struct Login {
     pub token: OwnedHandle,
     pub identity: Identity,
     pub home: OsString,
+    /// Why the account's desktop programs may not look at the node this
+    /// token starts, when it kept Windows's default access
+    /// (`token_access::admit_account`).
+    pub unadmitted: Option<String>,
     profile: HANDLE,
 }
 
@@ -291,6 +295,10 @@ pub(super) fn login(target: &Target, full: Option<(Identity, OwnedHandle)>) -> a
     if authentication_id(token.as_raw_handle())? != before {
         bail!("moving the token changed its authentication session");
     }
+    // The account's desktop programs look at the node they talk to; one that
+    // cannot is told why, and the node starts all the same.
+    let unadmitted =
+        super::token_access::admit_account(token.as_raw_handle(), &target.sid).err().map(|error| error.to_string());
     let mut user = target.user.clone();
     user.push(0);
     let mut profile = PROFILEINFOW {
@@ -316,7 +324,7 @@ pub(super) fn login(target: &Target, full: Option<(Identity, OwnedHandle)>) -> a
         return Err(error.into());
     }
     let end = home.iter().position(|&c| c == 0).unwrap_or(home.len());
-    Ok(Login { token, identity, home: OsString::from_wide(&home[..end]), profile: profile.hProfile })
+    Ok(Login { token, identity, home: OsString::from_wide(&home[..end]), unadmitted, profile: profile.hProfile })
 }
 
 fn s4u(target: &Target) -> anyhow::Result<OwnedHandle> {

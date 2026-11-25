@@ -322,7 +322,7 @@ mod imp {
     use std::time::Duration;
 
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
-    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 
     use super::{Connection, with_place};
@@ -428,7 +428,7 @@ mod imp {
                 Err(error) => return Err(with_place(error, address)),
             }
         };
-        let owner = object_owner_sid(client.as_raw_handle())?;
+        let owner = object_owner_sid(client.as_raw_handle()).map_err(|error| step(error, "reading who holds it"))?;
         if owner != current_user_sid()? {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -439,11 +439,23 @@ mod imp {
         if unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(client.as_raw_handle(), &mut pid) }
             == 0
         {
-            return Err(io::Error::last_os_error());
+            return Err(step(io::Error::last_os_error(), "asking which process serves it"));
         }
-        let identity = crate::identity_of(pid)?;
+        // A node another logon of this user started, as a service starts one
+        // before anyone logs on, may keep its process from this logon's
+        // programs. The pipe's owner says already whose node it is, so the
+        // connection goes on without the process's identity.
+        let identity = match crate::identity_of(pid) {
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => None,
+            other => other.map_err(|error| step(error, &format!("looking at process {pid}, which serves it")))?,
+        };
         let mut connection = Connection::new(client);
         connection.server = identity;
         Ok(connection)
+    }
+
+    /// `error`, saying which step of connecting it came from.
+    fn step(error: io::Error, what: &str) -> io::Error {
+        io::Error::new(error.kind(), format!("{what}: {error}"))
     }
 }
