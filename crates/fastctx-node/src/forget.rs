@@ -273,30 +273,65 @@ pub(crate) async fn project(
     Ok(())
 }
 
+/// How long a deletion the hub asks for is tried again here while it is
+/// refused for a moment, as while a file arrives for the conversation or its
+/// turn winds down. The hub asks again only at this machine's next session,
+/// so a refusal answered at once would hold the deletion until then.
+const TOLD_TRIES_FOR: std::time::Duration = std::time::Duration::from_secs(120);
+const TOLD_PAUSE_FIRST: std::time::Duration = std::time::Duration::from_secs(1);
+const TOLD_PAUSE_MOST: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// The hub `hub` has this machine delete what it keeps of a conversation.
 pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) -> Forgot {
+    let began = tokio::time::Instant::now();
+    let mut pause = TOLD_PAUSE_FIRST;
+    let mut said: Option<String> = None;
+    loop {
+        let reason = match told_once(node, hub, &forgetting).await {
+            Ok(outcome) => return outcome,
+            Err(reason) => reason,
+        };
+        let key = forgetting.conversation.key();
+        if began.elapsed() + pause > TOLD_TRIES_FOR {
+            node.log.line(format_args!(
+                "deleting {key} as its hub asked did not go: {reason}; the hub asks again at the next session"
+            ));
+            return Forgot::Failed { reason };
+        }
+        if said.as_deref() != Some(reason.as_str()) {
+            node.log.line(format_args!("deleting {key} as its hub asked: {reason}; trying again"));
+            said = Some(reason);
+        }
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(TOLD_PAUSE_MOST);
+    }
+}
+
+/// One try of `told`: how it ended, or why it may go on a later try.
+async fn told_once(node: &Arc<Node>, hub: &HubId, forgetting: &Forgetting) -> Result<Forgot, String> {
     let Ok(_call) = handing(node) else {
-        return Forgot::Failed { reason: format!("the node on {} is handing over to its successor", node.machine()) };
+        return Ok(Forgot::Failed {
+            reason: format!("the node on {} is handing over to its successor", node.machine()),
+        });
     };
     let Forgetting { conversation, account, .. } = forgetting;
-    if !node.link_of(hub).is_some_and(|link| link.view().is_me(&conversation.machine)) {
-        return match elsewhere(node, hub, &account, &conversation).await {
-            Ok(()) => Forgot::Done,
-            Err(reason) => Forgot::Failed { reason },
-        };
-    }
     let id = &conversation.resident;
+    // One on record here lives here, whatever the view of the hub held now
+    // says, as before a new session's view came.
+    let here = node.residents.on_record(id).is_some()
+        || node.link_of(hub).is_some_and(|link| link.view().is_me(&conversation.machine));
+    if !here {
+        return elsewhere(node, hub, account, conversation).await.map(|()| Forgot::Done);
+    }
     // Of one no longer on record, nothing says whom it worked for: what is
     // left of it here goes all the same.
     let acting = node.residents.about(id).map(|(about, _)| about.acting);
     if let Some(acting) = &acting
-        && !node.serves(acting, hub, &account)
+        && !node.serves(acting, hub, account)
     {
-        return Forgot::Refused { reason: format!("{id} does not work for the account {account}") };
+        return Ok(Forgot::Refused { reason: format!("{id} does not work for the account {account}") });
     }
-    if let Err(reason) = home(node, id).await {
-        return Forgot::Failed { reason };
-    }
+    home(node, id).await?;
     node.log.line(format_args!("deleted {id}, which lived here, as the account {account} asked"));
     // The other accounts it worked for may have devices keeping a copy of
     // it: their hubs are asked too.
@@ -304,7 +339,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
         .map(|acting| pairs(node, &acting))
         .unwrap_or_default()
         .into_iter()
-        .filter(|(other, other_account)| !(other == hub && *other_account == account))
+        .filter(|(other, other_account)| !(other == hub && other_account == account))
         .map(|(hub, account)| Ask {
             hub,
             account,
@@ -320,7 +355,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
             Err(error) => node.log.line(format_args!("keeping what to ask the other hubs of {id}: {error}")),
         }
     }
-    Forgot::Done
+    Ok(Forgot::Done)
 }
 
 /// Names what sends the kept asks, before the node's jobs start: now, and
