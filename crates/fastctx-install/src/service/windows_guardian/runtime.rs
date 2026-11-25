@@ -90,6 +90,9 @@ pub(super) fn run(
     // after a growing pause, rather than at once by the service manager.
     let mut unprepared: Option<(std::time::Instant, std::time::Duration)> = None;
     let mut unprepared_said: Option<String> = None;
+    // The nodes ended as their user asked (`super::restart`): their channel
+    // closing and their exit are no failure, and say nothing.
+    let mut ended_as_asked: Vec<Arc<Instance>> = Vec::new();
     let result = (|| {
         loop {
             if requests.stop.load(Ordering::SeqCst) || requests.shutdown.load(Ordering::SeqCst) {
@@ -101,6 +104,7 @@ pub(super) fn run(
             if requests.restart.swap(false, Ordering::SeqCst) && config.kind == Kind::Node {
                 line(&mut log, "starting the node anew, as its user asked");
                 for node in [candidate.take(), active.take()].into_iter().flatten() {
+                    ended_as_asked.push(node.child.instance.clone());
                     if let Err(error) = node.child.terminate() {
                         line(&mut log, &format!("ending process {}: {error:#}", node.child.pid));
                     }
@@ -201,6 +205,11 @@ pub(super) fn run(
                     requests.wake_queued.store(false, Ordering::SeqCst);
                     refresh = true;
                 }
+                Event::Exited(instance, _) if ended_as_asked.iter().any(|ended| Arc::ptr_eq(ended, &instance)) => {
+                    ended_as_asked.retain(|ended| !Arc::ptr_eq(ended, &instance));
+                }
+                Event::ProtocolFailed(instance, _)
+                    if ended_as_asked.iter().any(|ended| Arc::ptr_eq(ended, &instance)) => {}
                 Event::Exited(instance, status) => {
                     line(
                         &mut log,
