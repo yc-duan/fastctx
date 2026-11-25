@@ -33,15 +33,19 @@ pub(crate) fn lazy(scope: &str, stream: &str) -> bool {
 /// them on.
 pub(crate) struct Wanted {
     path: PathBuf,
-    wanted: Mutex<Option<BTreeMap<(String, String), Option<i64>>>>,
+    wanted: Mutex<Option<Asked>>,
 }
+
+/// The streams asked for, by scope and stream, with the holding period each
+/// was last taken whole in.
+type Asked = BTreeMap<(String, String), Option<i64>>;
 
 impl Wanted {
     pub(crate) fn new(library: &Path) -> Self {
         Self { path: library.join("lazy-wanted.json"), wanted: Mutex::new(None) }
     }
 
-    fn with<T>(&self, change: impl FnOnce(&mut BTreeMap<(String, String), Option<i64>>) -> (T, bool)) -> T {
+    fn with<T>(&self, change: impl FnOnce(&mut Asked) -> (T, bool)) -> T {
         let mut wanted = self.wanted.lock().expect("never poisoned");
         let wanted = wanted.get_or_insert_with(|| {
             let read = || -> io::Result<Vec<(String, String, Option<i64>)>> {

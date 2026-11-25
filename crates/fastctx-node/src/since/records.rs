@@ -61,8 +61,10 @@ struct Mark {
 
 /// Each conversation's mark when its records were last read, and when the
 /// latest of what they told happened, by its world and its id.
-static READ: LazyLock<Mutex<HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>)>>> =
-    LazyLock::new(Default::default);
+static READ: LazyLock<Mutex<Read>> = LazyLock::new(Default::default);
+
+/// Each conversation's mark and latest time, by its world and id (`READ`).
+type Read = HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>)>;
 
 /// Every conversation's mark in `world`, by its id, in three reads for all
 /// of them; none where its database is not open or cannot be read, and then

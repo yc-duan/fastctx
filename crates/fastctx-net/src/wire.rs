@@ -95,7 +95,7 @@ pub enum Up {
         /// kind (`fastctx_types::numbers`, `crate::directory::Member::numbers`);
         /// an earlier release says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        numbers: Option<fastctx_types::numbers::Numbers>,
+        numbers: Option<Box<fastctx_types::numbers::Numbers>>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.

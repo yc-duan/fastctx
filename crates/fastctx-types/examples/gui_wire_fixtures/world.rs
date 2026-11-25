@@ -387,12 +387,14 @@ fn nodes() -> Vec<NodesReply> {
                 }),
             })
         }),
-        hooks_skipped: lifetime.then(|| fastctx_types::world::HooksSkipped {
-            by: "cc-plugin-sec-default".into(),
-            hooks: vec!["classic.SessionStart".into(), "prompt.section".into()],
-            session: "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f".into(),
-            at: Some(at()),
-            plugins: "/root/.fastctx/world/claude-plugins".into(),
+        hooks_skipped: lifetime.then(|| {
+            Box::new(fastctx_types::world::HooksSkipped {
+                by: "cc-plugin-sec-default".into(),
+                hooks: vec!["classic.SessionStart".into(), "prompt.section".into()],
+                session: "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f".into(),
+                at: Some(at()),
+                plugins: "/root/.fastctx/world/claude-plugins".into(),
+            })
         }),
     };
     let me: fastctx_types::AccountName = "ada".parse().unwrap();

@@ -18,7 +18,11 @@ use crate::town::read;
 /// (`syncing::told`). While both stand and nothing waits to be taken, the
 /// copy is as the hub has it: the ledgers' sync takes every change the hub
 /// tells (`super::syncing`).
-static WHOLE: LazyLock<Mutex<HashMap<(HubId, TownName), (jiff::Timestamp, u64)>>> = LazyLock::new(Default::default);
+static WHOLE: LazyLock<Mutex<Whole>> = LazyLock::new(Default::default);
+
+/// The projects known whole, by hub and name, as of a connection and the
+/// changes told by then (`WHOLE`).
+type Whole = HashMap<(HubId, TownName), (jiff::Timestamp, u64)>;
 
 /// Whether `town`'s copy here is known whole for `link`'s hub (`WHOLE`).
 fn whole(node: &Node, link: &fastctx_net::link::Link, town: &TownName) -> bool {

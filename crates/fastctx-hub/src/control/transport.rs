@@ -203,7 +203,15 @@ async fn read(
                     Some(Up::Ping { paths, .. }) => paths,
                     _ => None,
                 };
-                *previous = Some(Up::Ping { n, took, paths: paths.or(prior_paths), held, health, workbench, numbers });
+                *previous = Some(Up::Ping {
+                    n,
+                    took,
+                    paths: paths.or(prior_paths),
+                    held,
+                    health,
+                    workbench,
+                    numbers: numbers.map(Box::new),
+                });
             });
             continue;
         }

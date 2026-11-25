@@ -35,7 +35,10 @@ use std::time::Duration;
 /// job tells them at once (`stirred`), so a runner with nothing due sleeps
 /// until then, or until the earliest job it holds falls due, and never looks
 /// at its table only in case (`run::IDLE` is a long safety net).
-static RUNNERS: LazyLock<Mutex<HashMap<&'static str, Vec<Weak<Registered>>>>> = LazyLock::new(Default::default);
+static RUNNERS: LazyLock<Mutex<Runners>> = LazyLock::new(Default::default);
+
+/// The runners of each kind, by the kind's name (`RUNNERS`).
+type Runners = HashMap<&'static str, Vec<Weak<Registered>>>;
 
 /// Tells every runner in this process to look at its table again: after the
 /// machine slept or its clock jumped, a job due by the wall clock may be due

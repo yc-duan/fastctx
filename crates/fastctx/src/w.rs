@@ -47,7 +47,6 @@ pub fn run(mut args: WArgs) -> anyhow::Result<()> {
         ResidentId::try_from(id).is_ok() || JobId::try_from(id).is_ok()
     };
     let sentinel_names: Vec<_> = args.names.iter().filter(|name| sentinels::named(name)).cloned().collect();
-    let overview = args.names.is_empty() || (args.names.len() == 1 && !is_id(&args.names[0]));
     if !sentinel_names.is_empty() && let Some(client) = &client {
         anyhow::ensure!(client.sentinels, "upgrade {} to inspect sentinels", client.machine);
     }

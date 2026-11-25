@@ -20,8 +20,11 @@ use crate::residents::{Former, OnRecord, last_action};
 /// only once that moved. The World an interface shows reads every
 /// conversation's each time anything changes (`crate::shown`); a machine of
 /// hundreds of them read as many rows a second while it worked.
-static LAST: LazyLock<Mutex<HashMap<(PathBuf, String), (u64, Option<fastctx_types::residents::Action>)>>> =
-    LazyLock::new(Default::default);
+static LAST: LazyLock<Mutex<Last>> = LazyLock::new(Default::default);
+
+/// Each conversation's last action and its actions' version then, by world
+/// and conversation (`LAST`).
+type Last = HashMap<(PathBuf, String), (u64, Option<fastctx_types::residents::Action>)>;
 
 /// `resident`'s last action, from `LAST` while its actions were written as
 /// many times as `versions` says, else read and kept.

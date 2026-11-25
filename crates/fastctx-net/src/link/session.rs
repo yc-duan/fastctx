@@ -644,7 +644,7 @@ async fn connected(
                     let paths = inner.view().direct_links.then(|| inner.paths());
                     let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
                     let health = inner.view().health.then(fastctx_platform::health::summary);
-                    let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers());
+                    let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers().map(Box::new));
                     let _ =
                         up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench, numbers });
                 }
@@ -1148,7 +1148,7 @@ async fn heartbeat(
                 // pong measures nothing.
                 let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
                 let health = inner.view().health.then(fastctx_platform::health::summary);
-                let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers());
+                let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers().map(Box::new));
                 let ping = Up::Ping { n: 0, paths: None, took: Some(pulse.taken()), held, health, workbench, numbers };
                 if up.send_first(ping).is_err() {
                     return;
@@ -1162,7 +1162,7 @@ async fn heartbeat(
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
         let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
         let health = inner.view().health.then(fastctx_platform::health::summary);
-        let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers());
+        let (workbench, numbers) = (inner.node.workbench(), inner.node.numbers().map(Box::new));
         if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health, workbench, numbers }).is_err() {
             return;
         }

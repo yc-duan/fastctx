@@ -348,7 +348,7 @@ pub(crate) async fn session(
                 if let Up::Ping { health, workbench, numbers, .. } = &frame {
                     heard.heartbeat(&hub, &name, key, generation, health.as_ref());
                     crate::workbench::heard(&hub, &name, *workbench);
-                    crate::workbench::numbers_heard(&hub, &name, generation, *numbers);
+                    crate::workbench::numbers_heard(&hub, &name, generation, numbers.as_deref().copied());
                 }
                 Some(Err(frame))
             },

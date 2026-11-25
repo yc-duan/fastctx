@@ -155,7 +155,7 @@ pub struct MachineFacts {
     /// The World's hooks Claude Code skips here, as its own record of a
     /// session said lately; none while they run, or from an older node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hooks_skipped: Option<HooksSkipped>,
+    pub hooks_skipped: Option<Box<HooksSkipped>>,
 }
 
 /// Claude Code passing the World's hooks over on a machine: something that
