@@ -11,7 +11,12 @@ use std::sync::Arc;
 
 /// The answer to how `account`'s machines stand with the hub of `link`,
 /// over the last `hours`.
-pub(super) async fn of(link: &Arc<Link>, account: AccountName, hours: u32, machine: Option<fastctx_types::MachineName>) -> Reply {
+pub(super) async fn of(
+    link: &Arc<Link>,
+    account: AccountName,
+    hours: u32,
+    machine: Option<fastctx_types::MachineName>,
+) -> Reply {
     let (cut_off, why) = match link.status() {
         Status::Online { .. } => (None, None),
         Status::Connecting { since, last_error } => (Some(since.as_millisecond()), last_error),
@@ -23,7 +28,9 @@ pub(super) async fn of(link: &Arc<Link>, account: AccountName, hours: u32, machi
     }
     match link.assets(Request::SyncStatus { account, hours, machine }).await {
         Ok(AssetReply::SyncStatus { status }) => Reply::SyncStatus { local, hub: Some(status), unreached: None },
-        Ok(other) => Reply::SyncStatus { local, hub: None, unreached: Some(format!("the hub answered otherwise: {other:?}")) },
+        Ok(other) => {
+            Reply::SyncStatus { local, hub: None, unreached: Some(format!("the hub answered otherwise: {other:?}")) }
+        }
         Err(why) => Reply::SyncStatus { local, hub: None, unreached: Some(why) },
     }
 }

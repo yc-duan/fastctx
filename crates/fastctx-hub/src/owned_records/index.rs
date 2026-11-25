@@ -41,14 +41,21 @@ impl Index {
     /// opener is the account it was, or it is a body's, whose records stay
     /// its readers' with the opener gone (§29, 2.6).
     pub(crate) fn live<L: Lookup + ?Sized>(&self, directory: &L, identity: &Identity) -> bool {
-        directory.find_account(&identity.0).is_some_and(|owner| owner.opened == identity.1) || self.body(identity).is_some()
+        directory.find_account(&identity.0).is_some_and(|owner| owner.opened == identity.1)
+            || self.body(identity).is_some()
     }
 
     /// Whether `actor` reads and writes the records of the conversation
     /// `identity`: any by its opener, or those its birth machine is held by,
     /// while its opener is the account it was; a body's by the body's
     /// members too, its opener gone or not (§29, 2.6).
-    pub(crate) fn reads(&self, directory: &Directory, actor: &AccountName, identity: &Identity, conversation: &Conversation) -> bool {
+    pub(crate) fn reads(
+        &self,
+        directory: &Directory,
+        actor: &AccountName,
+        identity: &Identity,
+        conversation: &Conversation,
+    ) -> bool {
         let opener = directory.account(&identity.0).is_some_and(|owner| owner.opened == identity.1);
         if opener && super::allows(directory, actor, conversation) {
             return true;

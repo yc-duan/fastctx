@@ -875,14 +875,29 @@ pub enum Received {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         refused: Option<Refused>,
     },
-    Parked { sequence: u64, accumulated: Bytes, word: Bytes },
-    Rejected { why: String, from: u64, word: Bytes },
+    Parked {
+        sequence: u64,
+        accumulated: Bytes,
+        word: Bytes,
+    },
+    Rejected {
+        why: String,
+        from: u64,
+        word: Bytes,
+    },
     /// Not held yet: send `from` to `to` first.
-    Gap { from: u64, to: u64 },
+    Gap {
+        from: u64,
+        to: u64,
+    },
     /// Not here yet: put these objects first.
-    Missing { objects: Vec<ObjectRef> },
+    Missing {
+        objects: Vec<ObjectRef>,
+    },
     /// Prove holding these by their whole bytes first.
-    Prove { objects: Vec<ObjectRef> },
+    Prove {
+        objects: Vec<ObjectRef>,
+    },
 }
 
 /// What the hub makes of one of a device's cursors.
@@ -965,20 +980,32 @@ pub enum Reply {
     },
     /// This machine reads the scope no more, by the directory as it stands
     /// (§4.5, §6.3): it stops using what it holds of it.
-    Revoked { scope: String },
+    Revoked {
+        scope: String,
+    },
     /// How many shares waiting at the revision a machine cleared at are in
     /// force now.
-    Cleared { activated: u32 },
-    Refused { why: String },
-    Received { received: Received },
+    Cleared {
+        activated: u32,
+    },
+    Refused {
+        why: String,
+    },
+    Received {
+        received: Received,
+    },
     /// The hub's word on each frame of a `TakeMany`, in order, up to the
     /// first not applied or parked: those after it it did not take.
-    ReceivedMany { received: Vec<Received> },
+    ReceivedMany {
+        received: Vec<Received>,
+    },
     Word {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         received: Option<Received>,
     },
-    Standing { streams: Vec<Standing> },
+    Standing {
+        streams: Vec<Standing>,
+    },
     /// Frames, those whose bodies travel apart brought in order, in chunks,
     /// by a data connection under `ticket`.
     Frames {
@@ -987,7 +1014,9 @@ pub enum Reply {
         ticket: u64,
     },
     /// The ticket a staged frame body is sent under.
-    Staged { ticket: u64 },
+    Staged {
+        ticket: u64,
+    },
     /// Scopes this machine may hold; `next` where the listing goes on from,
     /// none at its end.
     Holdings {
@@ -1003,10 +1032,23 @@ pub enum Reply {
         /// its to hold now, and it lists them all again.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         basis: String,
+        /// What the hub's listing of every scope stands at besides new ones,
+        /// which the `after` cursor finds: a scope removed or its descriptor
+        /// signed anew moves it, and so does the hub starting again. A
+        /// machine lists all again when it changed; while it stays and
+        /// `basis` does, going on from where the last listing ended is all.
+        /// Empty from a hub of before.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        epoch: String,
     },
-    Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
+    Succession {
+        epochs: Vec<Fact>,
+        gaps: Vec<Fact>,
+    },
     /// A scope's descriptor, as JSON, and the hub's word on it.
-    Described { descriptor: Fact },
+    Described {
+        descriptor: Fact,
+    },
     Streams {
         streams: Vec<StreamAt>,
         /// Streams of the scope the hub has that this machine may hold no
@@ -1018,7 +1060,14 @@ pub enum Reply {
     /// generation; the streams this device may hold among them, newest
     /// first; the latest change and when it was; where the next page goes on
     /// below, stepping past what this device may not hold as well.
-    Changes { generation: String, streams: Vec<ChangedStream>, top: u64, top_at: i64, through: u64, more: bool },
+    Changes {
+        generation: String,
+        streams: Vec<ChangedStream>,
+        top: u64,
+        top_at: i64,
+        through: u64,
+        more: bool,
+    },
     /// A stream's window (§28.2): at its head, the sequence its next frame
     /// takes, its chain value, the bytes of its frames and the change it was
     /// last indexed again at, in the owner library's generation; its newest
@@ -1050,12 +1099,18 @@ pub enum Reply {
     /// The report was kept.
     Reported,
     /// How the account's machines stand.
-    SyncStatus { status: Box<crate::sync_status::SyncStatus> },
+    SyncStatus {
+        status: Box<crate::sync_status::SyncStatus>,
+    },
     /// The new epoch's descriptor and the hub's word on it.
-    Epoch { descriptor: Fact },
+    Epoch {
+        descriptor: Fact,
+    },
     /// A move asked again that was handed on since: the epochs after the one
     /// the machine took over in, which it takes as history alone.
-    HandedOn { epochs: Vec<Fact> },
+    HandedOn {
+        epochs: Vec<Fact>,
+    },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none
     /// when it holds the object whole and nothing is to be proven.
     Put {
@@ -1072,17 +1127,28 @@ pub enum Reply {
     },
     /// A challenge: the nonce to answer, and until when it stands, in
     /// milliseconds since the epoch (design §28.45).
-    Challenge { nonce: Bytes, until: i64 },
+    Challenge {
+        nonce: Bytes,
+        until: i64,
+    },
     /// How a proof by challenge stands.
-    Proof { proof: ProofState },
+    Proof {
+        proof: ProofState,
+    },
     /// What was said of a stream's moving was told on.
     Noted,
     /// The scopes, of those asked after, this device holds until `until`, the
     /// hub's milliseconds, and the hub's word on it (`permit_statement`).
-    Permits { until: i64, granted: Vec<String>, word: Bytes },
+    Permits {
+        until: i64,
+        granted: Vec<String>,
+        word: Bytes,
+    },
     /// How many of the objects vouched for the stream's frames here refer
     /// to, and are kept as vouched for.
-    Vouched { kept: u32 },
+    Vouched {
+        kept: u32,
+    },
 }
 
 /// What the hub tells a device unasked.

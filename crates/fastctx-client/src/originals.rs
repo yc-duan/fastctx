@@ -166,7 +166,9 @@ fn as_sent(
         std::fs::remove_dir_all(&folder)?;
         return Ok(None);
     }
-    let named = if file.name == sent.name { path } else {
+    let named = if file.name == sent.name {
+        path
+    } else {
         let Some(named) = pictures::place(&folder, &sent.name) else {
             return Ok(Some((path, AttachmentFile { media_type: sent.media_type.clone(), ..file })));
         };

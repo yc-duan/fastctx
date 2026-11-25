@@ -25,8 +25,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use fastctx_net::directory::{Directory, Level, Member, Paths, Reach, View};
 use fastctx_net::authorization::Lookup;
+use fastctx_net::directory::{Directory, Level, Member, Paths, Reach, View};
 use fastctx_net::directory_index::{Index, Indexed, ordered};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;

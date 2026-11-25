@@ -312,7 +312,10 @@ mod tests {
             version: 4,
             on: true,
             callees: vec![callee("gpt", Some(Preset::default())), callee("scout", scout())],
-            shelved: Some(vec![callee("mine", Some(Preset { kind: Kind::Own, prompt: Some("p".into()), rules: "r".into() }))]),
+            shelved: Some(vec![callee(
+                "mine",
+                Some(Preset { kind: Kind::Own, prompt: Some("p".into()), rules: "r".into() }),
+            )]),
             ..Default::default()
         };
         let mut written = Collab {
@@ -342,8 +345,11 @@ mod tests {
             ..Default::default()
         };
         // Turned on: said among the callees, and no longer among those off.
-        let mut written =
-            Collab { callees: vec![callee("gpt", Some(Preset::default())), callee("scout", scout())], shelved: Some(Vec::new()), ..Default::default() };
+        let mut written = Collab {
+            callees: vec![callee("gpt", Some(Preset::default())), callee("scout", scout())],
+            shelved: Some(Vec::new()),
+            ..Default::default()
+        };
         written.keep_unsaid(Some(&current));
         assert_eq!(written.shelved, Some(Vec::new()));
         assert_eq!(written.callees.len(), 2);
@@ -380,7 +386,8 @@ mod tests {
         let mut scout_claude = callee("scout", scout());
         scout_claude.login.agent = "claude".parse().unwrap();
         assert!(collab.text_for(&scout_claude).starts_with("A scout is Claude, run by Claude Code, sent to look"));
-        let own = Preset { kind: Kind::Review, prompt: Some("my words of GPT, run by Codex".into()), rules: String::new() };
+        let own =
+            Preset { kind: Kind::Review, prompt: Some("my words of GPT, run by Codex".into()), rules: String::new() };
         let mut written = callee("gpt", Some(own));
         written.login.agent = "claude".parse().unwrap();
         assert_eq!(collab.text_for(&written), "my words of GPT, run by Codex");

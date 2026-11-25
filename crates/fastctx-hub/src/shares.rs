@@ -35,15 +35,35 @@ pub(crate) fn basis(directory: &Directory) -> String {
         let mut logins: Vec<&str> = member.logins.iter().map(|login| login.as_str()).collect();
         logins.sort_unstable();
         lines.push(
-            serde_json::json!(["member", member.name.as_str(), was, crate::assets::witness::hex(member.key.as_bytes()), format!("{:?}", member.kind), logins, member.home.as_ref().map(|home| home.as_str()), member.managed])
-                .to_string(),
+            serde_json::json!([
+                "member",
+                member.name.as_str(),
+                was,
+                crate::assets::witness::hex(member.key.as_bytes()),
+                format!("{:?}", member.kind),
+                logins,
+                member.home.as_ref().map(|home| home.as_str()),
+                member.managed
+            ])
+            .to_string(),
         );
     }
     for account in &directory.accounts {
-        lines.push(serde_json::json!(["account", account.name.as_str(), format!("{:?}", account.level), account.locked, account.opened.as_millisecond()]).to_string());
+        lines.push(
+            serde_json::json!([
+                "account",
+                account.name.as_str(),
+                format!("{:?}", account.level),
+                account.locked,
+                account.opened.as_millisecond()
+            ])
+            .to_string(),
+        );
     }
     for share in &directory.shares {
-        lines.push(serde_json::json!(["share", share.machine.as_str(), share.account.as_str(), share.active()]).to_string());
+        lines.push(
+            serde_json::json!(["share", share.machine.as_str(), share.account.as_str(), share.active()]).to_string(),
+        );
     }
     for assist in &directory.assists {
         lines.push(serde_json::json!(["assist", &**assist]).to_string());
@@ -90,11 +110,15 @@ pub(crate) fn renew(directory: &mut Directory, seq: u64) -> bool {
     let machines: std::collections::BTreeSet<MachineName> = directory
         .shares
         .iter()
-        .filter(|share| share.pending.is_some() && (share.pending == Some(UNSET) || share.basis.as_deref() != Some(basis.as_str())))
+        .filter(|share| {
+            share.pending.is_some() && (share.pending == Some(UNSET) || share.basis.as_deref() != Some(basis.as_str()))
+        })
         .map(|share| share.machine.clone())
         .collect();
     let revision = revision_at(seq);
-    for share in directory.shares.iter_mut().filter(|share| share.pending.is_some() && machines.contains(&share.machine)) {
+    for share in
+        directory.shares.iter_mut().filter(|share| share.pending.is_some() && machines.contains(&share.machine))
+    {
         let share = Arc::make_mut(share);
         share.pending = Some(revision);
         share.basis = Some(basis.clone());
@@ -105,7 +129,13 @@ pub(crate) fn renew(directory: &mut Directory, seq: u64) -> bool {
 /// `machine`, whose key is `key`, says it cleared at `revision`: the shares
 /// of it waiting at that revision are in force from now. Call on a thread
 /// that may block.
-pub(crate) fn cleared(hub: &Hub, machine: &MachineName, key: &PublicKey, revision: u64, proof: &[u8]) -> Result<Reply, String> {
+pub(crate) fn cleared(
+    hub: &Hub,
+    machine: &MachineName,
+    key: &PublicKey,
+    revision: u64,
+    proof: &[u8],
+) -> Result<Reply, String> {
     let proof = <[u8; 64]>::try_from(proof).map_err(|_| "a proof is 64 bytes".to_string())?;
     let statement = fastctx_types::assets::cleared_statement(machine.as_str(), revision);
     key.verify(Domain::ShareCleared, &statement, &Signature::from_bytes(proof))
@@ -130,14 +160,21 @@ pub(crate) fn cleared(hub: &Hub, machine: &MachineName, key: &PublicKey, revisio
         return Ok(Reply::Cleared { activated: 0 });
     }
     let before = store.book.clone();
-    for share in store.book.directory.shares.iter_mut().filter(|share| share.machine == machine && share.pending == Some(revision)) {
+    for share in store
+        .book
+        .directory
+        .shares
+        .iter_mut()
+        .filter(|share| share.machine == machine && share.pending == Some(revision))
+    {
         Arc::make_mut(share).pending = None;
     }
     store.book.directory.settle_acting(&before.directory);
     let actor = Actor { account: None, authenticated: true, member: Some(machine.clone()), peer: None };
     let result = (|| {
         for (index, share) in waiting.iter().enumerate() {
-            let action = Action::Share { machine: machine.clone(), to: share.account.clone(), shared: true, jobs: share.jobs };
+            let action =
+                Action::Share { machine: machine.clone(), to: share.account.clone(), shared: true, jobs: share.jobs };
             if index == 0 {
                 crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
             }

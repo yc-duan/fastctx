@@ -243,26 +243,28 @@ pub(crate) fn cut_streams(hub: &Hub) {
                 standings
                     .iter()
                     .find_map(|standing| {
-                        standing.identity_changed(&store).or_else(|| {
-                            directory
-                                .authorize(
-                                    &standing.account,
-                                    fastctx_net::authorization::Action::Call {
-                                        from: &standing.from,
-                                        to: &standing.to,
-                                        purpose: standing.purpose,
-                                    },
-                                )
-                                .err()
-                                .map(|error| error.message)
-                        })
-                        // Sealed meanwhile, a stream of anything but an
-                        // answer to work ends too (design §28.41).
-                        .or_else(|| {
-                            (standing.purpose != fastctx_types::access::Purpose::Echo)
-                                .then(|| crate::control::sealed(hub))
-                                .flatten()
-                        })
+                        standing
+                            .identity_changed(&store)
+                            .or_else(|| {
+                                directory
+                                    .authorize(
+                                        &standing.account,
+                                        fastctx_net::authorization::Action::Call {
+                                            from: &standing.from,
+                                            to: &standing.to,
+                                            purpose: standing.purpose,
+                                        },
+                                    )
+                                    .err()
+                                    .map(|error| error.message)
+                            })
+                            // Sealed meanwhile, a stream of anything but an
+                            // answer to work ends too (design §28.41).
+                            .or_else(|| {
+                                (standing.purpose != fastctx_types::access::Purpose::Echo)
+                                    .then(|| crate::control::sealed(hub))
+                                    .flatten()
+                            })
                     })
                     .map(|why| (stream, why))
             })

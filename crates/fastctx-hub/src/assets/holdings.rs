@@ -31,7 +31,9 @@ pub(crate) fn list(
     let rows: Vec<(String, i64)> = assets
         .control
         .read_now(move |c| {
-            let mut statement = c.prepare_cached("SELECT key, seq FROM asset_scopes WHERE (seq, key) > (?1, ?2) ORDER BY seq, key LIMIT ?3")?;
+            let mut statement = c.prepare_cached(
+                "SELECT key, seq FROM asset_scopes WHERE (seq, key) > (?1, ?2) ORDER BY seq, key LIMIT ?3",
+            )?;
             let rows = statement.query_map(params![seq, key, LOOKED_AT_ONCE], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })
@@ -48,13 +50,17 @@ pub(crate) fn list(
             {
                 return Err(format!("who may hold {key} cannot be told now: {error}"));
             }
-            if scopes::may_hold_known(directory, machine, &scope).map_err(|error| format!("who may hold {key} cannot be told now: {error}"))? {
+            if scopes::may_hold_known(directory, machine, &scope)
+                .map_err(|error| format!("who may hold {key} cannot be told now: {error}"))?
+            {
                 assets.holds(&key, machine);
                 let holds = scope
                     .descriptor
                     .classes
                     .iter()
-                    .filter(|class| !super::retired::class(&scope, class) && scopes::holds_class(directory, machine, &scope, class))
+                    .filter(|class| {
+                        !super::retired::class(&scope, class) && scopes::holds_class(directory, machine, &scope, class)
+                    })
                     .map(|class| class.prefix.clone())
                     .collect();
                 let readers = readers_here(directory, machine, &scope);
@@ -68,7 +74,7 @@ pub(crate) fn list(
         }
     }
     let next = if looked == LOOKED_AT_ONCE || scopes.len() >= GIVEN_AT_ONCE { through.clone() } else { None };
-    Ok(Reply::Holdings { scopes, next, through, basis })
+    Ok(Reply::Holdings { scopes, next, through, basis, epoch: assets.listing_epoch() })
 }
 
 /// Those logged in on `machine` who read `scope` by the hub's own gate, as
@@ -84,8 +90,12 @@ fn readers_here(directory: &Indexed<'_>, machine: &MachineName, scope: &scopes::
     member
         .logins
         .iter()
-        .filter(|account| scopes::reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
-        .filter_map(|account| directory.account(account).map(|found| format!("{account}@{}", found.opened.as_millisecond())))
+        .filter(|account| {
+            scopes::reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())
+        })
+        .filter_map(|account| {
+            directory.account(account).map(|found| format!("{account}@{}", found.opened.as_millisecond()))
+        })
         .collect()
 }
 
@@ -94,7 +104,10 @@ fn readers_here(directory: &Indexed<'_>, machine: &MachineName, scope: &scopes::
 fn frozen(directory: &Indexed<'_>, scope: &scopes::Scope) -> bool {
     let (Readers::Body { body, .. }, Some(bodies)) = (&scope.descriptor.readers, &scope.bodies) else { return false };
     match bodies.machine(body) {
-        Ok(Some(machine)) => directory.all.member(&machine).is_none_or(|member| directory.all.body_of(&member.name).as_deref() != Some(body.as_str())),
+        Ok(Some(machine)) => directory
+            .all
+            .member(&machine)
+            .is_none_or(|member| directory.all.body_of(&member.name).as_deref() != Some(body.as_str())),
         Ok(None) => true,
         Err(_) => false,
     }
@@ -107,11 +120,17 @@ fn frozen(directory: &Indexed<'_>, scope: &scopes::Scope) -> bool {
 /// that, it is none (AF05): what the listing passed by may be this
 /// machine's now, though what decides holding come back to how it was, and
 /// a machine told no basis lists all again. Sealed, nothing is given.
-pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, now: &str, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+pub(crate) fn recheck(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    now: &str,
+    machine: &MachineName,
+    reply: Reply,
+) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
         return Ok(assets.sealed_reply(why));
     }
-    let Reply::Holdings { scopes, next, through, basis } = reply else { return Ok(reply) };
+    let Reply::Holdings { scopes, next, through, basis, epoch } = reply else { return Ok(reply) };
     let basis = if basis == now { basis } else { String::new() };
     let mut kept = Vec::with_capacity(scopes.len());
     for held in scopes {
@@ -126,5 +145,5 @@ pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, now: &str, machi
             assets.gone(&held.scope, machine);
         }
     }
-    Ok(Reply::Holdings { scopes: kept, next, through, basis })
+    Ok(Reply::Holdings { scopes: kept, next, through, basis, epoch })
 }

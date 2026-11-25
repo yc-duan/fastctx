@@ -6,6 +6,8 @@ mod around;
 mod attachment_places;
 mod calls;
 mod connection_state;
+#[cfg(feature = "replica")]
+pub(crate) mod copy_reads;
 mod features;
 pub(crate) mod file_read;
 mod file_search;
@@ -13,8 +15,6 @@ mod history;
 mod lines;
 mod mcp;
 mod project_memory;
-#[cfg(feature = "replica")]
-pub(crate) mod copy_reads;
 #[cfg(feature = "replica")]
 pub mod replica;
 mod store;

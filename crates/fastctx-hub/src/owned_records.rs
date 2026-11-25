@@ -95,7 +95,11 @@ pub(crate) fn check(
     let (current, live, reads) = {
         let owners = hub.account_records.owners.lock().expect("never poisoned");
         let current = owners.of_record(owner, opened, fastctx_types::owned_records::KIND, resident).is_some();
-        (current, owners.live(directory, &identity), owners.reads(directory, &access.actor, &identity, &access.conversation))
+        (
+            current,
+            owners.live(directory, &identity),
+            owners.reads(directory, &access.actor, &identity, &access.conversation),
+        )
     };
     if !current {
         return Err("this conversation was deleted".into());
@@ -234,7 +238,8 @@ pub(crate) async fn ask(
         Request::Authorize { conversation, reader } => {
             let (access, opened) = resolve(hub, &account, &conversation)?;
             let store = hub.store();
-            let identity = (access.conversation.account.clone(), opened, access.conversation.address.resident.to_string());
+            let identity =
+                (access.conversation.account.clone(), opened, access.conversation.address.resident.to_string());
             let allowed = hub.account_records.owners.lock().expect("never poisoned").reads(
                 &store.book.directory,
                 &reader,
@@ -251,12 +256,8 @@ pub(crate) async fn ask(
         Request::List => {
             let store = hub.store();
             let directory = &store.book.directory;
-            let conversations = hub
-                .account_records
-                .owners
-                .lock()
-                .expect("never poisoned")
-                .readable(directory, &account);
+            let conversations =
+                hub.account_records.owners.lock().expect("never poisoned").readable(directory, &account);
             Response::Conversations { conversations }
         }
         Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
@@ -412,7 +413,8 @@ pub(crate) fn legacy_plan(
     if owners.of_record(account, opened, fastctx_types::plan::KIND, resident).is_some() {
         return Ok(());
     }
-    if owners.readable(directory, account).iter().any(|conversation| conversation.address.resident.as_str() == resident) {
+    if owners.readable(directory, account).iter().any(|conversation| conversation.address.resident.as_str() == resident)
+    {
         return Err("update this client to access a shared conversation's plan".into());
     }
     Ok(())

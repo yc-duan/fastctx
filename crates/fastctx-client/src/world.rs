@@ -922,7 +922,12 @@ impl World {
         self.folders_page(machine, path, None).await
     }
 
-    pub async fn folders_page(&self, machine: Option<Written>, path: Option<String>, cursor: Option<String>) -> Result<fastctx_types::focus::Folders, Error> {
+    pub async fn folders_page(
+        &self,
+        machine: Option<Written>,
+        path: Option<String>,
+        cursor: Option<String>,
+    ) -> Result<fastctx_types::focus::Folders, Error> {
         match self.ask(Call::Folders { machine, path, cursor }).await? {
             Reply::Folders(folders) => Ok(folders),
             other => Err(unexpected(other)),

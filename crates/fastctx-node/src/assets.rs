@@ -189,6 +189,9 @@ pub(crate) struct Listed {
     pub(crate) whole: std::time::Instant,
     /// What decided what this machine may hold then, as the hub said.
     pub(crate) basis: String,
+    /// Where the hub's listing stood besides new scopes then
+    /// (`Reply::Holdings::epoch`); empty from a hub of before.
+    pub(crate) epoch: String,
 }
 
 /// The directory in the asset library's where readings are kept on disk.

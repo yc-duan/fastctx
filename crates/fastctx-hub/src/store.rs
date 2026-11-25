@@ -1099,7 +1099,14 @@ impl Store {
     /// has, wait at a revision of this save (design §6.3).
     fn renew_shares(&mut self) -> io::Result<()> {
         // This save takes the chain's next number.
-        let seq = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?.map_or(0, |(seq, _)| seq) + 1;
+        let seq = self
+            .metadata
+            .shelf
+            .0
+            .read_now(crate::assets::chain::latest)
+            .map_err(io::Error::other)?
+            .map_or(0, |(seq, _)| seq)
+            + 1;
         if crate::shares::renew(&mut self.book.directory, seq) {
             self.book_edit = BookEdit::Full;
         }

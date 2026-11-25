@@ -75,7 +75,13 @@ impl Device {
     /// where named — the replica holds whole for one logged in here
     /// (`only`, where named), with the network each is of: a hub said to
     /// read no more since the replica started is gone past.
-    fn copies(&self, replica: &Replica, resident: &ResidentId, machine: Option<&Written>, only: Option<&AccountName>) -> Result<Vec<(HeldScope, HubId)>, Failure> {
+    fn copies(
+        &self,
+        replica: &Replica,
+        resident: &ResidentId,
+        machine: Option<&Written>,
+        only: Option<&AccountName>,
+    ) -> Result<Vec<(HeldScope, HubId)>, Failure> {
         let library = replica.library();
         let sessions = self.sessions();
         let mut copies = Vec::new();
@@ -83,7 +89,8 @@ impl Device {
             if !timeline_copy::conversation_copy(&scope) || replica.revoked(&scope.key) {
                 continue;
             }
-            let Some(session) = sessions.iter().find(|session| Some(session.link.membership().id.as_str()) == scope.hub.as_deref())
+            let Some(session) =
+                sessions.iter().find(|session| Some(session.link.membership().id.as_str()) == scope.hub.as_deref())
             else {
                 continue;
             };
@@ -101,7 +108,8 @@ impl Device {
                 let of_network = match &machine.hub {
                     Some(hub) => session.link.hub_name() == *hub,
                     None => {
-                        let naming: Vec<_> = sessions.iter().filter(|other| other.link.view().member(&machine.name).is_some()).collect();
+                        let naming: Vec<_> =
+                            sessions.iter().filter(|other| other.link.view().member(&machine.name).is_some()).collect();
                         match naming.as_slice() {
                             [] => true,
                             [only] => Arc::ptr_eq(only, session),
@@ -162,7 +170,12 @@ impl Device {
 /// A reading of a conversation's timeline, as a device with a replica makes
 /// it: from the copy where it holds the conversation, otherwise of the
 /// machine it lives on (`remote`), places of the two sources kept apart.
-pub(crate) async fn timeline<F, Fut>(device: &Device, machine: Option<Written>, request: TimelineAsk, remote: F) -> Result<TimelineTold, Error>
+pub(crate) async fn timeline<F, Fut>(
+    device: &Device,
+    machine: Option<Written>,
+    request: TimelineAsk,
+    remote: F,
+) -> Result<TimelineTold, Error>
 where
     F: FnOnce(Option<Written>, TimelineAsk) -> Fut,
     Fut: std::future::Future<Output = Result<TimelineTold, Error>>,
@@ -199,7 +212,9 @@ where
 /// Answers `request` from the copy; a page as `page` reads it.
 async fn from_copy(found: &Found, request: TimelineAsk) -> Result<TimelineTold, Failure> {
     match &request {
-        TimelineAsk::Page { from: TimelineFrom::Latest | TimelineFrom::Before { .. }, .. } => page(found, request).await,
+        TimelineAsk::Page { from: TimelineFrom::Latest | TimelineFrom::Before { .. }, .. } => {
+            page(found, request).await
+        }
         _ => timeline_copy::answer(&found.copy, request).await,
     }
 }
@@ -356,10 +371,13 @@ pub(crate) fn plan(
     let mut found = None;
     for (scope, id) in candidates {
         let session = session(&id)?;
-        if hub.is_some_and(|hub| session.link.hub_name() != *hub) || matches!(session.link.status(), Status::Online { .. }) {
+        if hub.is_some_and(|hub| session.link.hub_name() != *hub)
+            || matches!(session.link.status(), Status::Online { .. })
+        {
             continue;
         }
-        let logins: Vec<AccountName> = session.link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+        let logins: Vec<AccountName> =
+            session.link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
         let reader = match account {
             Some(account) => account.clone(),
             None => match logins.as_slice() {

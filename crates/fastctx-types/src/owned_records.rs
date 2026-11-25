@@ -132,19 +132,42 @@ pub enum Request {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
-    PlanHead { conversation: Option<Box<Conversation>>, metadata: Option<account_records::Metadata> },
-    Authorization { allowed: bool },
-    Sentinels { registrations: Vec<crate::sentinel_control::Registration> },
+    PlanHead {
+        conversation: Option<Box<Conversation>>,
+        metadata: Option<account_records::Metadata>,
+    },
+    Authorization {
+        allowed: bool,
+    },
+    Sentinels {
+        registrations: Vec<crate::sentinel_control::Registration>,
+    },
     Deleted,
     DeletionPrepared,
-    Conversations { conversations: Vec<Conversation> },
-    Replicas { catalog: crate::replicas::Catalog },
-    Submitted { record: Option<account_records::Record> },
-    Conversation { conversation: Box<Conversation> },
-    Record { response: account_records::Response },
-    Revision { record: account_records::Record },
-    Versions { versions: Vec<Version> },
-    Catalog { catalog: crate::history::Catalog },
+    Conversations {
+        conversations: Vec<Conversation>,
+    },
+    Replicas {
+        catalog: crate::replicas::Catalog,
+    },
+    Submitted {
+        record: Option<account_records::Record>,
+    },
+    Conversation {
+        conversation: Box<Conversation>,
+    },
+    Record {
+        response: account_records::Response,
+    },
+    Revision {
+        record: account_records::Record,
+    },
+    Versions {
+        versions: Vec<Version>,
+    },
+    Catalog {
+        catalog: crate::history::Catalog,
+    },
     /// The conversation's machine registered no conversation: one from
     /// before the records, whose conversations' records are their
     /// account's own, read and changed as before them.

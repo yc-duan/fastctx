@@ -73,6 +73,27 @@ const AT_ONCE: usize = 64;
 static LOOKING: Mutex<()> = Mutex::new(());
 static AGAIN: AtomicBool = AtomicBool::new(false);
 static ASKED: Mutex<Option<BTreeSet<TownId>>> = Mutex::new(Some(BTreeSet::new()));
+/// Who may work where changed (`directory_moved`): a reader's machines, and
+/// so the name of its stream, may have; every project is looked at again.
+static DIRECTORY_MOVED: AtomicBool = AtomicBool::new(false);
+/// A look failed: the minute's retry (`mirror::again`) looks again.
+static FAILED: AtomicBool = AtomicBool::new(false);
+
+/// Who may work on which machine may have changed: the hub's assets round
+/// looks at every project again (`take_directory_moved`).
+pub(crate) fn directory_moved() {
+    DIRECTORY_MOVED.store(true, Ordering::SeqCst);
+}
+
+/// Whether who may work where changed since the last call.
+pub(crate) fn take_directory_moved() -> bool {
+    DIRECTORY_MOVED.swap(false, Ordering::SeqCst)
+}
+
+/// Whether a look failed since the last call.
+pub(crate) fn take_failed() -> bool {
+    FAILED.swap(false, Ordering::SeqCst)
+}
 
 /// Looks again at every project, off the caller's thread.
 pub(crate) fn look(hub: &Arc<crate::Hub>) {
@@ -102,6 +123,7 @@ fn ask(hub: &Arc<crate::Hub>, town: Option<TownId>) {
             while AGAIN.swap(false, Ordering::SeqCst) {
                 let only = ASKED.lock().expect("asked").replace(BTreeSet::new());
                 if let Err(error) = look_now(&hub, only.as_ref()) {
+                    FAILED.store(true, Ordering::SeqCst);
                     hub.log.line(format_args!("writing the projects' ledgers into their readers' records: {error}"));
                 }
             }

@@ -225,7 +225,9 @@ impl Records {
             let mut account = slot.records.try_lock().map_err(|_| "the records are shared while the hub opens")?;
             match super::staged::settle(&slot, &mut account, &path, |record| taken(&name, opened, record))? {
                 super::staged::Settled::Published => {
-                    said.push(format!("published a revision of {name}'s records the asset library took as the hub stopped"));
+                    said.push(format!(
+                        "published a revision of {name}'s records the asset library took as the hub stopped"
+                    ));
                 }
                 super::staged::Settled::Dropped => {}
                 super::staged::Settled::Unknown(why) => {

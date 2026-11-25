@@ -16,7 +16,13 @@ use super::sending::{Guard, Outgoing};
 
 type Encoded = (Vec<(Outgoing, bool)>, bool);
 
-pub(super) fn prepare(hub: &Hub, name: &MachineName, key: PublicKey, queue: &Outq, next: Next) -> Result<Encoded, String> {
+pub(super) fn prepare(
+    hub: &Hub,
+    name: &MachineName,
+    key: PublicKey,
+    queue: &Outq,
+    next: Next,
+) -> Result<Encoded, String> {
     let (frames, last) = match next {
         Next::Frames(frames) => (frames, false),
         Next::End(reason) => (vec![Down::Refused { reason }], true),

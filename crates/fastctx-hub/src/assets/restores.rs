@@ -23,7 +23,10 @@ const NAME: &str = "hub.recoveries";
 pub(crate) const AT_START: &str = "the hub seals them each time it starts, until the super administrator opens them";
 
 fn read(c: &Connection) -> fastctx_storage::Result<u64> {
-    let kept: Option<Vec<u8>> = c.prepare_cached("SELECT value FROM hub_meta WHERE name = ?1")?.query_row([NAME], |row| row.get(0)).optional()?;
+    let kept: Option<Vec<u8>> = c
+        .prepare_cached("SELECT value FROM hub_meta WHERE name = ?1")?
+        .query_row([NAME], |row| row.get(0))
+        .optional()?;
     Ok(kept.and_then(|bytes| std::str::from_utf8(&bytes).ok().and_then(|text| text.parse().ok())).unwrap_or(0))
 }
 
@@ -46,14 +49,16 @@ pub(crate) fn floor(count: u64) -> u64 {
 /// is this recovery's, kept across a restart, and is not counted again. The
 /// count after.
 pub(crate) fn seal_in(c: &Connection, why: &str, at: i64, witnessed: u64) -> fastctx_storage::Result<u64> {
-    let was: Option<String> = c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?;
+    let was: Option<String> =
+        c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?;
     let mut count = read(c)?;
     if was.as_deref().is_none_or(|was| was == AT_START) || witnessed > count {
         count = count.max(witnessed) + 1;
         c.prepare_cached("INSERT OR REPLACE INTO hub_meta (name, value) VALUES (?1, ?2)")?
             .execute(params![NAME, count.to_string().into_bytes()])?;
     }
-    c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?.execute(params![why, at])?;
+    c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?
+        .execute(params![why, at])?;
     Ok(count)
 }
 

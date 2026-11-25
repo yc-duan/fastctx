@@ -1659,9 +1659,10 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } | Self::TimelinePreview { .. } => {
-                Some(Purpose::Observation)
-            }
+            Self::Topics { .. }
+            | Self::RemoteTopics { .. }
+            | Self::SyncStatus { .. }
+            | Self::TimelinePreview { .. } => Some(Purpose::Observation),
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
             // What a machine's owner asks of the copies its library holds.

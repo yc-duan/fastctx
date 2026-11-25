@@ -455,7 +455,8 @@ fn apply(
             if shared && jobs == Some(0) {
                 return Err("the most jobs at once is a number above zero".to_string());
             }
-            let before = directory.shares.iter().find(|existing| existing.machine == machine && existing.account == to).cloned();
+            let before =
+                directory.shares.iter().find(|existing| existing.machine == machine && existing.account == to).cloned();
             directory.shares.retain(|existing| existing.machine != machine || existing.account != to);
             if shared {
                 // Whole access the account has already stays in force; new
@@ -477,7 +478,13 @@ fn apply(
                     crate::shares::wait_anew(directory, &machine);
                 }
                 let basis = before.as_ref().and_then(|before| before.basis.clone());
-                directory.shares.push(Arc::new(Share { machine, account: to, jobs: jobs.filter(|_| shared), pending, basis }));
+                directory.shares.push(Arc::new(Share {
+                    machine,
+                    account: to,
+                    jobs: jobs.filter(|_| shared),
+                    pending,
+                    basis,
+                }));
             }
             Ok(Told::Done)
         }
@@ -676,7 +683,8 @@ fn apply(
                 directory.assists.push(Arc::new(assist));
                 if said {
                     for existing in &mut directory.assists {
-                        if existing.machine == of_machine && existing.account == of_account && existing.direct != direct {
+                        if existing.machine == of_machine && existing.account == of_account && existing.direct != direct
+                        {
                             Arc::make_mut(existing).direct = direct;
                         }
                     }
@@ -1499,10 +1507,9 @@ pub(crate) fn disposes(
         return Ok(());
     }
     let holds = project.frozen.contains(account)
-        || project
-            .shared_on
-            .as_ref()
-            .is_some_and(|machine| directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).is_ok());
+        || project.shared_on.as_ref().is_some_and(|machine| {
+            directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).is_ok()
+        });
     if holds && !(gives && directory.is_visitor(account)) {
         return Ok(());
     }

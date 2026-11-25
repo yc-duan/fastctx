@@ -61,10 +61,18 @@ pub(super) async fn tops(replica: &Replica, link: &Arc<Link>, owners: &BTreeSet<
 
 /// Stands where each of `marks` says, but in the libraries of `short`,
 /// some scope of which a look did not go through whole (II01).
-pub(super) async fn stand(replica: &Replica, hub: &HubId, marks: Vec<Mark>, short: &BTreeSet<String>) -> Result<(), String> {
+pub(super) async fn stand(
+    replica: &Replica,
+    hub: &HubId,
+    marks: Vec<Mark>,
+    short: &BTreeSet<String>,
+) -> Result<(), String> {
     for mark in marks.into_iter().filter(|mark| !short.contains(&mark.owner) && !mark.generation.is_empty()) {
         let theirs = hub.as_str().to_string();
-        blocking(&replica.library, move |library| library.fed(&theirs, &mark.owner, &mark.generation, mark.top, mark.at)).await?;
+        blocking(&replica.library, move |library| {
+            library.fed(&theirs, &mark.owner, &mark.generation, mark.top, mark.at)
+        })
+        .await?;
     }
     Ok(())
 }
@@ -73,7 +81,13 @@ pub(super) async fn stand(replica: &Replica, hub: &HubId, marks: Vec<Mark>, shor
 /// stood in it, newest first, a page at a time, class by class when there
 /// is more than a page; where it stands moves only once all of it is taken.
 /// Whether some stream had more than one turn gave.
-pub(super) async fn feed(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: &PublicKey, owner: &str) -> Result<bool, String> {
+pub(super) async fn feed(
+    replica: &Replica,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    owner: &str,
+) -> Result<bool, String> {
     let library = &replica.library;
     let stood = {
         let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
@@ -179,7 +193,8 @@ async fn catch_up(
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
             let anew = read_anew(replica, &changed.scope, &changed.stream, changed.remade, changed.next).await?;
-            let went_on = hold(replica, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, anew).await?;
+            let went_on =
+                hold(replica, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, anew).await?;
             Ok(went_on || first_heard)
         }
         .await;
@@ -207,7 +222,13 @@ pub(super) async fn report(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> 
     let report = SyncReport {
         owners: feeds
             .into_iter()
-            .map(|fed| OwnerStanding { owner: fed.owner, generation: fed.generation, change: fed.change, at: fed.at, taken: 0 })
+            .map(|fed| OwnerStanding {
+                owner: fed.owner,
+                generation: fed.generation,
+                change: fed.change,
+                at: fed.at,
+                taken: 0,
+            })
             .collect(),
         unpulled: u32::try_from(unpulled.len()).unwrap_or(u32::MAX),
         unpulled_scopes: unpulled.into_iter().take(UNPULLED_NAMED).collect(),
@@ -217,7 +238,12 @@ pub(super) async fn report(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> 
         unsent_bytes: 0,
         rate: 0,
     };
-    let due = replica.reported.lock().expect("reported").get(hub).is_none_or(|(last, at)| *last != report || at.elapsed() >= EVERY);
+    let due = replica
+        .reported
+        .lock()
+        .expect("reported")
+        .get(hub)
+        .is_none_or(|(last, at)| *last != report || at.elapsed() >= EVERY);
     if !due {
         return Ok(());
     }

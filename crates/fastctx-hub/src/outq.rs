@@ -463,7 +463,11 @@ impl State {
         }
         self.charged.0 += bytes;
         self.urgent_bytes += bytes;
-        if whole { self.prompt.push_back((out, bytes)) } else { self.urgent.push_back((out, bytes)) }
+        if whole {
+            self.prompt.push_back((out, bytes))
+        } else {
+            self.urgent.push_back((out, bytes))
+        }
         Ok(())
     }
 
@@ -582,7 +586,9 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::FetchCancelled { id } => Notice::Fetch(*id),
         Down::PackageProgress { id, .. } => Notice::PackageProgress(*id),
         Down::Assets { push } => match push {
-            fastctx_types::assets::Push::Moved { scope, stream, .. } => Notice::Assets(format!("moved\0{scope}\0{stream}")),
+            fastctx_types::assets::Push::Moved { scope, stream, .. } => {
+                Notice::Assets(format!("moved\0{scope}\0{stream}"))
+            }
             fastctx_types::assets::Push::Checkpointed { checkpoint } => {
                 Notice::Assets(format!("checkpointed\0{}", checkpoint.scope))
             }

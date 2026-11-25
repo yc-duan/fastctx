@@ -27,6 +27,10 @@ use std::time::Duration;
 /// hub is pushed, what is committed here wakes it, so this only catches a
 /// push lost on the way (design §28.1).
 const AGAIN: Duration = Duration::from_secs(30);
+/// How often, with a hub that tells where its listing stands and pushes
+/// each scope described for this machine (`Push::Fact`): only new scopes
+/// were left to the timer before, and those are pushed now.
+const AGAIN_TOLD: Duration = Duration::from_secs(5 * 60);
 /// How long the hub's answer to one request is waited for before the node
 /// says it waits, and a pass with the hub goes on before the node says so.
 const ANSWERED_WITHIN: Duration = Duration::from_secs(30);
@@ -376,7 +380,16 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
             None => {
                 again = crate::again::Again::default();
                 previous = None;
-                if more { Duration::ZERO } else { AGAIN }
+                let told = node.assets.as_ref().is_some_and(|assets| {
+                    assets.listed.lock().expect("listed").get(&hub).is_some_and(|listed| !listed.epoch.is_empty())
+                });
+                if more {
+                    Duration::ZERO
+                } else if told {
+                    AGAIN_TOLD
+                } else {
+                    AGAIN
+                }
             }
         };
         let mut ways = node.ways.subscribe();
@@ -1728,6 +1741,11 @@ fn born_under(node: &Node, scope: &str, hub: &HubId, opener: &fastctx_types::Acc
 /// How often the scopes a hub lists for this machine are listed whole: a
 /// change of the directory may let it hold one described long before.
 const RELIST: Duration = Duration::from_secs(300);
+/// How often they are, from a hub that tells where its listing stands
+/// (`Reply::Holdings::epoch`): a change of the directory changes the basis,
+/// a scope removed or signed anew the epoch, and either lists all at once;
+/// this is a safety net only.
+const RELIST_TOLD: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Installs each scope the hub says this machine may hold that it does not
 /// hold yet, or holds under another descriptor (design §6.6), the
@@ -1749,11 +1767,16 @@ async fn discover(
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
     // No basis kept — the last listing unsettled, or told none — lists all.
     let (mut after, mut whole, heard) = match known {
-        Some(listed) if listed.whole.elapsed() < RELIST && !listed.basis.is_empty() => {
-            (listed.through, None, Some(listed.basis))
+        Some(listed)
+            if listed.whole.elapsed() < if listed.epoch.is_empty() { RELIST } else { RELIST_TOLD }
+                && !listed.basis.is_empty() =>
+        {
+            (listed.through, None, Some((listed.basis, listed.epoch)))
         }
         _ => (None, Some(std::time::Instant::now()), None),
     };
+    // Where the hub's listing stood as this one began, besides new scopes.
+    let mut epoch: Option<String> = None;
     // What the listing went by. Changed before it began, all is listed
     // from the first. Changed while it goes on, the listing goes on to its
     // end — it never starts over, however often what decides holding
@@ -1762,7 +1785,7 @@ async fn discover(
     let mut basis: Option<String> = None;
     let mut unsettled = false;
     loop {
-        let Reply::Holdings { scopes, next, through, basis: said } =
+        let Reply::Holdings { scopes, next, through, basis: said, epoch: said_epoch } =
             ask(assets, link, Request::Holdings { after: after.clone() }).await?
         else {
             return Err("the hub did not list what this machine may hold".into());
@@ -1772,19 +1795,30 @@ async fn discover(
         if said.is_empty() {
             unsettled = true;
         }
+        // A scope removed or signed anew while the listing goes on: the next
+        // pass lists all again.
+        if epoch.as_ref().is_some_and(|epoch| *epoch != said_epoch) {
+            unsettled = true;
+        }
         match &basis {
             Some(basis) if *basis != said => unsettled = true,
             Some(_) => {}
-            None if whole.is_none() && heard.as_deref() != Some(said.as_str()) => {
+            None if whole.is_none()
+                && heard.as_ref().is_none_or(|(basis, epoch)| *basis != said || *epoch != said_epoch) =>
+            {
                 whole = Some(std::time::Instant::now());
                 after = None;
                 basis = Some(said);
+                epoch = Some(said_epoch);
                 continue;
             }
             None => {}
         }
         if basis.is_none() {
             basis = Some(said);
+        }
+        if epoch.is_none() {
+            epoch = Some(said_epoch);
         }
         for held in scopes {
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
@@ -1837,7 +1871,8 @@ async fn discover(
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
     // Unsettled, no basis is kept: the next pass lists all.
     let basis = if unsettled { String::new() } else { basis.unwrap_or_default() };
-    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis });
+    let epoch = if unsettled { String::new() } else { epoch.unwrap_or_default() };
+    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis, epoch });
     Ok((whole.is_some() && !unsettled).then_some(listed_all))
 }
 

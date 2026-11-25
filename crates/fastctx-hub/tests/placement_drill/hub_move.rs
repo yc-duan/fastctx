@@ -70,7 +70,9 @@ fn large(at: &Path) -> Vec<u64> {
 }
 
 async fn moves(world: &World) -> Option<Vec<HubMove>> {
-    match tokio::time::timeout(Duration::from_secs(10), world.hub_move(None, name("owner"), HubMoveRequest::Status)).await {
+    match tokio::time::timeout(Duration::from_secs(10), world.hub_move(None, name("owner"), HubMoveRequest::Status))
+        .await
+    {
         Ok(Ok(HubMoveReply::Moves { moves })) => Some(moves),
         _ => None,
     }
@@ -117,7 +119,13 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     let listen = free()?;
     fastctx_hub::init(
         &base.join("hub"),
-        fastctx_hub::New { name: "lab".parse()?, public: vec![listen], listen, admin: name("owner"), password: PASS.into() },
+        fastctx_hub::New {
+            name: "lab".parse()?,
+            public: vec![listen],
+            listen,
+            admin: name("owner"),
+            password: PASS.into(),
+        },
     )?;
     // Records beyond the hub's own, as many as asked, which the move carries
     // as it carries anything of the hub's directory.
@@ -133,8 +141,12 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
         pause().await;
     }
     let (_owner_device, wo) = device(base, "owner-phone", "owner", listen).await?;
-    wo.account(None, name("owner"), AccountChange::OpenAccount { name: name("alice"), password: PASS.into(), visitor: true })
-        .await?;
+    wo.account(
+        None,
+        name("owner"),
+        AccountChange::OpenAccount { name: name("alice"), password: PASS.into(), visitor: true },
+    )
+    .await?;
     let (owner_pc, mut owner_pc_node) = node(base, "owner-pc", "owner", listen).await?;
     let (target, mut target_node) = node(base, "target", "owner", listen).await?;
     let (alice_pc, mut alice_node) = node(base, "alice-pc", "alice", listen).await?;
@@ -178,7 +190,11 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
             },
         )
         .await;
-    record("the owner wrote a record of some size", matches!(written, Ok(Reply::Written { .. })), json!(written.err().map(|error| error.to_string())));
+    record(
+        "the owner wrote a record of some size",
+        matches!(written, Ok(Reply::Written { .. })),
+        json!(written.err().map(|error| error.to_string())),
+    );
     // The owner's libraries under a hub's directory, by their paths there.
     let owners = |under: &Path| -> Vec<String> {
         std::fs::read_dir(under.join("assets/account"))
@@ -204,7 +220,11 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
         pause().await;
     }
     let owners = owners(&base.join("hub"));
-    record("the hub keeps it as a large object of the owner's library", !before.is_empty(), json!({"owners": owners, "bytes": before}));
+    record(
+        "the hub keeps it as a large object of the owner's library",
+        !before.is_empty(),
+        json!({"owners": owners, "bytes": before}),
+    );
     // The new place's directory on a disk of its own, as a server's data
     // disk is put there before a move (`FASTCTX_DRILL_HUB_MOVE_BIND`): an
     // empty directory of it bound where the hub's directory goes.
@@ -217,7 +237,8 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
         anyhow::ensure!(status.success(), "binding the data disk's directory failed");
     }
     // Asked as the interface asks it: through a computer's own node.
-    let wpc = World::new(WorldDir::under(&owner_pc), fastctx_types::ipc::Peer::Command { resident: None, session: None });
+    let wpc =
+        World::new(WorldDir::under(&owner_pc), fastctx_types::ipc::Peer::Command { resident: None, session: None });
     // Away all through the move.
     stop(&mut alice_node);
     let targets = wpc.hub_move(None, name("owner"), HubMoveRequest::Targets).await?;
@@ -231,7 +252,10 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     let to = free()?;
     let asked = Instant::now();
     loop {
-        match wpc.hub_move(None, name("owner"), HubMoveRequest::Start { to: machine("target"), addresses: vec![to] }).await {
+        match wpc
+            .hub_move(None, name("owner"), HubMoveRequest::Start { to: machine("target"), addresses: vec![to] })
+            .await
+        {
             Ok(_) => break,
             Err(error) if asked.elapsed() < Duration::from_secs(90) => {
                 println!("starting the move: {error}; asked again");
@@ -244,7 +268,9 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     // Prepared there: its directory made, its service waited for.
     let mut dir = None;
     while started.elapsed() < Duration::from_secs(180) {
-        if let Some(Waiting::Service { dir: there, .. }) = moves(&wpc).await.and_then(|moves| moves.first().and_then(|one| one.waiting.clone())) {
+        if let Some(Waiting::Service { dir: there, .. }) =
+            moves(&wpc).await.and_then(|moves| moves.first().and_then(|one| one.waiting.clone()))
+        {
             dir = Some(PathBuf::from(there));
             break;
         }
@@ -252,7 +278,11 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     }
     let dir = dir.context("the new place never waited for its service")?;
     let (hub, id) = fastctx_hub::arriving(&dir)?.context("nothing is arriving where the move said")?;
-    record("the new place was prepared, waiting for its service", true, json!({"dir": dir, "move": id, "after_s": started.elapsed().as_secs_f32()}));
+    record(
+        "the new place was prepared, waiting for its service",
+        true,
+        json!({"dir": dir, "move": id, "after_s": started.elapsed().as_secs_f32()}),
+    );
     let mut new_hub = serve_at(base, &dir, "new-hub.log")?;
     ask(&target, json!({"call": "hub_arrived", "hub": hub})).await.context("telling the target its hub runs")?;
     // Watched step by step; the copy cut once by the new place stopping.
@@ -280,10 +310,17 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
                     let still = moves(&wpc).await.and_then(|moves| moves.into_iter().next()).map(|now| now.stage);
                     if still.is_some_and(|stage| stage < MoveStage::Switching) {
                         tokio::time::sleep(Duration::from_secs(5)).await;
-                        record("the old hub serves on while the copy is cut", online_now(&owner_pc).await, json!({"stage": still}));
+                        record(
+                            "the old hub serves on while the copy is cut",
+                            online_now(&owner_pc).await,
+                            json!({"stage": still}),
+                        );
                         record(
                             "the move did not switch while the new place was away",
-                            moves(&wpc).await.and_then(|moves| moves.into_iter().next()).is_some_and(|now| now.stage < MoveStage::Switching),
+                            moves(&wpc)
+                                .await
+                                .and_then(|moves| moves.into_iter().next())
+                                .is_some_and(|now| now.stage < MoveStage::Switching),
                             json!({}),
                         );
                     } else {
@@ -320,26 +357,36 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     if bound {
         record(
             "they are on the data disk bound there",
-            std::fs::read(disk.join("bulk/records")).is_ok_and(|there| there == records) && disk.join("hub.json").is_file(),
+            std::fs::read(disk.join("bulk/records")).is_ok_and(|there| there == records)
+                && disk.join("hub.json").is_file(),
             json!({"disk": disk}),
         );
     }
     record(
         "the old place forwards, the machine away not followed yet",
         moved.following.as_ref().is_some_and(|following| {
-            matches!(following.old, OldPlace::Forwarding) && following.machines.iter().any(|one| *one == machine("alice-pc"))
+            matches!(following.old, OldPlace::Forwarding)
+                && following.machines.iter().any(|one| *one == machine("alice-pc"))
         }),
         json!(moved.following),
     );
     for (root, label) in [(&owner_pc, "owner-pc"), (&target, "target")] {
-        record(&format!("{label} follows the new address"), follows(root, to, Duration::from_secs(120)).await, json!(addresses(root)));
+        record(
+            &format!("{label} follows the new address"),
+            follows(root, to, Duration::from_secs(120)).await,
+            json!(addresses(root)),
+        );
         record(&format!("{label} is online through the new hub"), online_now(root).await, json!({}));
     }
     // A change of the accounts, from a phone, taken by the new hub.
     let mut changed = Err(String::from("not asked"));
     for _ in 0..30 {
         changed = wo
-            .account(None, name("owner"), AccountChange::OpenAccount { name: name("carol"), password: PASS.into(), visitor: true })
+            .account(
+                None,
+                name("owner"),
+                AccountChange::OpenAccount { name: name("carol"), password: PASS.into(), visitor: true },
+            )
             .await
             .map(|_| ())
             .map_err(|error| error.to_string());
@@ -380,8 +427,15 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     record(
         "the old place sent every owner library and the new hub took each",
         sent.contains("every owner library is with the new hub")
-            && libraries.iter().all(|library| sent.contains(&format!("the owner library {library} is with the new hub"))),
-        json!(sent.lines().filter(|line| line.contains("owner librar")).map(|line| line.chars().take(160).collect::<String>()).collect::<Vec<_>>()),
+            && libraries
+                .iter()
+                .all(|library| sent.contains(&format!("the owner library {library} is with the new hub"))),
+        json!(
+            sent.lines()
+                .filter(|line| line.contains("owner librar"))
+                .map(|line| line.chars().take(160).collect::<String>())
+                .collect::<Vec<_>>()
+        ),
     );
     // Nothing of them went before the switch; each that something refers to
     // is put into its library once that is open at the new place.
@@ -392,7 +446,8 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
             && after == before
             && owners.iter().all(|library| {
                 sent.lines().any(|line| {
-                    line.contains(&format!("large objects of {library} are with the new hub")) && !line.contains(": 0 sent now")
+                    line.contains(&format!("large objects of {library} are with the new hub"))
+                        && !line.contains(": 0 sent now")
                 })
             }),
         json!({
@@ -418,13 +473,21 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     record(
         "the new hub sealed no asset",
         !said.contains("sealed") && !said.contains("older than the hub's own record"),
-        json!(said.lines().filter(|line| line.contains("sealed") || line.contains("older than")).take(3).collect::<Vec<_>>()),
+        json!(
+            said.lines()
+                .filter(|line| line.contains("sealed") || line.contains("older than"))
+                .take(3)
+                .collect::<Vec<_>>()
+        ),
     );
     // How long the old hub took nothing, as its log says: from stopping to
     // forwarding.
     let log = std::fs::read_to_string(base.join("hub.log")).unwrap_or_default();
     let at = |said: &str| {
-        log.lines().find(|line| line.contains(said)).and_then(|line| line.split_whitespace().next()).and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok())
+        log.lines()
+            .find(|line| line.contains(said))
+            .and_then(|line| line.split_whitespace().next())
+            .and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok())
     };
     let froze = match (at("stops taking anything and hands over"), at("took over; this place forwards")) {
         (Some(from), Some(to)) => (to.as_millisecond() - from.as_millisecond()) as f64 / 1000.0,
@@ -434,19 +497,29 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     // The machine away comes back: through the old place, to the new one.
     alice_node = start(&alice_pc)?;
     record("the machine away comes online again", online(&alice_pc).await, json!({}));
-    record("the machine away follows the new address", follows(&alice_pc, to, Duration::from_secs(180)).await, json!(addresses(&alice_pc)));
+    record(
+        "the machine away follows the new address",
+        follows(&alice_pc, to, Duration::from_secs(180)).await,
+        json!(addresses(&alice_pc)),
+    );
     let mut done = None;
     let waiting = Instant::now();
     while waiting.elapsed() < Duration::from_secs(180) {
         if let Some(now) = moves(&wpc).await.and_then(|moves| moves.into_iter().next())
-            && now.following.as_ref().is_some_and(|following| following.machines.is_empty() && !matches!(following.old, OldPlace::Forwarding))
+            && now.following.as_ref().is_some_and(|following| {
+                following.machines.is_empty() && !matches!(following.old, OldPlace::Forwarding)
+            })
         {
             done = Some(now);
             break;
         }
         pause().await;
     }
-    record("every machine followed and the old place stopped forwarding", done.is_some(), json!(done.map(|now| (now.stage, now.following))));
+    record(
+        "every machine followed and the old place stopped forwarding",
+        done.is_some(),
+        json!(done.map(|now| (now.stage, now.following))),
+    );
     // Gone, the old hub is missed by none.
     stop(&mut old_hub);
     tokio::time::sleep(Duration::from_secs(5)).await;

@@ -115,7 +115,10 @@ fn given(world: &Path, agent: &AgentName, dir: &Path, bytes_at_most: usize) -> i
         }
         [] => {}
         _ => {
-            return Err(invalid(format!("{} could be the directory of more than one login moved here", real.display())));
+            return Err(invalid(format!(
+                "{} could be the directory of more than one login moved here",
+                real.display()
+            )));
         }
     }
     let id = loop {

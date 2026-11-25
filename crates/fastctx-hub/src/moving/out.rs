@@ -462,7 +462,9 @@ pub(super) async fn send_difference(
                 frames::send(socket, &ToNew::Dir { path: entry.path.clone() }).await?;
                 continue;
             }
-            Some(_) if patch && files::database(&entry.path) && matches!(held.get(entry.path.as_str()), Some(Some(_))) => {
+            Some(_)
+                if patch && files::database(&entry.path) && matches!(held.get(entry.path.as_str()), Some(Some(_))) =>
+            {
                 patch_file(socket, dir, &entry.path).await?
             }
             Some(_) => {
@@ -572,8 +574,11 @@ async fn patch_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -
         .await?
         .map_err(|error| error.to_string())?
         .map_err(|error| format!("reading {path}: {error}"))?;
-    frames::send(socket, &ToNew::Patch { path: path.to_string(), bytes, piece: frames::PIECE, changed: changed.clone() })
-        .await?;
+    frames::send(
+        socket,
+        &ToNew::Patch { path: path.to_string(), bytes, piece: frames::PIECE, changed: changed.clone() },
+    )
+    .await?;
     let mut file = tokio::fs::File::open(&place).await.map_err(|error| format!("reading {path}: {error}"))?;
     let piece = u64::from(frames::PIECE);
     let mut went = 0;

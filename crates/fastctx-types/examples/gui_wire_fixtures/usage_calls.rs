@@ -22,8 +22,13 @@ pub fn fixtures() -> Fixtures {
         turn: Some("turn-one".into()),
     };
     let private = UsageCall { conversation: None, turn: None, ..row.clone() };
-    let page =
-        UsageCallsPage { rows: vec![row, private], next: Some(CallCursor { at, key: "next-page".into() }), total: Some(240), size: None, sum: None };
+    let page = UsageCallsPage {
+        rows: vec![row, private],
+        next: Some(CallCursor { at, key: "next-page".into() }),
+        total: Some(240),
+        size: None,
+        sum: None,
+    };
     let query = UsageCallsQuery {
         source: Some(CallSource::Agent),
         person: Some(CallPerson { account: None, with_machine: false }),

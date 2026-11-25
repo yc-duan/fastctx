@@ -108,7 +108,9 @@ fn state() -> io::Result<PathBuf> {
             Some(state) => Some(state),
             None => absolute("ProgramData")?,
         };
-        state.ok_or_else(|| io::Error::other("neither LOCALAPPDATA nor ProgramData names where the hub keeps its witness"))
+        state.ok_or_else(|| {
+            io::Error::other("neither LOCALAPPDATA nor ProgramData names where the hub keeps its witness")
+        })
     } else {
         let state = match absolute("XDG_STATE_HOME")? {
             Some(state) => Some(state),
@@ -178,9 +180,9 @@ impl Witness {
         let path = location(dir, id)?;
         let read = |path: &Path| -> io::Result<Option<Kept>> {
             match fastctx_platform::disk::read(path) {
-                Ok(bytes) => serde_json::from_slice(&bytes)
-                    .map(Some)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))),
+                Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))
+                }),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
                 Err(error) => Err(error),
             }

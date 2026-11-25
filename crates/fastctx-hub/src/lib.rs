@@ -79,10 +79,10 @@ mod skill_files;
 mod skill_storage;
 mod store;
 mod strain;
-mod telling;
 #[cfg(feature = "submission-drill")]
 mod submission_drill;
 mod submitted;
+mod telling;
 pub mod third;
 mod troubles;
 mod updates;
@@ -715,6 +715,7 @@ impl Hub {
     /// passes that follow only accounts and machines are not run.
     fn relations_changed(&self) {
         afoot::directory_changed(self);
+        crate::assets::ledger_views::directory_moved();
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
         self.directory_authority.store(true, Ordering::SeqCst);
@@ -727,6 +728,7 @@ impl Hub {
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
         afoot::directory_changed(self);
+        crate::assets::ledger_views::directory_moved();
         self.account_records.settle(&self.store().book.directory);
         updates::directory_changed(self);
         self.machine_log_changed.notify_one();

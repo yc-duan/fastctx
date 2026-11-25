@@ -38,8 +38,7 @@ pub const NAMES: &[&str] = &[LOGINS, LOGINS_ELSEWHERE, SENTINELS, UPDATE, BOOK, 
 /// Whether this version knows the named state. Known topics start at revision
 /// 1; revision 0 means only that the node does not know this name.
 pub fn known(topic: &str) -> bool {
-    NAMES.contains(&topic)
-        || topic.strip_prefix(MAP_PREFIX).is_some_and(|town| crate::TownName::try_from(town).is_ok())
+    NAMES.contains(&topic) || topic.strip_prefix(MAP_PREFIX).is_some_and(|town| crate::TownName::try_from(town).is_ok())
 }
 
 /// A topic and the times it had changed, in one run of the node.

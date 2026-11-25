@@ -528,9 +528,13 @@ pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
         };
         write_all(&hub, account, opened, paths).await;
     }
-    // The projects' ledgers in their readers' records, looked at again: a
-    // reader's machines may have changed (§29, 2.4).
-    super::ledger_views::look(&hub);
+    // The projects' ledgers in their readers' records, looked at again when
+    // a look failed. A reader's machines that changed (§29, 2.4) are looked
+    // at as the directory changes (`ledger_views::directory_moved`), not
+    // every minute for nothing (codex-570f5b89).
+    if super::ledger_views::take_failed() {
+        super::ledger_views::look(&hub);
+    }
     super::told::again(&hub).await;
 }
 

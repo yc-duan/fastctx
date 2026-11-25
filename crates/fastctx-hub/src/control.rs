@@ -830,10 +830,7 @@ fn of_records(question: &Question) -> bool {
 /// back after the copy could ask again, and moving the hub, which hands out
 /// its keys.
 fn sealed_refuses(question: &Question) -> bool {
-    matches!(
-        question,
-        Question::Forget { .. } | Question::HubMove { .. } | Question::HubArrival { .. }
-    )
+    matches!(question, Question::Forget { .. } | Question::HubMove { .. } | Question::HubArrival { .. })
 }
 
 /// Does what the member's frame asks; `took`, how many bytes of this
@@ -1551,7 +1548,10 @@ fn lines(hub: &Hub, name: &MachineName, generation: u64, paths: fastctx_net::dir
 /// line jitters — 28 ms one moment, 30 the next — is not told every few
 /// seconds to everyone who sees the machine, in each view and presence
 /// given meanwhile.
-fn steady(kept: Option<&fastctx_net::directory::Paths>, mut paths: fastctx_net::directory::Paths) -> fastctx_net::directory::Paths {
+fn steady(
+    kept: Option<&fastctx_net::directory::Paths>,
+    mut paths: fastctx_net::directory::Paths,
+) -> fastctx_net::directory::Paths {
     fn round(ms: u32) -> u32 {
         let step = match ms {
             0..100 => 10,
@@ -1569,7 +1569,8 @@ fn steady(kept: Option<&fastctx_net::directory::Paths>, mut paths: fastctx_net::
     }
     paths.hub_ms = kept_or_rounded(kept.and_then(|kept| kept.hub_ms), paths.hub_ms);
     for link in &mut paths.links {
-        let before = kept.and_then(|kept| kept.links.iter().find(|held| held.peer == link.peer)).and_then(|held| held.ms);
+        let before =
+            kept.and_then(|kept| kept.links.iter().find(|held| held.peer == link.peer)).and_then(|held| held.ms);
         link.ms = kept_or_rounded(before, link.ms);
     }
     paths

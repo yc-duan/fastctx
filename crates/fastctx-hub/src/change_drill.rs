@@ -116,7 +116,7 @@ fn fixture(machines: usize) -> Book {
                 machine: machine(i),
                 account: account((i + offset) % accounts),
                 jobs: None,
-            pending: None,
+                pending: None,
             }));
             book.directory.assists.push(Arc::new(Assist {
                 machine: machine(i + accounts),

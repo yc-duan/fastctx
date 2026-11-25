@@ -105,12 +105,18 @@ impl Keys {
             Err(error) => return Err(error),
         }
         let rotations = match fastctx_platform::disk::read(dir.join(ROTATIONS)) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            Ok(bytes) => {
+                serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error),
         };
         let next_path = dir.join(NEXT);
-        let next = if fastctx_platform::disk::exists(&next_path)? { Some(SecretKey::load(&next_path)?.public()) } else { None };
+        let next = if fastctx_platform::disk::exists(&next_path)? {
+            Some(SecretKey::load(&next_path)?.public())
+        } else {
+            None
+        };
         Ok(Self { current, retired, next, rotations })
     }
 
@@ -159,15 +165,21 @@ impl Keys {
         for _ in 0..lineage.len() {
             let mut grew = false;
             for (old, new, word) in lineage {
-                let (Ok(old), Ok(new), Ok(word)) =
-                    (<[u8; 32]>::try_from(old.as_slice()), <[u8; 32]>::try_from(new.as_slice()), <[u8; 64]>::try_from(word.as_slice()))
-                else {
+                let (Ok(old), Ok(new), Ok(word)) = (
+                    <[u8; 32]>::try_from(old.as_slice()),
+                    <[u8; 32]>::try_from(new.as_slice()),
+                    <[u8; 64]>::try_from(word.as_slice()),
+                ) else {
                     continue;
                 };
                 if reached.contains(&old)
                     && !reached.contains(&new)
                     && PublicKey::from_bytes(old)
-                        .verify(Domain::SyncHubKeyRotation, &rotation_statement(&old, &new), &fastctx_net::sign::Signature::from_bytes(word))
+                        .verify(
+                            Domain::SyncHubKeyRotation,
+                            &rotation_statement(&old, &new),
+                            &fastctx_net::sign::Signature::from_bytes(word),
+                        )
                         .is_ok()
                 {
                     reached.push(new);
@@ -220,7 +232,11 @@ pub(crate) fn finish(dir: &Path) -> io::Result<(PublicKey, PublicKey)> {
     // Whole or not at all: a retired copy cut short would keep the keyring
     // from opening.
     let bytes = fastctx_platform::disk::read(dir.join(CURRENT))?;
-    fastctx_platform::publish(&retired.join(format!("{}.key", hex(current.public().as_bytes()))), &bytes, fastctx_platform::Permissions::Private)?;
+    fastctx_platform::publish(
+        &retired.join(format!("{}.key", hex(current.public().as_bytes()))),
+        &bytes,
+        fastctx_platform::Permissions::Private,
+    )?;
     fastctx_platform::disk::rename(&next_path, dir.join(CURRENT))?;
     Ok((current.public(), next.public()))
 }

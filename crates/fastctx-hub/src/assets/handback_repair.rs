@@ -40,7 +40,9 @@ pub(super) fn repair(dir: &Path, directory: &Directory, assets: &Assets, recover
             "SELECT owner, scope, stream, tail_next, applied_next FROM recovery_results
              WHERE recovery = ?1 AND repaired = 0 AND applied_next > tail_next",
         )?;
-        let rows = statement.query_map([recovery as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+        let rows = statement.query_map([recovery as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
     let mut lines = Vec::new();
@@ -50,19 +52,25 @@ pub(super) fn repair(dir: &Path, directory: &Directory, assets: &Assets, recover
             let Some(scope) = scopes::scope(assets, &key).map_err(anyhow::Error::msg)? else { continue };
             let Some(slot) = slot_of(dir, directory, &owner, &scope.descriptor.readers, &scope.descriptor.born)? else {
                 // Not noted as written back: a later reopening finds it again.
-                lines.push(format!("{key} {stream}: the account its records are kept under is not found; not written back"));
+                lines.push(format!(
+                    "{key} {stream}: the account its records are kept under is not found; not written back"
+                ));
                 continue;
             };
             let library = handback::library_as_is(assets, &scope).map_err(anyhow::Error::msg)?;
             let written = write_back(assets, &library, &key, &stream, (from as u64, to as u64), &slot)?;
             lines.push(format!("{key} {stream}: wrote back {written} account record revision(s)"));
         } else {
-            lines.push(format!("{key} {stream}: taken back into the library only; where the hub keeps its source is not written"));
+            lines.push(format!(
+                "{key} {stream}: taken back into the library only; where the hub keeps its source is not written"
+            ));
         }
         let (k, s) = (key.clone(), stream.clone());
         assets.control.write_now(256, move |c| {
-            c.prepare_cached("UPDATE recovery_results SET repaired = 1 WHERE recovery = ?1 AND scope = ?2 AND stream = ?3")?
-                .execute(params![recovery as i64, k, s])?;
+            c.prepare_cached(
+                "UPDATE recovery_results SET repaired = 1 WHERE recovery = ?1 AND scope = ?2 AND stream = ?3",
+            )?
+            .execute(params![recovery as i64, k, s])?;
             Ok(())
         })?;
     }
@@ -85,7 +93,8 @@ fn slot_of(
     let (name, opened) = match (owner, readers) {
         (Owner::Account(name, opened), _) => (name.clone(), *opened),
         (Owner::Body(_), Readers::Body { opener, .. }) => {
-            let Some(opened) = born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok()) else {
+            let Some(opened) = born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok())
+            else {
                 return Ok(None);
             };
             (opener.to_string(), opened)

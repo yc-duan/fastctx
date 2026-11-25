@@ -220,8 +220,9 @@ impl Assets {
             keys.lock().expect("deleted scopes").remove(&stamp);
             return Ok(false);
         };
+        self.listing_moved();
         let witnessed = match appended {
-            Some((seq, head)) => self.witness.advanced(seq, &head),
+            Some((seq, head)) => self.witness_advanced(seq, &head),
             None => Ok(()),
         };
         // Its holders told and its library let go of it, whether its row went
@@ -266,8 +267,10 @@ impl Assets {
             }
             Ok(Some(chain::append(c, KIND, &stamp)?))
         });
+        // Removed or perhaps removed: every listing is asked again.
+        self.listing_moved();
         let witnessed = match written {
-            Ok(Some((seq, head))) => self.witness.advanced(seq, &head),
+            Ok(Some((seq, head))) => self.witness_advanced(seq, &head),
             Ok(None) => return Ok(false),
             Err(error) => {
                 // A write that failed may have been kept all the same: the
@@ -335,7 +338,8 @@ impl Assets {
                 Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((owner, key)),
             }
         }
-        let mut owners: Vec<Owner> = self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
+        let mut owners: Vec<Owner> =
+            self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
         if let Some(last) = served.as_ref() {
             let after = owners.partition_point(|owner| owner <= last);
             owners.rotate_left(after);
@@ -386,7 +390,8 @@ pub(super) fn of_conversation(
     let keys: Vec<String> = assets
         .control
         .read_now(move |c| {
-            let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key")?;
+            let mut statement =
+                c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key")?;
             let rows = statement.query_map(params![ending, ending.len() as i64], |row| row.get(0))?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })

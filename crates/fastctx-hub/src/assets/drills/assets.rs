@@ -5,16 +5,26 @@ use fastctx_content::{ObjectRef, Record, State};
 
 struct Device;
 impl fastctx_content::v2::Signer for Device {
-    fn device(&self) -> [u8; 32] { [1; 32] }
-    fn key(&self) -> [u8; 32] { [2; 32] }
-    fn sign(&self, header: &[u8]) -> Vec<u8> { header.to_vec() }
+    fn device(&self) -> [u8; 32] {
+        [1; 32]
+    }
+    fn key(&self) -> [u8; 32] {
+        [2; 32]
+    }
+    fn sign(&self, header: &[u8]) -> Vec<u8> {
+        header.to_vec()
+    }
 }
 impl Verifier for Device {
-    fn verify(&self, _: &Header, bytes: &[u8], signature: &[u8]) -> bool { bytes == signature }
+    fn verify(&self, _: &Header, bytes: &[u8], signature: &[u8]) -> bool {
+        bytes == signature
+    }
 }
 struct Anyone;
 impl Authorizer for Anyone {
-    fn authorize(&self, _: &Header, _: &KindRecord, _: Option<&Entry>) -> Result<(), String> { Ok(()) }
+    fn authorize(&self, _: &Header, _: &KindRecord, _: Option<&Entry>) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn copy(from: &Path, to: &Path) {
@@ -29,7 +39,9 @@ fn copy(from: &Path, to: &Path) {
         }
         // A database's side files go when its last handle closes, which a
         // handle let go does a moment later: one gone meanwhile is not copied.
-        if entry.file_type().unwrap().is_dir() { copy(&entry.path(), &target) } else if let Err(error) = fastctx_platform::disk::copy(entry.path(), &target) {
+        if entry.file_type().unwrap().is_dir() {
+            copy(&entry.path(), &target)
+        } else if let Err(error) = fastctx_platform::disk::copy(entry.path(), &target) {
             assert!(error.kind() == std::io::ErrorKind::NotFound, "copying {}: {error}", entry.path().display());
         }
     }
@@ -41,7 +53,11 @@ fn open(dir: &Path) -> (crate::store::Store, Assets) {
     let mut store = loop {
         match crate::store::Store::open_logged(dir, None) {
             Ok(store) => break store,
-            Err(error) if tries < 100 => { tries += 1; let _ = error; std::thread::sleep(std::time::Duration::from_millis(50)); }
+            Err(error) if tries < 100 => {
+                tries += 1;
+                let _ = error;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             Err(error) => panic!("{error}"),
         }
     };
@@ -54,14 +70,23 @@ fn open(dir: &Path) -> (crate::store::Store, Assets) {
 /// What `fastctx hub reopen` does to a seal for a recovery: it is gone (AK01).
 fn clear_seal(dir: &Path) {
     let (store, assets) = open(dir);
-    store.shelf.0.write_now(64, |c| { c.execute("DELETE FROM asset_seal", [])?; Ok(()) }).unwrap();
+    store
+        .shelf
+        .0
+        .write_now(64, |c| {
+            c.execute("DELETE FROM asset_seal", [])?;
+            Ok(())
+        })
+        .unwrap();
     drop((store, assets));
     std::thread::sleep(std::time::Duration::from_millis(300));
 }
 
 fn retry(mut op: impl FnMut() -> std::io::Result<()>) {
     for _ in 0..200 {
-        if op().is_ok() { return; }
+        if op().is_ok() {
+            return;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     op().unwrap();
@@ -82,13 +107,16 @@ fn chain_witness_and_seal() {
     fastctx_platform::disk::create_dir_all(&base).unwrap();
     let dir = base.join("hub");
     let address: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
-    crate::init(&dir, crate::New {
-        name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
-        public: vec![address],
-        listen: address,
-        admin: fastctx_types::AccountName::try_from("root".to_string()).unwrap(),
-        password: "a long enough password 123".into(),
-    })
+    crate::init(
+        &dir,
+        crate::New {
+            name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
+            public: vec![address],
+            listen: address,
+            admin: fastctx_types::AccountName::try_from("root".to_string()).unwrap(),
+            password: "a long enough password 123".into(),
+        },
+    )
     .unwrap();
 
     // A control fact reaches the chain and the witness before it is published.
@@ -110,20 +138,54 @@ fn chain_witness_and_seal() {
     fastctx_platform::disk::create_dir_all(&producer_dir).unwrap();
     let (producer, _) = Library::open(&producer_dir).unwrap();
     producer.install("s", b"d".to_vec(), 1).unwrap();
-    let record = |item: &str| KindRecord { kind: 1, schema: 1, record: Record { item: item.as_bytes().to_vec(), order: item.as_bytes().to_vec(), state: State::Is { body: b"x".to_vec(), objects: vec![] } } };
-    let commit = |item: &str| producer.raw_commit(Commit { scope: "s".into(), stream: "t".into(), records: vec![record(item)], leases: vec![], durable: true, op: None, holding: producer.holding("s").unwrap().unwrap() }, Arc::new(Device)).unwrap();
+    let record = |item: &str| KindRecord {
+        kind: 1,
+        schema: 1,
+        record: Record {
+            item: item.as_bytes().to_vec(),
+            order: item.as_bytes().to_vec(),
+            state: State::Is { body: b"x".to_vec(), objects: vec![] },
+        },
+    };
+    let commit = |item: &str| {
+        producer
+            .raw_commit(
+                Commit {
+                    scope: "s".into(),
+                    stream: "t".into(),
+                    records: vec![record(item)],
+                    leases: vec![],
+                    durable: true,
+                    op: None,
+                    holding: producer.holding("s").unwrap().unwrap(),
+                },
+                Arc::new(Device),
+            )
+            .unwrap()
+    };
     commit("a");
     let anyone = |_: &ObjectRef| true;
-    let taking = Taking { period: library.holding("s").unwrap().unwrap(), readable: &anyone, proven: &|_: &[u8; 32]| false };
+    let taking =
+        Taking { period: library.holding("s").unwrap().unwrap(), readable: &anyone, proven: &|_: &[u8; 32]| false };
     let frame = producer.export("s", "t", 0, 1).unwrap().remove(0);
-    let Received::Applied { signature: word, .. } = library.take("s", frame, &Device, &taking, Arc::new(Anyone), assets.signer()).unwrap() else { panic!("applied") };
+    let Received::Applied { signature: word, .. } =
+        library.take("s", frame, &Device, &taking, Arc::new(Anyone), assets.signer()).unwrap()
+    else {
+        panic!("applied")
+    };
     let heard = fastctx_net::sign::heard_word(&assets.public(), b"", &word);
     assert!(heard.is_none(), "a word verifies only over its own statement");
     assets.changed(owner.clone(), "s");
     let (seq, _) = assets.checkpoint().unwrap().expect("a checkpoint");
     let kept = assets.witness.kept();
     assert_eq!(kept.seq, seq);
-    let rows: i64 = store.shelf.0.read_now(|c| Ok(c.query_row("SELECT COUNT(*) FROM hub_checkpoints WHERE owner = 'account:root:1'", [], |r| r.get(0))?)).unwrap();
+    let rows: i64 = store
+        .shelf
+        .0
+        .read_now(|c| {
+            Ok(c.query_row("SELECT COUNT(*) FROM hub_checkpoints WHERE owner = 'account:root:1'", [], |r| r.get(0))?)
+        })
+        .unwrap();
     assert_eq!(rows, 1);
     // A head the witness has not (a crash after the commit) reaches it when the hub opens.
     let (lost_seq, lost_head) = store.shelf.0.write_now(64, |c| chain::append(c, "drill", &[9; 32])).unwrap();
@@ -145,7 +207,10 @@ fn chain_witness_and_seal() {
     change(&mut store);
     drop((store, assets));
     let witness_file = base.join("hub-witness");
-    let newer = fastctx_platform::disk::read(fastctx_platform::disk::read_dir(&witness_file).unwrap().next().unwrap().unwrap().path()).unwrap();
+    let newer = fastctx_platform::disk::read(
+        fastctx_platform::disk::read_dir(&witness_file).unwrap().next().unwrap().unwrap().path(),
+    )
+    .unwrap();
     retry(|| fastctx_platform::disk::rename(&dir, base.join("newer")));
     retry(|| fastctx_platform::disk::rename(&old, &dir));
     let (_, assets) = open(&dir);
@@ -153,12 +218,23 @@ fn chain_witness_and_seal() {
     assert!(why.contains("older than what it last wrote outside it"), "{why}");
     assert!(assets.checkpoint().unwrap().is_none(), "nothing is checkpointed while sealed");
     drop(assets);
-    let after = fastctx_platform::disk::read(fastctx_platform::disk::read_dir(&witness_file).unwrap().next().unwrap().unwrap().path()).unwrap();
+    let after = fastctx_platform::disk::read(
+        fastctx_platform::disk::read_dir(&witness_file).unwrap().next().unwrap().unwrap().path(),
+    )
+    .unwrap();
     // The chain head it holds is left as the evidence of the lost history; the count of recoveries in it goes up
     // with the seal (§29 2.2, block 54).
-    let (newer, after): (serde_json::Value, serde_json::Value) = (serde_json::from_slice(&newer).unwrap(), serde_json::from_slice(&after).unwrap());
-    assert_eq!((&after["seq"], &after["head"]), (&newer["seq"], &newer["head"]), "the witness's head is left as the evidence of the lost history");
-    assert!(after["recoveries"].as_u64().unwrap_or(0) > newer["recoveries"].as_u64().unwrap_or(0), "the recovery counted outside the directory too");
+    let (newer, after): (serde_json::Value, serde_json::Value) =
+        (serde_json::from_slice(&newer).unwrap(), serde_json::from_slice(&after).unwrap());
+    assert_eq!(
+        (&after["seq"], &after["head"]),
+        (&newer["seq"], &newer["head"]),
+        "the witness's head is left as the evidence of the lost history"
+    );
+    assert!(
+        after["recoveries"].as_u64().unwrap_or(0) > newer["recoveries"].as_u64().unwrap_or(0),
+        "the recovery counted outside the directory too"
+    );
 
     // An owner library put back alone is found out too.
     retry(|| fastctx_platform::disk::remove_dir_all(&dir));
@@ -175,9 +251,13 @@ fn chain_witness_and_seal() {
     let (store, assets) = open(&dir);
     let library = assets.library(&owner).unwrap();
     commit("b");
-    let taking = Taking { period: library.holding("s").unwrap().unwrap(), readable: &anyone, proven: &|_: &[u8; 32]| false };
+    let taking =
+        Taking { period: library.holding("s").unwrap().unwrap(), readable: &anyone, proven: &|_: &[u8; 32]| false };
     let frame = producer.export("s", "t", 1, 1).unwrap().remove(0);
-    assert!(matches!(library.take("s", frame, &Device, &taking, Arc::new(Anyone), assets.signer()).unwrap(), Received::Applied { change: 2, .. }));
+    assert!(matches!(
+        library.take("s", frame, &Device, &taking, Arc::new(Anyone), assets.signer()).unwrap(),
+        Received::Applied { change: 2, .. }
+    ));
     assets.changed(owner.clone(), "s");
     assets.checkpoint().unwrap().expect("a checkpoint");
     drop((store, assets, library));
@@ -194,12 +274,18 @@ fn chain_witness_and_seal() {
     // Started again as ever, it is still sealed for its recovery (AK01).
     std::thread::sleep(std::time::Duration::from_millis(300));
     let (_, assets) = open(&dir);
-    assert!(assets.sealed().is_some_and(|why| why.contains("older than the hub's own record")), "kept across a restart");
+    assert!(
+        assets.sealed().is_some_and(|why| why.contains("older than the hub's own record")),
+        "kept across a restart"
+    );
     drop(assets);
     clear_seal(&dir);
     // Without the witness, the hub's own record still finds the library older (a backup copied in part).
-    let witness_files: Vec<_> = fastctx_platform::disk::read_dir(&witness_file).unwrap().map(|e| e.unwrap().path()).collect();
-    for file in &witness_files { retry(|| fastctx_platform::disk::remove_file(file)); }
+    let witness_files: Vec<_> =
+        fastctx_platform::disk::read_dir(&witness_file).unwrap().map(|e| e.unwrap().path()).collect();
+    for file in &witness_files {
+        retry(|| fastctx_platform::disk::remove_file(file));
+    }
     let (_, assets) = open(&dir);
     assert!(assets.library(&owner).is_err());
     let why = assets.sealed().expect("sealed");
@@ -207,13 +293,16 @@ fn chain_witness_and_seal() {
     drop(assets);
     // A library of another hub put among this one's.
     let other = base.join("other");
-    crate::init(&other, crate::New {
-        name: fastctx_types::HubName::try_from("lab2".to_string()).unwrap(),
-        public: vec![address],
-        listen: address,
-        admin: fastctx_types::AccountName::try_from("root".to_string()).unwrap(),
-        password: "a long enough password 123".into(),
-    })
+    crate::init(
+        &other,
+        crate::New {
+            name: fastctx_types::HubName::try_from("lab2".to_string()).unwrap(),
+            public: vec![address],
+            listen: address,
+            admin: fastctx_types::AccountName::try_from("root".to_string()).unwrap(),
+            password: "a long enough password 123".into(),
+        },
+    )
     .unwrap();
     let (other_store, other_assets) = open(&other);
     other_assets.library(&Owner::Account("eve".into(), 1)).unwrap();
@@ -248,7 +337,9 @@ fn chain_witness_and_seal() {
     let marker = recovery::backup(&dir, &backup_dir).unwrap();
     assert!(fastctx_platform::disk::is_there(backup_dir.join(BACKUP_MARKER)));
     let (mut store, assets) = open(&dir);
-    for _ in 0..3 { change(&mut store); }
+    for _ in 0..3 {
+        change(&mut store);
+    }
     let gone = assets.witness.kept();
     assert!(gone.seq > marker.seq);
     drop((store, assets));
@@ -269,8 +360,14 @@ fn chain_witness_and_seal() {
     let latest = store.shelf.0.read_now(chain::latest).unwrap().unwrap();
     assert_eq!(assets.witness.current(), latest, "the witness holds the chain as it is now");
     let gone_head = witness::unhex(&gone.head).unwrap();
-    assert!(assets.closed_head(gone.seq, &gone_head).unwrap(), "the head outside the directory is of the history set aside");
-    assert!(!assets.closed_head(gone.seq, &[7; 32]).unwrap(), "another head at that number is not: only what was shown");
+    assert!(
+        assets.closed_head(gone.seq, &gone_head).unwrap(),
+        "the head outside the directory is of the history set aside"
+    );
+    assert!(
+        !assets.closed_head(gone.seq, &[7; 32]).unwrap(),
+        "another head at that number is not: only what was shown"
+    );
     drop((store, assets));
     std::thread::sleep(std::time::Duration::from_millis(300));
 
@@ -282,7 +379,10 @@ fn chain_witness_and_seal() {
     std::thread::sleep(std::time::Duration::from_millis(300));
     let export = base.join("keyring");
     let next = recovery::rotate_prepare(&dir, &export).unwrap();
-    assert!(fastctx_platform::disk::is_there(export.join("next.key")) && fastctx_platform::disk::is_there(export.join("current.key")));
+    assert!(
+        fastctx_platform::disk::is_there(export.join("next.key"))
+            && fastctx_platform::disk::is_there(export.join("current.key"))
+    );
     let (old, new) = recovery::rotate_finish(&dir).unwrap();
     assert_eq!(new, next);
     assert_eq!(old, witness::hex(&old_key));

@@ -120,7 +120,8 @@ async fn receive(hub: &Arc<Hub>, socket: &mut Socket) -> Result<(), String> {
         match frame {
             ToNew::Coming => {
                 let coming = awaited(hub).await?;
-                let (libraries, objects) = (coming.libraries.into_iter().collect(), coming.objects.into_iter().collect());
+                let (libraries, objects) =
+                    (coming.libraries.into_iter().collect(), coming.objects.into_iter().collect());
                 frames::send(socket, &ToOld::Awaited { libraries, objects }).await?;
             }
             ToNew::Holds { part: Some(Part::Library(library)), .. } => {
@@ -166,7 +167,9 @@ async fn receive(hub: &Arc<Hub>, socket: &mut Socket) -> Result<(), String> {
                     .await
                     .map_err(|error| error.to_string())?
                     .map_err(|error| format!("opening {library}: {error}"))?;
-                hub.log.line(format_args!("the owner library {library} came from where the hub was; {left} still to come"));
+                hub.log.line(format_args!(
+                    "the owner library {library} came from where the hub was; {left} still to come"
+                ));
                 frames::send(socket, &ToOld::Opened).await?;
                 // What the hub tells its account, which waited for it: the
                 // account as the directory holds it, opened to the
@@ -179,7 +182,8 @@ async fn receive(hub: &Arc<Hub>, socket: &mut Socket) -> Result<(), String> {
                 }
             }
             ToNew::Follow { library, objects } => {
-                let asked: Vec<([u8; 32], u64)> = objects.iter().map(|object| (object.sha256.0, object.bytes)).collect();
+                let asked: Vec<([u8; 32], u64)> =
+                    objects.iter().map(|object| (object.sha256.0, object.bytes)).collect();
                 let (holder, path) = (hub.clone(), library.clone());
                 let lacking = fastctx_platform::task::spawn_blocking(move || holder.assets.lacking(&path, &asked));
                 let lacking = frames::working::<_, ToOld, _>(socket, lacking)
@@ -241,7 +245,13 @@ impl std::io::Read for Pieces {
 
 /// Takes the `bytes` of the object `sha256` of `library` as they come,
 /// kept as they are read: no copy of them is made beside the library.
-async fn take_object(hub: &Arc<Hub>, socket: &mut Socket, library: &str, sha256: [u8; 32], bytes: u64) -> Result<(), String> {
+async fn take_object(
+    hub: &Arc<Hub>,
+    socket: &mut Socket,
+    library: &str,
+    sha256: [u8; 32],
+    bytes: u64,
+) -> Result<(), String> {
     let (pieces, from) = tokio::sync::mpsc::channel::<Result<Vec<u8>, String>>(4);
     let (holder, path) = (hub.clone(), library.to_string());
     let keeping = fastctx_platform::task::spawn_blocking(move || {
@@ -339,13 +349,19 @@ async fn send_all(
     let sizes: BTreeMap<String, u64> = {
         let (dir, every) = (dir.to_path_buf(), every.clone());
         fastctx_platform::task::spawn_blocking(move || {
-            every.into_iter().map(|library| (size(&dir.join(&library)), library)).map(|(size, library)| (library, size)).collect()
+            every
+                .into_iter()
+                .map(|library| (size(&dir.join(&library)), library))
+                .map(|(size, library)| (library, size))
+                .collect()
         })
         .await
         .map_err(|error| error.to_string())?
     };
     let ordered = |mut some: Vec<String>, troubled: &BTreeMap<String, u32>| {
-        some.sort_by_key(|library| (troubled.get(library).copied().unwrap_or(0), sizes.get(library).copied().unwrap_or(0)));
+        some.sort_by_key(|library| {
+            (troubled.get(library).copied().unwrap_or(0), sizes.get(library).copied().unwrap_or(0))
+        });
         some
     };
     if !libraries.is_empty() {
@@ -411,7 +427,9 @@ async fn library_goes(socket: &mut HubSocket, dir: &Path, library: &str, log: &L
         fastctx_platform::task::spawn_blocking(move || fastctx_content::v2::whole(&place)).await.unwrap_or(false)
     };
     if !whole {
-        return Err(Trouble::Here("its databases are not both there: it is under repair, or was never whole".to_string()));
+        return Err(Trouble::Here(
+            "its databases are not both there: it is under repair, or was never whole".to_string(),
+        ));
     }
     let part = Part::Library(library.to_string());
     let theirs = super::out::holds(socket, Some(part.clone())).await.map_err(Trouble::There)?;
@@ -467,8 +485,11 @@ async fn objects_follow(socket: &mut HubSocket, dir: &Path, library: &str, log: 
     };
     let (mut sent, mut bytes, mut missing) = (0u64, 0u64, 0u64);
     for batch in objects.chunks(FOLLOW_AT_ONCE) {
-        let asked = batch.iter().map(|(hash, size, _)| frames::Object { sha256: Digest(*hash), bytes: *size }).collect();
-        frames::send(socket, &ToNew::Follow { library: library.to_string(), objects: asked }).await.map_err(Trouble::There)?;
+        let asked =
+            batch.iter().map(|(hash, size, _)| frames::Object { sha256: Digest(*hash), bytes: *size }).collect();
+        frames::send(socket, &ToNew::Follow { library: library.to_string(), objects: asked })
+            .await
+            .map_err(Trouble::There)?;
         let lacking = match frames::frame::<_, ToOld>(socket).await.map_err(Trouble::There)? {
             ToOld::Lacking { objects } => objects,
             ToOld::Refused { reason } => return Err(Trouble::There(format!("the new hub refused: {reason}"))),
@@ -541,7 +562,10 @@ async fn send_object(socket: &mut HubSocket, hash: &[u8; 32], size: u64, file: &
     while left > 0 {
         let mut piece = vec![0; usize::try_from(left).unwrap_or(usize::MAX).min(frames::CHUNK)];
         // Cut short once its bytes go, the connection cannot go on.
-        source.read_exact(&mut piece).await.map_err(|error| Trouble::There(format!("reading a large object: {error}")))?;
+        source
+            .read_exact(&mut piece)
+            .await
+            .map_err(|error| Trouble::There(format!("reading a large object: {error}")))?;
         left -= piece.len() as u64;
         frames::send_bytes(socket, frames::pack(piece)).await.map_err(Trouble::There)?;
     }

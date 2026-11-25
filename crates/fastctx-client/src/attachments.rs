@@ -238,12 +238,22 @@ impl World {
     /// (design §28.49): uploaded to `target` on `node` as a text attachment,
     /// with a line beside it; shorter ones as they are. The upload is the
     /// ordinary one, its receipt passed on unchanged.
-    pub async fn as_attachment(&self, target: UploadTarget, node: Option<Written>, text: String) -> Result<(String, Vec<Attachment>), Error> {
+    pub async fn as_attachment(
+        &self,
+        target: UploadTarget,
+        node: Option<Written>,
+        text: String,
+    ) -> Result<(String, Vec<Attachment>), Error> {
         if !long(&text) {
             return Ok((text, Vec::new()));
         }
         let bytes = text.into_bytes();
-        let file = UploadFile { name: TEXT_FILE.into(), media_type: "text/plain;charset=utf-8".into(), size: bytes.len() as u64, sha256: sha256(&bytes) };
+        let file = UploadFile {
+            name: TEXT_FILE.into(),
+            media_type: "text/plain;charset=utf-8".into(),
+            size: bytes.len() as u64,
+            sha256: sha256(&bytes),
+        };
         let attachment = self.upload(target, node, file, bytes.as_slice()).await?;
         Ok((IN_ATTACHMENT.into(), vec![attachment]))
     }
@@ -334,7 +344,10 @@ pub fn words_id() -> String {
 fn new_operation() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or_default();
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_default();
     format!("words-{}-{at:x}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))
 }
 

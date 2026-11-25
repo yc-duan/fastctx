@@ -205,12 +205,7 @@ struct VisibleRecord {
 
 /// Each reader contributes only one page of candidates, so the merge never
 /// sorts the entire history of an account that has millions of records.
-pub(crate) fn read(
-    database: &Database,
-    readers: &[String],
-    before: Option<u64>,
-    reads: Reads,
-) -> Result<Page, String> {
+pub(crate) fn read(database: &Database, readers: &[String], before: Option<u64>, reads: Reads) -> Result<Page, String> {
     database.read_now(|c| {
         let mut page = Page {records:Vec::new(),next_before:None};
         let envelope = fastctx_net::wire::Down::Told {id:u64::MAX,answer:Ok(fastctx_net::wire::Told::MachineLog {page:Page {records:Vec::new(),next_before:Some(u64::MAX)}})};
@@ -261,35 +256,48 @@ pub(crate) fn notices(
     if accounts.is_empty() {
         return Ok(Vec::new());
     }
-    database.read_now(|c| {
-        // The newest of each reader's, read back along its own index and no
-        // further than the most a view carries: a long history costs nothing
-        // here. Their newest together, then the records still kept.
-        let most = crate::machine_log::NOTICES;
-        let mut newest = c.prepare_cached("SELECT id FROM machine_log_notified WHERE reader = ?1 ORDER BY id DESC LIMIT ?2")?;
-        let mut ids = std::collections::BTreeSet::new();
-        for (name, opened) in accounts {
-            let found = newest.query_map(params![account(name, *opened), most as i64], |row| row.get::<_, i64>(0))?;
-            for id in found {
-                ids.insert(id?);
-            }
-        }
-        let mut still = c.prepare_cached("SELECT record FROM machine_log WHERE id = ?1")?;
-        let mut rows = Vec::new();
-        for id in ids.into_iter().rev().take(most) {
-            let record = still.query_row(params![id], |row| row.get::<_, Vec<u8>>(0)).optional()?;
-            rows.extend(record);
-        }
-        let mut notices = Vec::new();
-        for bytes in rows.iter().rev() {
-            let kept: Kept = shelf::decode(bytes)?;
-            let Some((machine,by,action)) = notification(&kept.record.actor,&kept.record.action) else {continue};
-            for (name,opened) in accounts {
-                if kept.notified.get(name) == Some(opened) {
-                    notices.push(fastctx_types::sharing::Notice {id:kept.record.id,at:kept.record.at,account:name.clone(),machine:machine.clone(),by:by.cloned(),action:action.clone()});
+    database
+        .read_now(|c| {
+            // The newest of each reader's, read back along its own index and no
+            // further than the most a view carries: a long history costs nothing
+            // here. Their newest together, then the records still kept.
+            let most = crate::machine_log::NOTICES;
+            let mut newest =
+                c.prepare_cached("SELECT id FROM machine_log_notified WHERE reader = ?1 ORDER BY id DESC LIMIT ?2")?;
+            let mut ids = std::collections::BTreeSet::new();
+            for (name, opened) in accounts {
+                let found =
+                    newest.query_map(params![account(name, *opened), most as i64], |row| row.get::<_, i64>(0))?;
+                for id in found {
+                    ids.insert(id?);
                 }
             }
-        }
-        Ok(notices)
-    }).map_err(shelf::other)
+            let mut still = c.prepare_cached("SELECT record FROM machine_log WHERE id = ?1")?;
+            let mut rows = Vec::new();
+            for id in ids.into_iter().rev().take(most) {
+                let record = still.query_row(params![id], |row| row.get::<_, Vec<u8>>(0)).optional()?;
+                rows.extend(record);
+            }
+            let mut notices = Vec::new();
+            for bytes in rows.iter().rev() {
+                let kept: Kept = shelf::decode(bytes)?;
+                let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else {
+                    continue;
+                };
+                for (name, opened) in accounts {
+                    if kept.notified.get(name) == Some(opened) {
+                        notices.push(fastctx_types::sharing::Notice {
+                            id: kept.record.id,
+                            at: kept.record.at,
+                            account: name.clone(),
+                            machine: machine.clone(),
+                            by: by.cloned(),
+                            action: action.clone(),
+                        });
+                    }
+                }
+            }
+            Ok(notices)
+        })
+        .map_err(shelf::other)
 }

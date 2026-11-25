@@ -17,7 +17,14 @@ fn open_hub(dir: &Path) -> (crate::store::Store, Assets) {
 
 fn plan(version: u64, text: &str) -> Record {
     Record {
-        metadata: Metadata { kind: "plan".into(), key: "conv-1".into(), version, by: Some(machine()), at: jiff::Timestamp::now(), deleted: false },
+        metadata: Metadata {
+            kind: "plan".into(),
+            key: "conv-1".into(),
+            version,
+            by: Some(machine()),
+            at: jiff::Timestamp::now(),
+            deleted: false,
+        },
         body: serde_json::json!({ "text": text }),
     }
 }
@@ -112,7 +119,10 @@ fn phase() {
             for line in &lines {
                 println!("report: {line}");
             }
-            assert!(lines.iter().any(|line| line.starts_with("handed back: 3 frame(s) of plan")), "the report says what was handed back");
+            assert!(
+                lines.iter().any(|line| line.starts_with("handed back: 3 frame(s) of plan")),
+                "the report says what was handed back"
+            );
             assert!(lines.iter().any(|line| line.starts_with("not kept:")), "and what was not kept");
         }
         "6" => {
@@ -136,7 +146,10 @@ fn phase() {
             for line in &reopened.taken_back {
                 println!("taken back: {line}");
             }
-            assert!(reopened.taken_back.iter().any(|line| line.contains("took back 0 frame(s)")), "nothing taken twice");
+            assert!(
+                reopened.taken_back.iter().any(|line| line.contains("took back 0 frame(s)")),
+                "nothing taken twice"
+            );
             assert!(reopened.taken_back.iter().any(|line| line.contains("wrote back 0")), "nothing written back twice");
         }
         "8" => after_reopening(&base, &restored),
@@ -146,19 +159,40 @@ fn phase() {
 
 fn first(base: &Path, dir: &Path) {
     let address: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
-    crate::init(dir, crate::New {
-        name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
-        public: vec![address], listen: address, admin: root(), password: "a long enough password 123".into(),
-    })
+    crate::init(
+        dir,
+        crate::New {
+            name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
+            public: vec![address],
+            listen: address,
+            admin: root(),
+            password: "a long enough password 123".into(),
+        },
+    )
     .unwrap();
     let key = fastctx_net::sign::SecretKey::generate().unwrap();
     let (mut store, assets) = open_hub(dir);
     let member = Arc::new(fastctx_net::directory::Member {
         name: machine(),
-        was: Vec::new(), key: key.public(), kind: fastctx_net::directory::Kind::Computer, logins: [root()].into_iter().collect(),
-        home: Some(root()), managed: false, code: None, group: None, direct: Vec::new(), relay: Vec::new(),
-        added: jiff::Timestamp::now(), online: false, since: None, through: None, reach: None, paths: None, strain: None,
-        workbench: None, settled: None,
+        was: Vec::new(),
+        key: key.public(),
+        kind: fastctx_net::directory::Kind::Computer,
+        logins: [root()].into_iter().collect(),
+        home: Some(root()),
+        managed: false,
+        code: None,
+        group: None,
+        direct: Vec::new(),
+        relay: Vec::new(),
+        added: jiff::Timestamp::now(),
+        online: false,
+        since: None,
+        through: None,
+        reach: None,
+        paths: None,
+        strain: None,
+        workbench: None,
+        settled: None,
         logins_number: None,
     });
     store.book.directory.members.push(member);
@@ -167,8 +201,18 @@ fn first(base: &Path, dir: &Path) {
     let opened = store.book.directory.account(&root()).unwrap().opened;
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let readers = Readers::Conversation { openers: vec![root()], born_on: Some(machine()) };
-    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
-    let Reply::Described { .. } = serve::ask(&assets, &store.indexed(), &String::new, &machine(), &key.public(), describe).unwrap() else { panic!("described") };
+    let describe = Request::Describe {
+        scope: conv.clone(),
+        readers,
+        classes: fastctx_types::assets::conversation_classes(),
+        born: Default::default(),
+        begun: None,
+    };
+    let Reply::Described { .. } =
+        serve::ask(&assets, &store.indexed(), &String::new, &machine(), &key.public(), describe).unwrap()
+    else {
+        panic!("described")
+    };
     // The plan's first version, kept where the hub keeps account records
     // and written into the conversation's scope.
     let slot = dir.join("account-records").join("root").join(opened.as_nanosecond().to_string());
@@ -176,7 +220,15 @@ fn first(base: &Path, dir: &Path) {
     let first = plan(1, "the first plan");
     fastctx_platform::disk::write(plan_path(&slot), serde_json::to_vec(&first).unwrap()).unwrap();
     mirror::document(&assets, &root(), opened, &first).unwrap();
-    keep(base, &Shared { key: key.public().as_bytes().to_vec(), conv, opened_ns: opened.as_nanosecond(), ..Default::default() });
+    keep(
+        base,
+        &Shared {
+            key: key.public().as_bytes().to_vec(),
+            conv,
+            opened_ns: opened.as_nanosecond(),
+            ..Default::default()
+        },
+    );
     println!("phase 1: hub made, the plan's first version written");
 }
 
@@ -217,7 +269,12 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
     let frames: Vec<RawFrame> = kept
         .frames
         .iter()
-        .map(|(header, signature, body, objects)| RawFrame { header: header.clone(), signature: signature.clone(), body: body.clone(), objects: objects.clone() })
+        .map(|(header, signature, body, objects)| RawFrame {
+            header: header.clone(),
+            signature: signature.clone(),
+            body: body.clone(),
+            objects: objects.clone(),
+        })
         .collect();
     let objects = |index: usize| -> Vec<(wire::Bytes, wire::Bytes)> {
         kept.objects[index].iter().map(|(hash, bytes)| (hash.clone().into(), bytes.clone().into())).collect()
@@ -231,17 +288,25 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
     let m1 = machine();
     let ask = |request| serve::ask(&assets, &indexed, &String::new, &m1, &key, request).unwrap();
     // Opening, a device is told the recovery it hands back for.
-    let open = Request::Open { version: wire::VERSION, seen: None, reported: Vec::new(), pinned: None, lineage: Vec::new() };
+    let open =
+        Request::Open { version: wire::VERSION, seen: None, reported: Vec::new(), pinned: None, lineage: Vec::new() };
     match ask(open) {
         Reply::Sealed { recovery: Some(said), .. } => assert_eq!(said, recovery),
         other => panic!("not sealed for a recovery: {other:?}"),
     }
     // Where the hub stands, against where the device does.
     let last = fastctx_content::v2::Header::decode(&frames[2].header).unwrap();
-    let cursor = wire::Cursor { stream: "plan".into(), sequence: last.first + u64::from(last.count) - 1, head: last.chain().into() };
+    let cursor = wire::Cursor {
+        stream: "plan".into(),
+        sequence: last.first + u64::from(last.count) - 1,
+        head: last.chain().into(),
+    };
     let standing = ask(Request::Cursors { scope: conv.clone(), holding: 1, streams: vec![cursor] });
     let Reply::Standing { streams } = &standing else { panic!("no standing: {standing:?}") };
-    assert!(!streams[0].agrees && streams[0].ends.len() == 1 && streams[0].ends[0].0 == 0, "the hub ends at the first frame: {streams:?}");
+    assert!(
+        !streams[0].agrees && streams[0].ends.len() == 1 && streams[0].ends[0].0 == 0,
+        "the hub ends at the first frame: {streams:?}"
+    );
     let rechecked = serve::recheck(&assets, &indexed, &m1, &conv, None, standing.clone()).unwrap();
     assert!(matches!(rechecked, Reply::Standing { .. }), "where it stands passes the seal");
     // A scope the hub put back does not hold: nothing to hand back of it,
@@ -249,18 +314,31 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
     let unknown = format!("c/{}/m1/claude-5a1ce0ff", assets.id);
     let cursor = wire::Cursor { stream: "plan".into(), sequence: 0, head: [0u8; 32].into() };
     let standing = ask(Request::Cursors { scope: unknown.clone(), holding: 1, streams: vec![cursor] });
-    assert!(matches!(&standing, Reply::Standing { streams } if streams.is_empty()), "nothing of a scope it does not hold: {standing:?}");
-    let reply = ask(Request::HandBack { scope: unknown.clone(), stream: "plan".into(), frame: wired(&frames[1]), objects: Vec::new() });
+    assert!(
+        matches!(&standing, Reply::Standing { streams } if streams.is_empty()),
+        "nothing of a scope it does not hold: {standing:?}"
+    );
+    let reply = ask(Request::HandBack {
+        scope: unknown.clone(),
+        stream: "plan".into(),
+        frame: wired(&frames[1]),
+        objects: Vec::new(),
+    });
     assert!(matches!(reply, Reply::HandedBack { kept: false, .. }), "not kept of a scope it does not hold");
     let counted: i64 = assets
         .control
-        .read_now(|c| Ok(c.query_row("SELECT COUNT(*) FROM recovery_refusals WHERE scope LIKE '%5a1ce0ff'", [], |row| row.get(0))?))
+        .read_now(|c| {
+            Ok(c.query_row("SELECT COUNT(*) FROM recovery_refusals WHERE scope LIKE '%5a1ce0ff'", [], |row| {
+                row.get(0)
+            })?)
+        })
         .unwrap();
     assert_eq!(counted, 0, "a scope it does not hold is not counted");
     // An object the frame does not refer to is refused before anything is
     // kept of it.
     let stray = vec![(wire::Bytes::from(vec![0u8; 32]), wire::Bytes::from(b"not referred to".to_vec()))];
-    let reply = ask(Request::HandBack { scope: conv.clone(), stream: "plan".into(), frame: wired(&frames[1]), objects: stray });
+    let reply =
+        ask(Request::HandBack { scope: conv.clone(), stream: "plan".into(), frame: wired(&frames[1]), objects: stray });
     assert!(matches!(reply, Reply::HandedBack { kept: false, .. }), "a stray object is refused");
     // Asked anything else, it is sealed.
     let other = ask(Request::Streams { scope: conv.clone() });
@@ -269,11 +347,19 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
         ask(Request::HandBack { scope: conv.clone(), stream: "plan".into(), frame: wired(&frames[index]), objects })
     };
     // The frame the hub holds already: before its tail.
-    assert!(matches!(hand(0, Vec::new()), Reply::HandedBack { kept: false, .. }), "a frame before the tail is not kept");
+    assert!(
+        matches!(hand(0, Vec::new()), Reply::HandedBack { kept: false, .. }),
+        "a frame before the tail is not kept"
+    );
     // Not signed by a key of the hub's keyring.
     let mut forged = frames[1].clone();
     forged.signature[0] ^= 1;
-    let reply = ask(Request::HandBack { scope: conv.clone(), stream: "plan".into(), frame: wired(&forged), objects: Vec::new() });
+    let reply = ask(Request::HandBack {
+        scope: conv.clone(),
+        stream: "plan".into(),
+        frame: wired(&forged),
+        objects: Vec::new(),
+    });
     assert!(matches!(reply, Reply::HandedBack { kept: false, .. }), "a forged frame is not kept: {reply:?}");
     // The third before the second: it follows nothing kept yet.
     assert!(matches!(hand(2, objects(2)), Reply::HandedBack { kept: false, .. }), "a frame past a gap is not kept");
@@ -282,7 +368,10 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
     let rechecked = serve::recheck(&assets, &indexed, &m1, &conv, Some("plan"), reply).unwrap();
     assert!(matches!(rechecked, Reply::HandedBack { kept: true, .. }), "what the hub made of it passes the seal");
     // Without its object the third is not kept; with it, it is.
-    assert!(matches!(hand(2, Vec::new()), Reply::HandedBack { kept: false, .. }), "a frame without its object is not kept");
+    assert!(
+        matches!(hand(2, Vec::new()), Reply::HandedBack { kept: false, .. }),
+        "a frame without its object is not kept"
+    );
     let reply = hand(2, objects(2));
     assert!(matches!(reply, Reply::HandedBack { kept: true, .. }), "the third with its object is kept: {reply:?}");
     assert!(matches!(hand(2, objects(2)), Reply::HandedBack { kept: true, .. }), "handed back again, it stands kept");
@@ -294,10 +383,19 @@ fn hand_back_while_sealed(base: &Path, restored: &Path) {
     let records = vec![KindRecord {
         kind: ConversationPlan::KIND,
         schema: 1,
-        record: Item { item: b"plan".to_vec(), order: b"plan".to_vec(), state: State::Is { body: serde_json::to_vec(&other).unwrap(), objects: Vec::new() } },
+        record: Item {
+            item: b"plan".to_vec(),
+            order: b"plan".to_vec(),
+            state: State::Is { body: serde_json::to_vec(&other).unwrap(), objects: Vec::new() },
+        },
     }];
     let branch = library.hub_frames(&conv, "plan", records, &Service(assets.keys())).unwrap();
-    let reply = ask(Request::HandBack { scope: conv.clone(), stream: "plan".into(), frame: wired(&branch[0]), objects: Vec::new() });
+    let reply = ask(Request::HandBack {
+        scope: conv.clone(),
+        stream: "plan".into(),
+        frame: wired(&branch[0]),
+        objects: Vec::new(),
+    });
     assert!(matches!(reply, Reply::HandedBack { kept: true, .. }), "the other branch is kept: {reply:?}");
     assert_eq!(library.tail(&conv, "plan").unwrap().unwrap().next, 1, "nothing taken while sealed");
     println!("phase 4: handed back while sealed (recovery {recovery})");
@@ -311,20 +409,29 @@ fn after_reopening(base: &Path, restored: &Path) {
     let scope = scopes::scope(&assets, &conv).unwrap().unwrap();
     let library = scopes::library(&assets, &scope).unwrap();
     let tail = library.tail(&conv, "plan").unwrap().unwrap();
-    assert_eq!((tail.next, tail.head), (kept.live_next, kept.live_head), "the longest chain taken back: the live hub's");
+    assert_eq!(
+        (tail.next, tail.head),
+        (kept.live_next, kept.live_head),
+        "the longest chain taken back: the live hub's"
+    );
     let item = library.item(&conv, "plan", b"plan").unwrap().unwrap();
     let said: serde_json::Value = serde_json::from_slice(&item.body).unwrap();
     assert_eq!(said["metadata"]["version"], 3, "the plan reads at its third version");
     let row: (i64, i64, i64, Option<String>) = assets
         .control
         .read_now(|c| {
-            Ok(c.query_row("SELECT frames, branches, repaired, stopped FROM recovery_results WHERE stream = 'plan'", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?)
+            Ok(c.query_row(
+                "SELECT frames, branches, repaired, stopped FROM recovery_results WHERE stream = 'plan'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?)
         })
         .unwrap();
     assert_eq!(row, (2, 1, 1, None), "two frames taken back, one branch left, the source written back");
-    let left: i64 = assets.control.read_now(|c| Ok(c.query_row("SELECT COUNT(*) FROM recovery_frames", [], |row| row.get(0))?)).unwrap();
+    let left: i64 = assets
+        .control
+        .read_now(|c| Ok(c.query_row("SELECT COUNT(*) FROM recovery_frames", [], |row| row.get(0))?))
+        .unwrap();
     assert_eq!(left, 0, "what was handed back is cleared as the hub reopens");
     // Open now, a frame handed back is answered not kept.
     let key = fastctx_net::sign::PublicKey::from_bytes(kept.key.as_slice().try_into().unwrap());
@@ -345,6 +452,10 @@ fn after_reopening(base: &Path, restored: &Path) {
     assert_eq!(current.metadata.version, 3, "the plan's record is at its third version");
     assert_eq!(current.body["text"].as_str().map(str::len), Some(80 * 1024), "read whole from its object");
     let versions = path.with_extension("versions");
-    assert!(fastctx_platform::disk::is_there(versions.join("1.json")) && fastctx_platform::disk::is_there(versions.join("2.json")), "the first and second kept as history");
+    assert!(
+        fastctx_platform::disk::is_there(versions.join("1.json"))
+            && fastctx_platform::disk::is_there(versions.join("2.json")),
+        "the first and second kept as history"
+    );
     println!("phase 6: taken back and written back");
 }

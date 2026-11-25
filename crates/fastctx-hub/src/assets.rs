@@ -25,12 +25,12 @@ pub(crate) mod work;
 
 pub(crate) mod ledger_views;
 pub(crate) mod line;
-pub(crate) mod restores;
-pub mod recovery;
 pub(crate) mod objects;
 mod owners;
 pub(crate) mod proving;
 mod reclaim;
+pub mod recovery;
+pub(crate) mod restores;
 mod retired;
 mod scopes;
 mod sentinel_homes;
@@ -92,9 +92,11 @@ fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
             if let Some(kept) = kept {
                 return Ok(kept);
             }
-            let made = fastctx_net::ids::new_hub_id().map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+            let made =
+                fastctx_net::ids::new_hub_id().map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
             let made = made.as_str().as_bytes().to_vec();
-            c.prepare_cached("INSERT INTO hub_meta (name, value) VALUES ('assets.incarnation', ?1)")?.execute([&made])?;
+            c.prepare_cached("INSERT INTO hub_meta (name, value) VALUES ('assets.incarnation', ?1)")?
+                .execute([&made])?;
             Ok(made)
         })
         .map_err(io::Error::other)
@@ -192,6 +194,16 @@ pub(crate) struct Assets {
     /// One checkpoint written at a time: the round's, or one a window asks
     /// for (II08).
     checkpointing: Mutex<()>,
+    /// How many witness writes failed, and how many of those `catch_up` has
+    /// made good: nothing is owed while the two agree, and the chain's head
+    /// is not read for nothing every round (codex-570f5b89).
+    witness_failed: std::sync::atomic::AtomicU64,
+    witness_made_good: std::sync::atomic::AtomicU64,
+    /// What every machine's listing of the scopes stands at besides new ones
+    /// (`Reply::Holdings::epoch`): this run of the hub, and how many times a
+    /// scope was removed or its descriptor signed anew in it.
+    listing_run: String,
+    listing_moves: std::sync::atomic::AtomicU64,
     /// The machines that read each scope lately: told when a stream of it
     /// moves (design §6.6).
     holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
@@ -257,6 +269,16 @@ impl Assets {
             turn: Mutex::new(None),
             scope_turns: Mutex::new(BTreeMap::new()),
             checkpointing: Mutex::new(()),
+            // Owed from the start: a write may have failed before the last stop.
+            witness_failed: std::sync::atomic::AtomicU64::new(1),
+            witness_made_good: std::sync::atomic::AtomicU64::new(0),
+            listing_run: {
+                let started = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_nanos());
+                format!("{started:x}-{:x}", std::process::id())
+            },
+            listing_moves: std::sync::atomic::AtomicU64::new(0),
             holders: Mutex::new(BTreeMap::new()),
             followers: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
@@ -281,7 +303,11 @@ impl Assets {
         // until it is reopened (AK01).
         let kept: Option<String> = assets
             .control
-            .read_now(|c| Ok(c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?))
+            .read_now(|c| {
+                Ok(c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?
+                    .query_row([], |row| row.get(0))
+                    .optional()?)
+            })
             .map_err(io::Error::other)?;
         if let Some(why) = kept {
             assets.witness.freeze();
@@ -379,7 +405,12 @@ impl Assets {
     /// it began. Its scopes are judged a page at a time; the deletion begins
     /// under the directory's writer, judged again by the directory as it is
     /// then, and only while the owner holds the very scopes judged.
-    fn sweep_owner(&self, directory: &fastctx_net::directory_index::Indexed<'_>, owner: &str, now: i64) -> io::Result<bool> {
+    fn sweep_owner(
+        &self,
+        directory: &fastctx_net::directory_index::Indexed<'_>,
+        owner: &str,
+        now: i64,
+    ) -> io::Result<bool> {
         let read = |directory: &fastctx_net::directory_index::Indexed<'_>| -> io::Result<Option<(bool, [u8; 32])>> {
             let (mut digest, mut after) = (Sha256::new(), String::new());
             loop {
@@ -387,9 +418,11 @@ impl Assets {
                 let page: Vec<String> = self
                     .control
                     .read_now(move |c| {
-                        let mut statement =
-                            c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT 4096")?;
-                        let rows = statement.query_map(fastctx_storage::rusqlite::params![key, from], |row| row.get(0))?;
+                        let mut statement = c.prepare_cached(
+                            "SELECT key FROM asset_scopes WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT 4096",
+                        )?;
+                        let rows =
+                            statement.query_map(fastctx_storage::rusqlite::params![key, from], |row| row.get(0))?;
                         Ok(rows.collect::<std::result::Result<_, _>>()?)
                     })
                     .map_err(io::Error::other)?;
@@ -430,7 +463,8 @@ impl Assets {
             .write_now(128, move |c| {
                 c.prepare_cached("INSERT OR IGNORE INTO asset_unread (owner, since) VALUES (?1, ?2)")?
                     .execute(fastctx_storage::rusqlite::params![key, now])?;
-                Ok(c.prepare_cached("SELECT since FROM asset_unread WHERE owner = ?1")?.query_row([&key], |row| row.get(0))?)
+                Ok(c.prepare_cached("SELECT since FROM asset_unread WHERE owner = ?1")?
+                    .query_row([&key], |row| row.get(0))?)
             })
             .map_err(io::Error::other)?;
         if now - since < UNREAD_FOR.as_millis() as i64 {
@@ -456,7 +490,9 @@ impl Assets {
                 first
             } else {
                 let index = fastctx_net::directory_index::Index::new(current);
-                let Some((anyone, judged)) = read(&fastctx_net::directory_index::Indexed::new(current, &index))? else { return Ok(None) };
+                let Some((anyone, judged)) = read(&fastctx_net::directory_index::Indexed::new(current, &index))? else {
+                    return Ok(None);
+                };
                 if anyone {
                     return Ok(None);
                 }
@@ -470,7 +506,8 @@ impl Assets {
                         return Ok(None);
                     }
                     // A scope described into it since it was judged keeps it.
-                    let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
+                    let mut statement =
+                        c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
                     let mut rows = statement.query([&key])?;
                     let mut still = Sha256::new();
                     while let Some(row) = rows.next()? {
@@ -497,7 +534,7 @@ impl Assets {
             return Ok(false);
         }
         let Some((seq, head)) = begun? else { return Ok(false) };
-        self.witness.advanced(seq, &head)?;
+        self.witness_advanced(seq, &head)?;
         drop(seal);
         Ok(true)
     }
@@ -506,7 +543,11 @@ impl Assets {
     fn deleting(&self, owner: &Owner) -> io::Result<bool> {
         let key = owner.key();
         self.control
-            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_deleting WHERE owner = ?1")?.query_row([&key], |_| Ok(())).optional()?))
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT 1 FROM asset_deleting WHERE owner = ?1")?
+                    .query_row([&key], |_| Ok(()))
+                    .optional()?)
+            })
             .map(|found| found.is_some())
             .map_err(io::Error::other)
     }
@@ -574,6 +615,7 @@ impl Assets {
                 if removed == 0 {
                     break;
                 }
+                self.listing_moved();
             }
             let seal = self.seal_held();
             if seal.is_some() {
@@ -604,10 +646,37 @@ impl Assets {
 
     /// The chain's latest head reaches the witness, if it had not.
     pub(crate) fn catch_up(&self) -> io::Result<()> {
-        if let Some((seq, head)) = self.control.read_now(chain::latest).map_err(io::Error::other)? {
-            self.witness.advanced(seq, &head)?;
+        use std::sync::atomic::Ordering;
+        let failed = self.witness_failed.load(Ordering::Acquire);
+        if self.witness_made_good.load(Ordering::Acquire) >= failed {
+            return Ok(());
         }
+        if let Some((seq, head)) = self.control.read_now(chain::latest).map_err(io::Error::other)? {
+            self.witness_advanced(seq, &head)?;
+        }
+        self.witness_made_good.fetch_max(failed, Ordering::AcqRel);
         Ok(())
+    }
+
+    /// Where every machine's listing of the scopes stands besides new ones.
+    pub(crate) fn listing_epoch(&self) -> String {
+        format!("{}.{}", self.listing_run, self.listing_moves.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// A scope was removed, or its descriptor signed anew: a machine that
+    /// listed it lists all again (`listing_epoch`).
+    pub(crate) fn listing_moved(&self) {
+        self.listing_moves.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+
+    /// The witness is told the chain stands at `seq` with `head`; a write
+    /// that fails is owed, and the next `catch_up` makes it good.
+    pub(crate) fn witness_advanced(&self, seq: u64, head: &[u8; 32]) -> io::Result<()> {
+        let advanced = self.witness.advanced(seq, head);
+        if advanced.is_err() {
+            self.witness_failed.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        advanced
     }
 
     /// The owner whose library is at `path` under the hub's directory.
@@ -628,7 +697,8 @@ impl Assets {
         if coming.libraries.contains(path) || !coming.objects.contains(path) {
             return Err(io::Error::other(format!("no large object is to follow {path:?} now")));
         }
-        let owner = Self::owner_at(path).ok_or_else(|| io::Error::other(format!("{path:?} is no owner library's path")))?;
+        let owner =
+            Self::owner_at(path).ok_or_else(|| io::Error::other(format!("{path:?} is no owner library's path")))?;
         self.library(&owner)
     }
 
@@ -650,7 +720,13 @@ impl Assets {
     /// `path`, as one a device sends is kept: what frames and records of the
     /// library refer to it hold it from then. It is the object `hash` of
     /// `bytes`, or an error. Call on a thread that may block.
-    pub(crate) fn keep_object(&self, path: &str, source: &mut dyn io::Read, hash: &[u8; 32], bytes: u64) -> io::Result<()> {
+    pub(crate) fn keep_object(
+        &self,
+        path: &str,
+        source: &mut dyn io::Read,
+        hash: &[u8; 32],
+        bytes: u64,
+    ) -> io::Result<()> {
         let library = self.followed_library(path)?;
         let other = |error: fastctx_content::Error| io::Error::other(error.to_string());
         let lease = library.put(source, "the hub's move", std::time::Duration::from_secs(60)).map_err(other)?;
@@ -754,8 +830,9 @@ impl Assets {
         let (key, scopes) = (owner.key(), scopes.to_vec());
         self.control
             .read_now(move |c| {
-                let mut statement =
-                    c.prepare_cached("SELECT change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?;
+                let mut statement = c.prepare_cached(
+                    "SELECT change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2",
+                )?;
                 let mut heads = BTreeMap::new();
                 for scope in scopes {
                     let found = statement
@@ -784,8 +861,9 @@ impl Assets {
         let key = owner.key();
         self.control
             .read_now(move |c| {
-                let mut statement =
-                    c.prepare_cached("SELECT scope, change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1")?;
+                let mut statement = c.prepare_cached(
+                    "SELECT scope, change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1",
+                )?;
                 let rows = statement.query_map([&key], |row| {
                     let digest = |bytes: Vec<u8>| <[u8; 32]>::try_from(bytes).unwrap_or([0; 32]);
                     Ok(Head {
@@ -833,7 +911,10 @@ impl Assets {
             .map_err(io::Error::other)?;
         for (scope, stream, epoch, digest) in epochs {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
-            if !library.holds_epoch(&scope, &stream, epoch as u64, &digest).map_err(|error| io::Error::other(error.to_string()))? {
+            if !library
+                .holds_epoch(&scope, &stream, epoch as u64, &digest)
+                .map_err(|error| io::Error::other(error.to_string()))?
+            {
                 return Ok(Some(format!("the library of {key} lacks an epoch the hub opened in {scope}")));
             }
         }
@@ -841,15 +922,21 @@ impl Assets {
         let gaps: Vec<(String, String, i64, i64, Vec<u8>)> = self
             .control
             .read_now(move |c| {
-                let mut statement =
-                    c.prepare_cached("SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1")?;
-                let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+                let mut statement = c.prepare_cached(
+                    "SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1",
+                )?;
+                let rows = statement.query_map([&owner_key], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                })?;
                 Ok(rows.collect::<std::result::Result<_, _>>()?)
             })
             .map_err(io::Error::other)?;
         for (scope, stream, epoch, from, digest) in gaps {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
-            if !library.holds_gap(&scope, &stream, epoch as u64, from as u64, &digest).map_err(|error| io::Error::other(error.to_string()))? {
+            if !library
+                .holds_gap(&scope, &stream, epoch as u64, from as u64, &digest)
+                .map_err(|error| io::Error::other(error.to_string()))?
+            {
                 return Ok(Some(format!("the library of {key} lacks a gap the hub signed in {scope}")));
             }
         }
@@ -889,12 +976,19 @@ impl Assets {
     /// hub's word stands behind it: the head it saw and the receipts it
     /// held, kept for the recovery (design §17).
     /// When it was kept: what `judged` marks as judged.
-    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: Vec<Head>) -> i64 {
+    pub(crate) fn brought(
+        &self,
+        machine: &fastctx_types::MachineName,
+        seen: Option<(u64, [u8; 32])>,
+        receipts: Vec<Head>,
+    ) -> i64 {
         let (name, at) = (machine.to_string(), jiff::Timestamp::now().as_millisecond());
         let _ = self.control.write_now(256 + receipts.len() * 128, move |c| {
             if let Some((seq, head)) = seen {
-                c.prepare_cached("INSERT OR IGNORE INTO recovery_heads (seq, head, machine, at) VALUES (?1, ?2, ?3, ?4)")?
-                    .execute(fastctx_storage::rusqlite::params![seq as i64, &head[..], name, at])?;
+                c.prepare_cached(
+                    "INSERT OR IGNORE INTO recovery_heads (seq, head, machine, at) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(fastctx_storage::rusqlite::params![seq as i64, &head[..], name, at])?;
             }
             for head in &receipts {
                 c.prepare_cached(
@@ -924,7 +1018,11 @@ impl Assets {
             .control
             .read_now({
                 let name = name.clone();
-                move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?.query_row([&name], |_| Ok(())).optional()?)
+                move |c| {
+                    Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?
+                        .query_row([&name], |_| Ok(()))
+                        .optional()?)
+                }
             })
             .map_err(io::Error::other)?;
         if known.is_none() {
@@ -943,7 +1041,11 @@ impl Assets {
     pub(crate) fn spoken(&self, key: &fastctx_net::sign::PublicKey) -> bool {
         let name = witness::hex(key.as_bytes());
         self.control
-            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?.query_row([&name], |_| Ok(())).optional()?))
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?
+                    .query_row([&name], |_| Ok(()))
+                    .optional()?)
+            })
             .is_ok_and(|found| found.is_some())
     }
 
@@ -1032,13 +1134,20 @@ impl Assets {
                 Ok((seq, head))
             })
             .map_err(io::Error::other)?;
-        self.witness.advanced(seq, &head)
+        self.witness_advanced(seq, &head)
     }
 
     /// An epoch the hub just opened in `scope` of `owner`'s library goes into
     /// its chain and the witness before the device hears of it (design
     /// §6.1): a library put back to before it is found as it opens.
-    pub(crate) fn opened_epoch(&self, owner: &Owner, scope: &str, stream: &str, epoch: u64, fact: &[u8]) -> io::Result<()> {
+    pub(crate) fn opened_epoch(
+        &self,
+        owner: &Owner,
+        scope: &str,
+        stream: &str,
+        epoch: u64,
+        fact: &[u8],
+    ) -> io::Result<()> {
         let digest: [u8; 32] = Sha256::digest(fact).into();
         let (owner, scope, stream) = (owner.key(), scope.to_string(), stream.to_string());
         let (seq, head) = self
@@ -1052,7 +1161,7 @@ impl Assets {
                 Ok((seq, head))
             })
             .map_err(io::Error::other)?;
-        self.witness.advanced(seq, &head)
+        self.witness_advanced(seq, &head)
     }
 
     /// Seals every asset from now on (design §17): the hub found it was put
@@ -1172,8 +1281,12 @@ impl Assets {
     /// Keeps the seal `why` for a recovery, the count of recoveries going up
     /// as it is first kept.
     fn keep_seal(&self, why: &str) -> io::Result<()> {
-        let (kept, at, witnessed) = (why.to_string(), jiff::Timestamp::now().as_millisecond(), self.witness.recoveries());
-        let count = self.control.write_now(512, move |c| restores::seal_in(c, &kept, at, witnessed)).map_err(io::Error::other)?;
+        let (kept, at, witnessed) =
+            (why.to_string(), jiff::Timestamp::now().as_millisecond(), self.witness.recoveries());
+        let count = self
+            .control
+            .write_now(512, move |c| restores::seal_in(c, &kept, at, witnessed))
+            .map_err(io::Error::other)?;
         self.restores.store(count, std::sync::atomic::Ordering::SeqCst);
         self.witness.recovered(count)
     }
@@ -1196,7 +1309,9 @@ impl Assets {
         match sealed.as_deref() {
             None => Err("the hub's assets are not sealed".into()),
             Some(SEALED_AT_START) => Ok(()),
-            Some(why) => Err(format!("the hub's assets are sealed because {why}: stop the hub and run `fastctx hub reopen`")),
+            Some(why) => {
+                Err(format!("the hub's assets are sealed because {why}: stop the hub and run `fastctx hub reopen`"))
+            }
         }
     }
 
@@ -1249,16 +1364,27 @@ impl Assets {
         self.moved_except(owner, scope, stream, next, None);
     }
 
-    fn moved_except(&self, owner: &Owner, scope: &str, stream: &str, next: u64, by: Option<&fastctx_types::MachineName>) {
+    fn moved_except(
+        &self,
+        owner: &Owner,
+        scope: &str,
+        stream: &str,
+        next: u64,
+        by: Option<&fastctx_types::MachineName>,
+    ) {
         self.standing.moved(&owner.key());
-        let mut told: BTreeSet<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().cloned().collect();
+        let mut told: BTreeSet<_> =
+            self.holders.lock().expect("holders").get(scope).into_iter().flatten().cloned().collect();
         told.extend(self.followers.lock().expect("followers").get(&owner.key()).into_iter().flatten().cloned());
         if let Some(by) = by {
             told.remove(by);
         }
         let mut pushes = self.pushes.lock().expect("pushes");
         for machine in told {
-            pushes.push((machine, fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next }));
+            pushes.push((
+                machine,
+                fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next },
+            ));
         }
     }
 
@@ -1297,7 +1423,12 @@ impl Assets {
                 if !reads {
                     // Told instead that it reads the scope no more, once —
                     // one that only follows its library never read it.
-                    let held = self.holders.lock().expect("holders").get(&key).is_some_and(|machines| machines.contains(machine));
+                    let held = self
+                        .holders
+                        .lock()
+                        .expect("holders")
+                        .get(&key)
+                        .is_some_and(|machines| machines.contains(machine));
                     self.gone(&key, machine);
                     if let Some(machines) = self.receipted.lock().expect("receipted").get_mut(&key) {
                         machines.remove(machine);
@@ -1415,7 +1546,12 @@ impl Assets {
             // One whose library is still coming from where the hub was is
             // looked at once it came, and failed no round meanwhile.
             if self.owners.is_coming(owner) {
-                self.changed.lock().expect("changed scopes").entry(owner.clone()).or_default().extend(scopes.iter().cloned());
+                self.changed
+                    .lock()
+                    .expect("changed scopes")
+                    .entry(owner.clone())
+                    .or_default()
+                    .extend(scopes.iter().cloned());
                 continue;
             }
             let heads = (|| {
@@ -1439,7 +1575,12 @@ impl Assets {
                 // An owner that fails holds up none of the others: it goes
                 // to the next round alone.
                 Err(error) => {
-                    self.changed.lock().expect("changed scopes").entry(owner.clone()).or_default().extend(scopes.iter().cloned());
+                    self.changed
+                        .lock()
+                        .expect("changed scopes")
+                        .entry(owner.clone())
+                        .or_default()
+                        .extend(scopes.iter().cloned());
                     failed.get_or_insert(error);
                 }
             }
@@ -1486,7 +1627,7 @@ impl Assets {
             Ok((seq, head))
         });
         let (seq, head) = written.map_err(io::Error::other)?;
-        self.witness.advanced(seq, &head)?;
+        self.witness_advanced(seq, &head)?;
         // Frozen as the hub sealed, the witness holds less than the chain: no
         // device is told a receipt is covered by what the witness does not
         // hold, and lets go of it (AM03).
@@ -1500,8 +1641,13 @@ impl Assets {
         for (_, heads) in &owners {
             for covered in heads {
                 let Some(machines) = receipted.remove(&covered.scope) else { continue };
-                let statement =
-                    fastctx_types::assets::checkpoint_statement(&covered.scope, covered.change, covered.parked, seq, &head);
+                let statement = fastctx_types::assets::checkpoint_statement(
+                    &covered.scope,
+                    covered.change,
+                    covered.parked,
+                    seq,
+                    &head,
+                );
                 let checkpoint = fastctx_types::assets::Checkpoint {
                     scope: covered.scope.clone(),
                     change: covered.change,
@@ -1511,7 +1657,8 @@ impl Assets {
                     word: signer.sign(&statement).into(),
                 };
                 for machine in machines {
-                    pushes.push((machine, fastctx_types::assets::Push::Checkpointed { checkpoint: checkpoint.clone() }));
+                    pushes
+                        .push((machine, fastctx_types::assets::Push::Checkpointed { checkpoint: checkpoint.clone() }));
                 }
             }
         }
@@ -1565,7 +1712,11 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         // And what they hold of each scope described since, into it.
         if let Some(running) = hub.upgrade() {
             let described = std::mem::take(&mut *running.assets.described.lock().expect("described scopes"));
+            if ledger_views::take_directory_moved() {
+                ledger_views::look(&running);
+            }
             if !described.is_empty() {
+                tell_described(&running, &described);
                 fastctx_platform::task::spawn(mirror::described(running, described));
             }
         }
@@ -1592,7 +1743,9 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
                 sweeping.store(false, std::sync::atomic::Ordering::Release);
                 match swept {
                     Ok(Ok(0)) => {}
-                    Ok(Ok(dropped)) => log.line(format_args!("deleted {dropped} owner librar(ies) no one has read for a week")),
+                    Ok(Ok(dropped)) => {
+                        log.line(format_args!("deleted {dropped} owner librar(ies) no one has read for a week"))
+                    }
                     Ok(Err(error)) => log.line(format_args!("looking for libraries no one reads: {error}")),
                     Err(error) => log.line(format_args!("looking for libraries no one reads: {error}")),
                 }
@@ -1632,4 +1785,41 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
             Err(error) => log.line(format_args!("checkpointing the owner libraries: {error}")),
         }
     }
+}
+
+/// Each computer connected now that may hold one of the scopes `described`
+/// since the last round is told of it at once (`Push::Fact`): its listing
+/// finds it by its cursor in the pass this wakes, where it would otherwise
+/// wait for the pass its timer brings. A phone is told nothing of it: a
+/// device takes the whole of its holdings again on a fact.
+fn tell_described(hub: &Arc<crate::Hub>, described: &[String]) {
+    let store = hub.store();
+    let indexed = store.indexed();
+    let machines: Vec<fastctx_types::MachineName> = hub
+        .sessions()
+        .iter()
+        .filter(|(name, session)| {
+            indexed.member(name).is_some_and(|member| member.key == session.key && member.kind.is_computer())
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    if machines.is_empty() {
+        return;
+    }
+    let mut told = Vec::new();
+    for key in described {
+        let Ok(Some(scope)) = scopes::scope(&hub.assets, key) else { continue };
+        if retired::whole(&scope) {
+            continue;
+        }
+        for machine in &machines {
+            if scopes::may_hold_known(&indexed, machine, &scope).unwrap_or(false) {
+                told.push((
+                    machine.clone(),
+                    fastctx_types::assets::Push::Fact { scope: key.clone(), fact: scope.fact.clone() },
+                ));
+            }
+        }
+    }
+    hub.assets.pushes.lock().expect("pushes").extend(told);
 }

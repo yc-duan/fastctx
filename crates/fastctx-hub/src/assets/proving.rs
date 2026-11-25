@@ -193,7 +193,9 @@ impl Proving {
         }
         let asked = state.asked.get(device).and_then(|asked| asked.get(hash)).filter(|asked| asked.size == size);
         let Some(asked) = asked else {
-            return Err("this machine was not asked lately to prove it holds that object: prove it by sending it".into());
+            return Err(
+                "this machine was not asked lately to prove it holds that object: prove it by sending it".into()
+            );
         };
         let scope = asked.scope.clone();
         challengeable(&state, device, hash, now)?;
@@ -202,7 +204,13 @@ impl Proving {
 
     /// A challenge for the device `device` to prove it holds the object
     /// `hash` of `size` of `scope`: its nonce, and until when it stands.
-    pub(crate) fn issue(&self, device: &[u8; 32], hash: &[u8; 32], size: u64, scope: &str) -> Result<([u8; 32], Instant), String> {
+    pub(crate) fn issue(
+        &self,
+        device: &[u8; 32],
+        hash: &[u8; 32],
+        size: u64,
+        scope: &str,
+    ) -> Result<([u8; 32], Instant), String> {
         let nonce = fastctx_net::sign::random::<32>().map_err(|error| error.to_string())?;
         let now = Instant::now();
         let mut state = self.inner.state.lock().expect("proving");
@@ -372,7 +380,8 @@ fn work(inner: &Inner) {
                 queue = inner.woken.wait(queue).unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         };
-        let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prove(&job))).unwrap_or(ProofState::Damaged);
+        let proof =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prove(&job))).unwrap_or(ProofState::Damaged);
         if proof == ProofState::Damaged {
             // Not the object's: wanted again, and the frames that refer to
             // it hear it missing until it is sent whole.

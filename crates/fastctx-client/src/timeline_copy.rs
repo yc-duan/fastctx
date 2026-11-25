@@ -15,12 +15,12 @@ use fastctx_content::{Anchor, ObjectRef, Place};
 use fastctx_net::directory::Directory;
 use fastctx_types::assets::{Descriptor, Holders, Readers, conversation_classes};
 use fastctx_types::ipc::Failure;
-use fastctx_types::town::{ResidentNow, WhoReply};
-use fastctx_types::{AccountName, MachineName};
 use fastctx_types::timeline_pages::{
     FILES_ITEMS, FileChangeTold, OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace,
     TimelineShown, TimelineTold,
 };
+use fastctx_types::town::{ResidentNow, WhoReply};
+use fastctx_types::{AccountName, MachineName};
 use std::time::Duration;
 
 /// The most a page holds, whatever is asked.
@@ -164,7 +164,8 @@ pub fn page(copy: &Copy, anchor: &Anchor, max_items: u32, max_bytes: u32) -> Res
 /// What the timeline changed to after `after`, as the asset library holds
 /// it; none when the reader reads its pages again.
 pub fn changes(copy: &Copy, after: u64, max_items: u32, max_bytes: u32) -> Result<Option<Changed>, Failure> {
-    let Some(read) = copy.library.view_changes(&copy.scope, Timeline::STREAM, after, max_items, max_bytes).map_err(failure)?
+    let Some(read) =
+        copy.library.view_changes(&copy.scope, Timeline::STREAM, after, max_items, max_bytes).map_err(failure)?
     else {
         return Ok(None);
     };
@@ -189,7 +190,8 @@ pub async fn moved(copy: &Copy, after: u64, within: Duration) -> Result<Option<u
 /// A range of an object the timeline refers to; none when it refers to no
 /// such object or the object is not here yet.
 pub fn object(copy: &Copy, hash: &[u8; 32], offset: u64, length: u32) -> Result<Option<Vec<u8>>, Failure> {
-    if !copy.library.refers(&copy.scope, hash).map_err(failure)? || copy.library.size(hash).map_err(failure)?.is_none() {
+    if !copy.library.refers(&copy.scope, hash).map_err(failure)? || copy.library.size(hash).map_err(failure)?.is_none()
+    {
         return Ok(None);
     }
     copy.library.read(hash, offset, length).map(Some).map_err(failure)
@@ -208,7 +210,8 @@ pub fn files(library: &Library, scope: &str, after: u64, max_items: u32) -> Resu
         return Ok(TimelineTold::Files { known: true, changes: Vec::new(), through: 0, more: false });
     };
     let from = if after == 0 { revision & !((1u64 << 40) - 1) } else { after };
-    let Some(read) = library.view_changes(scope, stream, from, max_items.clamp(1, FILES_ITEMS), FILES_BYTES).map_err(failure)?
+    let Some(read) =
+        library.view_changes(scope, stream, from, max_items.clamp(1, FILES_ITEMS), FILES_BYTES).map_err(failure)?
     else {
         return Ok(TimelineTold::Reread);
     };
@@ -220,7 +223,9 @@ pub fn files(library: &Library, scope: &str, after: u64, max_items: u32) -> Resu
                 item: String::from_utf8_lossy(&entry.item).into_owned(),
                 change: serde_json::from_slice(&entry.body).ok(),
             },
-            ViewChange::Gone { item } => FileChangeTold { item: String::from_utf8_lossy(&item).into_owned(), change: None },
+            ViewChange::Gone { item } => {
+                FileChangeTold { item: String::from_utf8_lossy(&item).into_owned(), change: None }
+            }
         })
         .collect();
     Ok(TimelineTold::Files { known: true, changes, through: read.through, more: read.more })
@@ -250,7 +255,8 @@ pub async fn answer(copy: &Copy, request: TimelineAsk) -> Result<TimelineTold, F
         }
         TimelineAsk::Changes { after, max_events, max_bytes, .. } => {
             fastctx_platform::roles::in_place("reading a copy's changes", || {
-                let Some(read) = changes(copy, after, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))? else {
+                let Some(read) = changes(copy, after, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))?
+                else {
                     return Ok(TimelineTold::Reread);
                 };
                 Ok(TimelineTold::Changes {
@@ -277,7 +283,9 @@ pub async fn answer(copy: &Copy, request: TimelineAsk) -> Result<TimelineTold, F
             fastctx_platform::roles::in_place("reading a copy's object", || {
                 use base64::Engine as _;
                 let bytes = object(copy, &hash, offset, length.min(OBJECT_BYTES))?;
-                Ok(TimelineTold::Object { base64: bytes.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)) })
+                Ok(TimelineTold::Object {
+                    base64: bytes.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)),
+                })
             })
         }
         TimelineAsk::Running { .. } => Err(Failure::new("what runs now is read where the conversation lives")),
@@ -436,7 +444,9 @@ struct Listed {
 /// `directory` as it was opened then and not locked, and reading it still
 /// by the directory as it stands (AV01, AV02, AV09).
 pub fn read_by(directory: &Directory, scope: &HeldScope, logins: &[AccountName], only: Option<&AccountName>) -> bool {
-    let Some(descriptor) = scope.description.as_deref().and_then(|bytes| serde_json::from_slice::<Descriptor>(bytes).ok()) else {
+    let Some(descriptor) =
+        scope.description.as_deref().and_then(|bytes| serde_json::from_slice::<Descriptor>(bytes).ok())
+    else {
         return false;
     };
     let Some(listed) = scope.readers.as_deref().and_then(|text| serde_json::from_str::<Listed>(text).ok()) else {
@@ -456,13 +466,18 @@ pub fn read_by(directory: &Directory, scope: &HeldScope, logins: &[AccountName],
         })
     };
     let reads_now = |account: &AccountName| match &descriptor.readers {
-        Readers::Conversation { openers, born_on } => {
-            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref().filter(|machine| as_described(machine)))
-        }
+        Readers::Conversation { openers, born_on } => fastctx_net::record_ownership::allows(
+            directory,
+            account,
+            openers,
+            born_on.as_ref().filter(|machine| as_described(machine)),
+        ),
         Readers::Body { body, opener } => {
             account == opener || {
-                let machine =
-                    directory.members.iter().find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
+                let machine = directory
+                    .members
+                    .iter()
+                    .find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
                 match machine {
                     // Its machine gone, its members frozen: as the hub listed
                     // them once it was gone, never as it listed them before
@@ -470,7 +485,9 @@ pub fn read_by(directory: &Directory, scope: &HeldScope, logins: &[AccountName],
                     None => listed.frozen,
                     Some(member) => {
                         member.home.as_ref() == Some(account)
-                            || directory.shares.iter().any(|share| share.machine == member.name && share.active() && &share.account == account)
+                            || directory.shares.iter().any(|share| {
+                                share.machine == member.name && share.active() && &share.account == account
+                            })
                     }
                 }
             }
@@ -511,12 +528,19 @@ pub fn lives_on(library: &Library, scope: &HeldScope, machine: &MachineName) -> 
 /// design §28.32): each conversation's description, project, title, and
 /// when it was archived; none of them is here or doing anything. None when
 /// no copy says it lives there.
-pub fn listed<'a>(library: &Library, scopes: impl IntoIterator<Item = &'a HeldScope>, machine: &MachineName) -> Option<WhoReply> {
+pub fn listed<'a>(
+    library: &Library,
+    scopes: impl IntoIterator<Item = &'a HeldScope>,
+    machine: &MachineName,
+) -> Option<WhoReply> {
     let mut residents = Vec::new();
     for scope in scopes {
         let Ok(items) = library.page(&scope.key, ConversationMeta::STREAM, None, 16) else { continue };
         let item = |name: &str| -> Option<serde_json::Value> {
-            items.iter().find(|entry| entry.item == name.as_bytes()).and_then(|entry| serde_json::from_slice(&entry.body).ok())
+            items
+                .iter()
+                .find(|entry| entry.item == name.as_bytes())
+                .and_then(|entry| serde_json::from_slice(&entry.body).ok())
         };
         let (Some(mut about), Some(place)) = (item("about"), item("place")) else { continue };
         if place.get("machine").and_then(|lives| lives.as_str()) != Some(machine.as_str()) {
@@ -539,7 +563,13 @@ pub fn listed<'a>(library: &Library, scopes: impl IntoIterator<Item = &'a HeldSc
             residents.push(resident);
         }
     }
-    (!residents.is_empty()).then(|| WhoReply { machine: machine.clone(), residents, jobs: Vec::new(), history: None, busy: None })
+    (!residents.is_empty()).then(|| WhoReply {
+        machine: machine.clone(),
+        residents,
+        jobs: Vec::new(),
+        history: None,
+        busy: None,
+    })
 }
 
 #[cfg(test)]

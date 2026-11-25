@@ -222,7 +222,11 @@ impl History {
             Action::Logout => {
                 names.extend(actor.member.iter().cloned());
             }
-            Action::Settings { .. } | Action::AssetSeal { .. } | Action::OpenAssets | Action::Updates { .. } | Action::Dissolve { .. } => {
+            Action::Settings { .. }
+            | Action::AssetSeal { .. }
+            | Action::OpenAssets
+            | Action::Updates { .. }
+            | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
             Action::History { .. }
@@ -272,8 +276,13 @@ impl History {
             accounts.extend(member.home.iter().cloned());
         }
         // Above all the hub numbered before it was last put back (§29, 2.2).
-        let floor = self.database.as_ref().and_then(|database| crate::assets::restores::count(database).ok()).map_or(0, crate::assets::restores::floor);
-        self.next = self.next.max(floor).checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
+        let floor = self
+            .database
+            .as_ref()
+            .and_then(|database| crate::assets::restores::count(database).ok())
+            .map_or(0, crate::assets::restores::floor);
+        self.next =
+            self.next.max(floor).checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
         let at = Timestamp::now();
         let accounts = accounts
             .into_iter()
@@ -310,14 +319,20 @@ impl History {
             return crate::store::log_store::notices(database, &accounts);
         }
         let mut notices = Vec::new();
-        let newest: Vec<&Kept> = self.records.iter().rev().filter(|kept| {
-            notification(&kept.record.actor, &kept.record.action).is_some()
-                && member.logins.iter().any(|account| {
-                    directory
-                        .account(account)
-                        .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
-                })
-        }).take(NOTICES).collect();
+        let newest: Vec<&Kept> = self
+            .records
+            .iter()
+            .rev()
+            .filter(|kept| {
+                notification(&kept.record.actor, &kept.record.action).is_some()
+                    && member.logins.iter().any(|account| {
+                        directory
+                            .account(account)
+                            .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
+                    })
+            })
+            .take(NOTICES)
+            .collect();
         for kept in newest.into_iter().rev() {
             let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else { continue };
             for account in &member.logins {

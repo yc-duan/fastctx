@@ -44,7 +44,9 @@ pub(super) async fn catalog(
             // The first version's replicas follow the opener as it is: a
             // body's conversation whose opener went, or was made again, is
             // read through the body's scope alone (§29, 2.6).
-            .filter(|(conversation, opened)| directory.account(&conversation.account).is_some_and(|owner| owner.opened == *opened))
+            .filter(|(conversation, opened)| {
+                directory.account(&conversation.account).is_some_and(|owner| owner.opened == *opened)
+            })
             .collect::<Vec<_>>();
         let projects = directory
             .projects

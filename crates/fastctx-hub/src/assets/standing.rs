@@ -147,7 +147,10 @@ pub(crate) fn keep(
     let body = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
     let (name, at, device) = (directory.canonical(machine).to_string(), now(), *device);
     // The names the machine had go: its report is under its name now (AO05).
-    let was: Vec<String> = directory.member(machine).map(|member| member.was.iter().map(ToString::to_string).collect()).unwrap_or_default();
+    let was: Vec<String> = directory
+        .member(machine)
+        .map(|member| member.was.iter().map(ToString::to_string).collect())
+        .unwrap_or_default();
     assets
         .control
         .write_now(256 + body.len(), move |c| {
@@ -188,14 +191,17 @@ fn kept(assets: &Assets, directory: &Indexed<'_>) -> io::Result<(BTreeMap<Machin
         .control
         .read_now(|c| {
             let mut statement = c.prepare_cached("SELECT machine, device, report, at, seen FROM sync_reports")?;
-            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+            let rows =
+                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
             Ok(rows.collect::<Result<_, _>>()?)
         })
         .map_err(io::Error::other)?;
     let mut kept: BTreeMap<MachineName, Kept> = BTreeMap::new();
     let mut gone = Vec::new();
     for (machine, device, report, at, seen) in rows {
-        let (Ok(name), Ok(report)) = (MachineName::try_from(machine.clone()), serde_json::from_slice::<SyncReport>(&report)) else {
+        let (Ok(name), Ok(report)) =
+            (MachineName::try_from(machine.clone()), serde_json::from_slice::<SyncReport>(&report))
+        else {
             gone.push(machine);
             continue;
         };
@@ -224,7 +230,15 @@ fn top(assets: &Assets, owner: &str) -> Option<Top> {
             None => {
                 tops.insert(
                     owner.to_string(),
-                    Top { change: 0, at: 0, steady: 0, steady_at: 0, generation: String::new(), moves: 0, read_at: u64::MAX },
+                    Top {
+                        change: 0,
+                        at: 0,
+                        steady: 0,
+                        steady_at: 0,
+                        generation: String::new(),
+                        moves: 0,
+                        read_at: u64::MAX,
+                    },
                 );
                 0
             }
@@ -302,9 +316,9 @@ fn reckon(assets: &Assets, libraries: &[String], kept: &Kept) -> Reckoned {
     // The account's own library and those of its bodies, where they hold
     // anything, are stood in by each of its machines: one it never stood in
     // is not caught up, whatever its report says of the others (H10).
-    let whole = libraries
-        .iter()
-        .all(|owner| kept.report.owners.iter().any(|standing| standing.owner == *owner) || top(assets, owner).is_none());
+    let whole = libraries.iter().all(|owner| {
+        kept.report.owners.iter().any(|standing| standing.owner == *owner) || top(assets, owner).is_none()
+    });
     Reckoned { behind: worst, whole, exact }
 }
 
@@ -325,7 +339,13 @@ fn synced(kept: &Kept, reckoned: &Reckoned, online: bool, now: i64) -> bool {
 
 /// The members `account` is logged in on, managed machines aside.
 fn machines_of<'a>(directory: &Indexed<'a>, account: &AccountName) -> Vec<&'a Member> {
-    directory.all.members.iter().filter(|member| !member.managed && member.logins.contains(account)).map(|member| &**member).collect()
+    directory
+        .all
+        .members
+        .iter()
+        .filter(|member| !member.managed && member.logins.contains(account))
+        .map(|member| &**member)
+        .collect()
 }
 
 /// Samples every machine that reported, a minute at a time.
@@ -467,7 +487,9 @@ fn may_hold(
     memo: &mut HashMap<String, Option<Scope>>,
 ) -> bool {
     let scope = memo.entry(key.to_string()).or_insert_with(|| scopes::scope(assets, key).ok().flatten());
-    scope.as_ref().is_some_and(|scope| scopes::readable(directory, machine, scope) && scopes::serves(directory, machine, scope, stream))
+    scope.as_ref().is_some_and(|scope| {
+        scopes::readable(directory, machine, scope) && scopes::serves(directory, machine, scope, stream)
+    })
 }
 
 /// What each owner library has after where a device stands, reckoned once
@@ -555,9 +577,9 @@ fn left(
         if !counts(&scope.owner.key()) {
             continue;
         }
-        let Ok(rows) = scopes::library(assets, &scope).and_then(|library| {
-            library.bytes_of_scopes(vec![key.to_string()]).map_err(|error| error.to_string())
-        }) else {
+        let Ok(rows) = scopes::library(assets, &scope)
+            .and_then(|library| library.bytes_of_scopes(vec![key.to_string()]).map_err(|error| error.to_string()))
+        else {
             about = true;
             continue;
         };
@@ -597,7 +619,14 @@ fn totals(assets: &Assets, libraries: &[String]) -> HubTotals {
     let mut sum = HubTotals::default();
     for owner in libraries {
         let Some(top) = top(assets, owner) else { continue };
-        let cached = assets.standing.totals.lock().expect("totals").get(owner).filter(|(at, _)| *at == top.change).map(|(_, totals)| totals.clone());
+        let cached = assets
+            .standing
+            .totals
+            .lock()
+            .expect("totals")
+            .get(owner)
+            .filter(|(at, _)| *at == top.change)
+            .map(|(_, totals)| totals.clone());
         let counted = match cached {
             Some(totals) => totals,
             None => {
@@ -622,7 +651,13 @@ fn totals(assets: &Assets, libraries: &[String]) -> HubTotals {
 /// Each machine's line over the last `hours`: how far behind it stood in
 /// what `account` reads, a point a step. Lines of many machines at once are
 /// drawn coarser (`coarse`): a row's short line needs no more.
-fn points(assets: &Assets, machines: &[MachineName], hours: u32, now: i64, coarse: bool) -> io::Result<(i64, Vec<LagPoint>)> {
+fn points(
+    assets: &Assets,
+    machines: &[MachineName],
+    hours: u32,
+    now: i64,
+    coarse: bool,
+) -> io::Result<(i64, Vec<LagPoint>)> {
     let since = now - i64::from(hours) * HOUR;
     let step = match (hours <= 24, coarse) {
         (true, false) => DAY_STEP,
@@ -652,9 +687,12 @@ fn points(assets: &Assets, machines: &[MachineName], hours: u32, now: i64, coars
             point.0 = point.0.max(behind.max(0) as u64);
             point.1 |= online != 0;
         }
-        points.extend(
-            line.into_iter().map(|(at, (behind, online))| LagPoint { machine: machine.clone(), at, behind, online }),
-        );
+        points.extend(line.into_iter().map(|(at, (behind, online))| LagPoint {
+            machine: machine.clone(),
+            at,
+            behind,
+            online,
+        }));
     }
     Ok((step, points))
 }
@@ -690,7 +728,14 @@ pub(crate) fn status(
     }
     let opened = directory.all.account(account).map_or(0, |found| found.opened.as_millisecond());
     let key = (account.clone(), opened, hours, only.cloned());
-    let cached = assets.standing.statuses.lock().expect("statuses").get(&key).filter(|(at, _)| at.elapsed() < STATUS_STANDS).map(|(_, status)| status.clone());
+    let cached = assets
+        .standing
+        .statuses
+        .lock()
+        .expect("statuses")
+        .get(&key)
+        .filter(|(at, _)| at.elapsed() < STATUS_STANDS)
+        .map(|(_, status)| status.clone());
     if let Some(status) = cached {
         // Logged out meanwhile, not even a page kept is given (AP12).
         if !hub.store().indexed().logged_in(from, account) {
@@ -710,9 +755,8 @@ pub(crate) fn status(
         let report = kept.get(&member.name);
         let reckoned = report.map(|kept| reckon(assets, &libraries, kept));
         let behind = reckoned.as_ref().map_or(0, |reckoned| reckoned.behind);
-        let (left, about) = report.map_or((Vec::new(), false), |kept| {
-            left(assets, &directory, &member.name, account, kept, &mut left_of)
-        });
+        let (left, about) = report
+            .map_or((Vec::new(), false), |kept| left(assets, &directory, &member.name, account, kept, &mut left_of));
         let since = online.get(&member.name).copied().or_else(|| report.map(|kept| kept.seen.unwrap_or(kept.at)));
         let facts = report.map(|kept| &kept.report);
         devices.push(DeviceSync {

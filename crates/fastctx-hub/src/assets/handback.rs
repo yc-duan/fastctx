@@ -14,10 +14,8 @@
 
 use super::scopes::{self, Scope};
 use super::{Assets, Owner};
-use fastctx_content::v2::{
-    Library, RawFrame, Received, Standing, Taking, Verifier, hub_orders, read_handed_back,
-};
 use fastctx_content::ObjectRef;
+use fastctx_content::v2::{Library, RawFrame, Received, Standing, Taking, Verifier, hub_orders, read_handed_back};
 use fastctx_net::directory_index::Indexed;
 use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_storage::rusqlite::{OptionalExtension, params};
@@ -99,7 +97,9 @@ impl Verifier for InRing<'_> {
             return false;
         }
         let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
-        PublicKey::from_bytes(header.key).verify(Domain::SyncSourceBatch, header_bytes, &Signature::from_bytes(signature)).is_ok()
+        PublicKey::from_bytes(header.key)
+            .verify(Domain::SyncSourceBatch, header_bytes, &Signature::from_bytes(signature))
+            .is_ok()
     }
 }
 
@@ -110,7 +110,9 @@ pub(super) fn library_as_is(assets: &Assets, scope: &Scope) -> Result<Library, S
     let library = assets.owners.library(&scope.owner, |_| Ok(None)).map_err(|error| error.to_string())??;
     let key = &scope.descriptor.scope;
     if library.holding(key).map_err(|error| error.to_string())?.is_none() {
-        library.install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64).map_err(|error| error.to_string())?;
+        library
+            .install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64)
+            .map_err(|error| error.to_string())?;
     }
     Ok(library)
 }
@@ -118,7 +120,13 @@ pub(super) fn library_as_is(assets: &Assets, scope: &Scope) -> Result<Library, S
 /// The scope `key`, if `machine` reads it and holds `stream` of it, by the
 /// directory as it stands; the gates of an open hub, without what they
 /// note.
-fn gate(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str, stream: &str) -> Result<Option<Scope>, String> {
+fn gate(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &str,
+    stream: &str,
+) -> Result<Option<Scope>, String> {
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(None) };
     if !scopes::readable(directory, machine, &scope) || !scopes::holds(directory, machine, &scope, stream) {
         return Err(format!("this machine does not hold {stream} of the scope {key}"));
@@ -159,7 +167,9 @@ pub(super) fn cursors(
             None => library.insert(library_as_is(assets, &scope)?),
         };
         let head = chain_value(&cursor.head, "a cursor's chain value")?;
-        let said = library.check_cursor(device.as_bytes(), key, &cursor.stream, (holding, cursor.sequence, head)).map_err(|error| error.to_string())?;
+        let said = library
+            .check_cursor(device.as_bytes(), key, &cursor.stream, (holding, cursor.sequence, head))
+            .map_err(|error| error.to_string())?;
         standing.push(match said {
             Standing::Agrees => wire::Standing { stream: cursor.stream, agrees: true, ends: Vec::new() },
             Standing::Differs(ends) => wire::Standing {
@@ -226,7 +236,8 @@ pub(super) fn hand_back(
     if frame.apart > 0 {
         return Err("a frame handed back carries its body with it".into());
     }
-    let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
+    let raw =
+        RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
     let Ok(read) = read_handed_back(&key, &raw) else { return refused(assets, recovery, &key, &stream, UNSIGNED) };
     let header = read.header;
     if header.stream != stream {
@@ -272,7 +283,9 @@ pub(super) fn hand_back(
                 .optional()?
                 .is_some();
             let used: (i64, i64) = c
-                .prepare_cached("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM recovery_frames WHERE recovery = ?1 AND owner = ?2")?
+                .prepare_cached(
+                    "SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM recovery_frames WHERE recovery = ?1 AND owner = ?2",
+                )?
                 .query_row(params![recovery as i64, owner], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok((kept, follows, used))
         })
@@ -284,7 +297,10 @@ pub(super) fn hand_back(
     if !on_tail && !follows {
         return refused(assets, recovery, &key, &stream, FORKED);
     }
-    let bytes: usize = raw.header.len() + raw.signature.len() + raw.body.len() + objects.iter().map(|(_, bytes)| bytes.0.len()).sum::<usize>();
+    let bytes: usize = raw.header.len()
+        + raw.signature.len()
+        + raw.body.len()
+        + objects.iter().map(|(_, bytes)| bytes.0.len()).sum::<usize>();
     if used.0 >= OWNER_FRAMES_MOST || used.1 + bytes as i64 > OWNER_BYTES_MOST {
         return refused(assets, recovery, &key, &stream, FULL);
     }
@@ -409,7 +425,8 @@ fn longest(frames: &[Noted], epoch: u64, next: u64, head: [u8; 32]) -> Vec<Noted
 /// frames not chosen that follow none of the others not chosen.
 fn branches(frames: &[Noted], chosen: &[Noted]) -> i64 {
     let chosen: std::collections::HashSet<[u8; 32]> = chosen.iter().map(|frame| frame.chain).collect();
-    let left: std::collections::HashSet<[u8; 32]> = frames.iter().filter(|frame| !chosen.contains(&frame.chain)).map(|frame| frame.chain).collect();
+    let left: std::collections::HashSet<[u8; 32]> =
+        frames.iter().filter(|frame| !chosen.contains(&frame.chain)).map(|frame| frame.chain).collect();
     frames.iter().filter(|frame| left.contains(&frame.chain) && !left.contains(&frame.previous)).count() as i64
 }
 
@@ -466,7 +483,8 @@ pub(super) fn take_back(
             }
             None => {
                 let chain = longest(frames, tail.epoch, tail.next, tail.head);
-                let (end, head) = chain.last().map_or((tail.next, tail.head), |frame| (frame.first + frame.count, frame.chain));
+                let (end, head) =
+                    chain.last().map_or((tail.next, tail.head), |frame| (frame.first + frame.count, frame.chain));
                 let branches = branches(frames, &chain);
                 let (owner_key, k, s, tail_head) = (owner_key.clone(), key.clone(), stream.clone(), tail.head);
                 let tail_next = tail.next;
@@ -548,8 +566,10 @@ fn apply_chain(
             )?
             .execute(params![recovery as i64, k, s, end, &head[..], count])?;
         }
-        c.prepare_cached("UPDATE recovery_results SET stopped = ?4 WHERE recovery = ?1 AND scope = ?2 AND stream = ?3")?
-            .execute(params![recovery as i64, k, s, why])?;
+        c.prepare_cached(
+            "UPDATE recovery_results SET stopped = ?4 WHERE recovery = ?1 AND scope = ?2 AND stream = ?3",
+        )?
+        .execute(params![recovery as i64, k, s, why])?;
         Ok(())
     })?;
     Ok((applied, stopped))

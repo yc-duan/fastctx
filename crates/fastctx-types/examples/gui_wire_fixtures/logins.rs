@@ -67,7 +67,11 @@ pub fn fixtures() -> Fixtures {
             max_context_window: None,
         }],
         model_edits: None,
-        idle_compaction: Some(fastctx_types::logins::idle::IdleCompaction { on: true, after_minutes: 50, min_tokens: 100_000 }),
+        idle_compaction: Some(fastctx_types::logins::idle::IdleCompaction {
+            on: true,
+            after_minutes: 50,
+            min_tokens: 100_000,
+        }),
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -463,7 +467,11 @@ pub fn fixtures() -> Fixtures {
                 machine: machine.clone().into(),
                 agent: codex.clone(),
                 dir: "C:/Users/me/.codex".into(),
-                setting: fastctx_types::logins::idle::IdleCompaction { on: true, after_minutes: 45, min_tokens: 200_000 },
+                setting: fastctx_types::logins::idle::IdleCompaction {
+                    on: true,
+                    after_minutes: 45,
+                    min_tokens: 200_000,
+                },
             },
         ],
         replies: vec![
