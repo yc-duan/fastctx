@@ -1317,6 +1317,20 @@ async fn catch_up(
             if unpulled.contains(&changed.scope) {
                 return Ok(());
             }
+            // Taken only once read, a stream not asked for and not taken
+            // before is passed over (`lazy`): no other look of it is owed.
+            if super::lazy::lazy(&changed.scope, &changed.stream) && !assets.lazy.asked(&changed.scope, &changed.stream)
+            {
+                let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
+                let at = blocking(library, move |library| library.streams(&scope))
+                    .await?
+                    .into_iter()
+                    .find(|(name, _)| *name == stream)
+                    .map_or(0, |(_, next)| next);
+                if at == 0 {
+                    return Ok(());
+                }
+            }
             // Handed over and not written in yet, the stream moved no head:
             // its new epoch is taken all the same, this machine's own
             // stream handed away included (I09).
@@ -2447,11 +2461,17 @@ async fn pull(
         }
     }
     local.extend(cut_back);
+    // Taken only once read: a stream not asked for and not taken before is
+    // passed over (`lazy`).
+    let wanted = assets.lazy.of(scope);
+    let followed = |stream: &str, local: &std::collections::BTreeMap<String, u64>| {
+        !super::lazy::lazy(scope, stream) || local.get(stream).is_some_and(|at| *at > 0) || wanted.contains(stream)
+    };
     let mut failed: Option<String> = gave_back;
     // A stream handed on since — this machine's own among them — though no
     // frame of it moved: its descriptors are taken, as the change numbers
     // would have (I09); a look whole begins where they leave off (LL05).
-    for at in &streams {
+    for at in streams.iter().filter(|at| followed(&at.stream, &local)) {
         let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
         let known = blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?;
         if at.epoch > known.unwrap_or(0)
@@ -2465,7 +2485,12 @@ async fn pull(
     // Where each machine that orders streams of the scope says they stand
     // (`direct`), asked once a pull; none for one that did not answer.
     let mut kept: Kept = Kept::new();
+    // The streams asked for that did not come whole this pass.
+    let mut short = std::collections::BTreeSet::new();
     for wire::StreamAt { stream, next, .. } in streams {
+        if !followed(&stream, &local) {
+            continue;
+        }
         let at = local.get(&stream).copied().unwrap_or(0);
         let pulled = if super::direct::stays(link, scope, &stream) {
             // Its own, a stream kept here comes from nowhere.
@@ -2484,6 +2509,7 @@ async fn pull(
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
+            short.insert(stream.clone());
             // Paused part way, or its machine away just now: said as it is,
             // so it is not taken whole.
             if why.starts_with(PAUSED) || why.starts_with(UNREACHED_NOW) {
@@ -2499,6 +2525,14 @@ async fn pull(
     let scope_text = scope.to_string();
     let now: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
+    // What was asked for and is here whole now, or that the hub has none of,
+    // is read from here from now on (`lazy::held`).
+    for stream in wanted.iter().filter(|stream| !short.contains(*stream)) {
+        let whole = theirs.get(stream).is_none_or(|next| now.get(stream).copied().unwrap_or(0) >= *next);
+        if whole {
+            assets.lazy.taken(scope, stream, holding);
+        }
+    }
     let caught_up: Vec<String> = theirs
         .iter()
         .filter(|(stream, next)| now.get(*stream).copied().unwrap_or(0) >= **next)

@@ -13,6 +13,7 @@ mod apart;
 pub(crate) mod copies;
 pub(crate) mod direct;
 mod hand_back;
+pub(crate) mod lazy;
 mod lines;
 pub(crate) mod logs;
 pub(crate) mod membership;
@@ -176,6 +177,8 @@ pub(crate) struct Assets {
     /// Whether each account's copies of conversations living elsewhere are
     /// taken in here (`copies`).
     pub(crate) copies: copies::Copies,
+    /// The streams taken only once read that something read here (`lazy`).
+    pub(crate) lazy: lazy::Wanted,
     /// What is kept of taking conversations' streams from the machines that
     /// order them, and of giving this machine's own (`direct`).
     pub(crate) direct: direct::Direct,
@@ -324,6 +327,7 @@ impl Assets {
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
             rounds_later: Mutex::new(std::collections::BTreeSet::new()),
             copies: copies::Copies::open(&dir),
+            lazy: lazy::Wanted::new(&dir),
             direct: direct::Direct::default(),
             vouched: Default::default(),
         })

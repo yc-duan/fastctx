@@ -61,6 +61,10 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         // (§29 2.5, `net-shared-machine-visibility` 2026-11-10). Only a
         // member holds them here (`records_here`).
         for (_, stream) in streams.iter().filter(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str())) {
+            // Taken only once read: asked for now where it is not here.
+            if !crate::assets::lazy::held(node, &scope, stream) {
+                continue;
+            }
             let mut after = None;
             loop {
                 let page = library.page(&scope.key, stream, after.clone(), 500).ok()?;

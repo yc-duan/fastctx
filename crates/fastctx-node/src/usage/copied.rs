@@ -107,6 +107,8 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
         .ok()?
         .into_iter()
         .filter(|scope| crate::timeline::copy::records_here(node, scope) && scope.hub.as_deref() == Some(hub.as_str()))
+        // Taken only once read: asked for now where it is not here.
+        .filter(|scope| crate::assets::lazy::held(node, scope, &stream))
         .collect();
     // Reached, it is read from here only when every account asking has its
     // records pulled whole here: none of their lines is missing.
