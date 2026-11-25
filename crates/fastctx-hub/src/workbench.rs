@@ -29,6 +29,10 @@ pub(crate) fn of(hub: &Hub, name: &MachineName) -> Option<bool> {
 /// from a release that does not tell it.
 pub(crate) fn logins_heard(hub: &Hub, name: &MachineName, generation: u64, told: Option<u64>) {
     let Some(told) = told else { return };
+    // A session replaced since does not tell for the one after it.
+    if hub.sessions().get(name).is_none_or(|session| session.generation != generation) {
+        return;
+    }
     let before = hub.logins.lock().expect("never poisoned").insert(name.clone(), (generation, told));
     if before != Some((generation, told)) {
         hub.present(name);

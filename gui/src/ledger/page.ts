@@ -21,7 +21,7 @@ import { glyph } from "../conversation/glyphs";
 import { sameHome } from "../app/reach";
 import { loginsOf, type AccountChange, type Login as AccountLogin } from "../world/accounts";
 import { IDLE_DEFAULT, type ChangePreview, type FolderChange, type IdleCompaction, type LoginChange, type MachineLogins, type ModelChange, type WorldLogins } from "../world/logins";
-import { followState, LOGINS, type Following } from "../world/topics";
+import { followStates, LOGINS, LOGINS_ELSEWHERE, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
 import type { RetentionAsking } from "../world/retention";
@@ -183,7 +183,7 @@ export class AgentsPage implements Page {
       options.store.world.get();
       this.rebuild();
     });
-    this.following = followState(LOGINS, () => this.read(), () => (this.busy() ? BUSY_MS : IDLE_MS), null);
+    this.following = followStates([LOGINS, LOGINS_ELSEWHERE], () => this.read(), () => (this.busy() ? BUSY_MS : IDLE_MS), null);
     void this.read();
   }
 

@@ -83,7 +83,12 @@ pub async fn stop(
             Ok(Reply::JobStopped { machine: machine.name, record })
         }
         0 if failed.is_empty() => Err(Failure::new(format!("no machine that could be asked has a job {job}"))),
-        0 => Err(Failure::new(format!("no job {job} was stopped: {}", failed.join("; ")))),
+        // A machine that did not answer in time may have stopped it all the
+        // same: a stop it took is not given up (codex-580b4d87).
+        0 => Err(Failure::new(format!(
+            "no machine that answered had a job {job}; whether it was stopped is not known on: {}",
+            failed.join("; ")
+        ))),
         _ => Err(Failure::new(format!(
             "jobs named {job} were stopped on {}",
             stopped.iter().map(|(machine, _)| machine.to_string()).collect::<Vec<_>>().join(", ")

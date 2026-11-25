@@ -375,6 +375,12 @@ export class Conversation {
     for (const event of span.events) {
       const item = itemOf(event);
       if (item) inPart.add(item);
+      // An item the part holds ended stands for what came of it as it
+      // happened, under the name it had then too (`draft`).
+      if (event.event === "finished") {
+        this.recorded(event);
+        if (event.item.draft) inPart.add(`${event.turn}/${event.item.draft}`);
+      }
       if (event.event === "turn_ended") this.turnRecorded(event.turn);
     }
     this.aheadEvents = this.aheadEvents.filter((event) => {
@@ -593,11 +599,18 @@ export class Conversation {
     if (!item || this.recordedItems.has(item) || this.endedTurns.has(turnOf(event) ?? "")) return;
     this.live.late(event);
     // Kept as one growth for each item's part, so a long answer is shown
-    // again whole however many pieces it came in.
-    const last = this.aheadEvents.length ? this.aheadEvents[this.aheadEvents.length - 1] : undefined;
-    if (event.event === "grew" && last?.event === "grew" && last.turn === event.turn && last.item === event.item && last.part === event.part) {
-      this.aheadEvents[this.aheadEvents.length - 1] = { ...last, text: last.text + event.text };
-      return;
+    // again whole however many pieces it came in, others between them or
+    // not; kept as of its latest piece.
+    if (event.event === "grew") {
+      for (let at = this.aheadEvents.length - 1; at >= 0; at -= 1) {
+        const held = this.aheadEvents[at]!;
+        if (itemOf(held) !== item) continue;
+        if (held.event === "grew" && held.part === event.part) {
+          this.aheadEvents[at] = { ...held, at: event.at, text: held.text + event.text };
+          return;
+        }
+        break;
+      }
     }
     this.aheadEvents.push(event);
     if (this.aheadEvents.length > AHEAD_MOST) this.aheadEvents.splice(0, this.aheadEvents.length - AHEAD_MOST);

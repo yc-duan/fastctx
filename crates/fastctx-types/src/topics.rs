@@ -15,6 +15,12 @@ pub const TOPIC_BYTES: usize = 128;
 /// The logins of agents on the machine and what is known of each
 /// (`Call::AgentLogins`, `Call::Agents`).
 pub const LOGINS: &str = "logins";
+/// What the other machines last said of their agents and logins, as this
+/// node keeps it for every machine's listing (`Call::AgentLogins`,
+/// `Call::Agents`, `at_once`). Apart from `LOGINS`, which another machine's
+/// page follows for this machine's own: what this one heard of others is
+/// not news of its own logins.
+pub const LOGINS_ELSEWHERE: &str = "logins-elsewhere";
 
 /// Local sentinel registrations, summaries and wake records (`Call::Sentinel`).
 pub const SENTINELS: &str = "sentinels";
@@ -27,7 +33,7 @@ pub const MAP_PREFIX: &str = "map/";
 
 /// Names understood by this version. A trailing slash names a family whose
 /// suffix identifies the state, rather than one fixed piece of state.
-pub const NAMES: &[&str] = &[LOGINS, SENTINELS, UPDATE, BOOK, MAP_PREFIX];
+pub const NAMES: &[&str] = &[LOGINS, LOGINS_ELSEWHERE, SENTINELS, UPDATE, BOOK, MAP_PREFIX];
 
 /// Whether this version knows the named state. Known topics start at revision
 /// 1; revision 0 means only that the node does not know this name.

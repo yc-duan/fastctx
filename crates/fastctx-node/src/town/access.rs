@@ -79,6 +79,8 @@ pub(crate) async fn ready(node: &Arc<Node>, acting: &Acting, town: &TownName) ->
     if heard
         && check(node, acting, town).is_ok()
         && crate::ledger::query::available(node, Some(town)).await.is_ok_and(|records| records.contains_key(town))
+        // Taken back while the record was looked for, it is not used.
+        && check(node, acting, town).is_ok()
     {
         return Ok(());
     }

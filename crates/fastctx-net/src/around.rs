@@ -31,6 +31,7 @@ pub enum Heard {
 /// how the asker writes it: with its hub where another hub the asker is on
 /// has a machine of that name, so the answer can be told apart and sent
 /// back through the hub it came by (`world-network.md`, 机器的名字).
+#[derive(Clone)]
 pub struct Reachable {
     pub link: Arc<Link>,
     pub name: MachineName,

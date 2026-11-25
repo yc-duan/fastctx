@@ -10,14 +10,14 @@
 //! with what this node last heard from each machine while that number
 //! stands. A machine whose number moved, or one never heard from, is asked;
 //! the page waits a moment for it (`SOON`), and is told to read again once
-//! what it answers changed what was shown (`topics::LOGINS`). A machine its
-//! hub says is away is told as away, unasked. Nothing is asked while no one
-//! reads.
+//! what it answers changed what was shown (`topics::LOGINS_ELSEWHERE`). A
+//! machine its hub says is away is told as away, unasked. Nothing is asked
+//! while no one reads.
 //!
 //! What is kept is kept for an account as it was opened, and goes whole
-//! when its hub's directory changes, not only who is online: what an
-//! account may see of a machine is the directory's to say, and none of it
-//! is told from before it changed (codex-580b4d87).
+//! when what of its hub's directory decides what an account may see of a
+//! machine changes: an answer asked for before that, still on its way or
+//! held by a reader, is not told after it (codex-580b4d87).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,16 +45,15 @@ const FAILED: Duration = Duration::from_secs(10);
 /// How long a reader that takes what is known at once waits for the
 /// machines being asked.
 const SOON: Duration = Duration::from_millis(1500);
-/// How long a reader that does not take what is known at once waits for
-/// the machines being asked: one not answered by then is told as not
-/// answering, though its asking goes on (`ASKED_WITHIN`) and keeps what it
-/// brings.
-const WAITED: Duration = Duration::from_secs(15);
-/// How long each asking waits for its machine.
-const ASKED_WITHIN: Duration = Duration::from_secs(30);
+/// How long each asking waits for its machine, and any reader that does not
+/// take what is known at once waits for it: one that answers is never told
+/// as not answering to a reader that waited.
+const WAITED: Duration = Duration::from_secs(30);
 /// The most machines asked at once, as other fan-outs ask
 /// (`fastctx_net::around`).
 const ASKING_AT_ONCE: usize = 32;
+/// The topic readers of every machine's listing follow.
+const TOPIC: &str = fastctx_types::topics::LOGINS_ELSEWHERE;
 
 /// What is asked: each kind has its own answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,17 +95,24 @@ struct Kept {
     seen: (bool, Option<u64>),
 }
 
+/// What is kept, under one hold: the answers, and how many times something
+/// done here changed each machine's logins.
+#[derive(Default)]
+struct Held {
+    kept: HashMap<Target, Kept>,
+    moves: HashMap<Place, u64>,
+}
+
 /// The answers kept, the askings under way, and this machine's own number.
 pub(crate) struct Answers {
-    kept: Mutex<HashMap<Target, Kept>>,
+    held: Mutex<Held>,
     asking: Mutex<HashMap<Target, Asking>>,
-    /// How many times something done here changed each machine's logins.
-    moves: Mutex<HashMap<Place, u64>>,
     /// The machines each hub said were online when last looked at.
     online: Mutex<HashMap<HubId, HashSet<String>>>,
     /// What of each hub's directory decides what an account may see of a
-    /// machine, as last looked at (`rights`).
-    rights: Mutex<HashMap<HubId, u64>>,
+    /// machine, as last looked at (`rights`), and how many times it changed:
+    /// an answer asked for under an earlier count is not told.
+    rights: Mutex<HashMap<HubId, (u64, u64)>>,
     turns: Arc<tokio::sync::Semaphore>,
     here: AtomicU64,
 }
@@ -119,9 +125,8 @@ impl Default for Answers {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| u64::try_from(since.as_micros()).unwrap_or(u64::MAX));
         Self {
-            kept: Mutex::default(),
+            held: Mutex::default(),
             asking: Mutex::default(),
-            moves: Mutex::default(),
             online: Mutex::default(),
             rights: Mutex::default(),
             turns: Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE)),
@@ -136,7 +141,7 @@ pub(crate) enum Reading {
     /// What stands at once; the others asked and waited on for `SOON`, one
     /// not answered by then told as last heard, or as being asked: the
     /// reader reads again once what it answers changed what was shown
-    /// (`topics::LOGINS`).
+    /// (`topics::LOGINS_ELSEWHERE`).
     AtOnce,
     /// What stands at once; the others asked and waited on for `WAITED`.
     Waited,
@@ -154,6 +159,12 @@ impl Reading {
             (None, false) => Self::Waited,
         }
     }
+}
+
+/// How many times what decides what an account may see of `hub`'s machines
+/// changed, as this node saw.
+fn epoch(node: &Node, hub: &HubId) -> u64 {
+    node.elsewhere.rights.lock().expect("never poisoned").get(hub).map_or(0, |(_, epoch)| *epoch)
 }
 
 /// What each of `reachable` says of `kind`, read as `reading` says. One not
@@ -193,30 +204,36 @@ pub(crate) async fn ask(
             Some(seen) => seen,
         };
         let key = (kind, asked.source.hub.clone(), asked.source.key.clone(), asked.account.clone(), opened);
+        let since = epoch(node, &asked.source.hub);
         let kept = node
             .elsewhere
-            .kept
+            .held
             .lock()
             .expect("never poisoned")
+            .kept
             .get(&key)
             .map(|kept| (kept.heard.clone(), reading != Reading::Fresh && standing(kept, seen.logins_number, now)));
         match kept {
             Some((answer, true)) => heard.push((asked, answer)),
             kept => {
                 let underway = asking(node, kind, key, target, seen.logins_number);
-                waiting.push((asked, kept.map(|(answer, _)| answer), underway));
+                waiting.push((asked, kept.map(|(answer, _)| answer), underway, since));
             }
         }
     }
     let until = now + if reading == Reading::AtOnce { SOON } else { WAITED };
     let mut still = Vec::new();
-    for (asked, kept, underway) in waiting {
-        match (tokio::time::timeout_at(until, answered(underway)).await, kept) {
+    for (asked, kept, underway, since) in waiting {
+        let answer = tokio::time::timeout_at(until, answered(underway)).await;
+        // What decides what may be seen changed meanwhile: nothing asked for
+        // before it is told (`directory_changed`).
+        let kept = kept.filter(|_| epoch(node, &asked.source.hub) == since);
+        match (answer, kept) {
             (Ok(Some(answer)), _) => heard.push((asked, answer)),
             // Read at once, what was last heard stands meanwhile; read
             // otherwise, what was not answered now is not told as if it was.
             (_, Some(kept)) if reading == Reading::AtOnce => heard.push((asked, kept)),
-            (_, None) if reading == Reading::AtOnce => still.push(asked),
+            _ if reading == Reading::AtOnce => still.push(asked),
             _ => heard.push((asked, Heard::NoAnswer(format!("it did not answer within {} seconds", WAITED.as_secs())))),
         }
     }
@@ -270,7 +287,9 @@ fn standing(kept: &Kept, number: Option<u64>, now: Instant) -> bool {
 
 /// The asking of `target` under way, or begun now, in its turn among the
 /// node's askings: what it answers is kept, and readers are told to read
-/// again once it changed what they were shown.
+/// again once it changed what they were shown. Something done here to the
+/// machine's logins while it was asked has it asked once more; what decides
+/// what may be seen changing meanwhile leaves its answer untold.
 fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: Option<u64>) -> Asking {
     let mut asking = node.elsewhere.asking.lock().expect("never poisoned");
     if let Some(underway) = asking.get(&key) {
@@ -279,18 +298,37 @@ fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: 
     let (answer, underway) = tokio::sync::watch::channel(None);
     asking.insert(key.clone(), underway.clone());
     let place = (key.1.clone(), key.2.clone());
-    let moves = node.elsewhere.moves.lock().expect("never poisoned").get(&place).copied().unwrap_or(0);
+    let since = epoch(node, &key.1);
     let (weak, turns) = (Arc::downgrade(node), node.elsewhere.turns.clone());
     fastctx_platform::task::spawn(async move {
-        let heard = match tokio::time::timeout(ASKED_WITHIN, turns.acquire_owned()).await {
-            Ok(Ok(_turn)) => fastctx_net::around::ask_known(vec![target], |_| kind.call(), ASKED_WITHIN)
-                .await
-                .pop()
-                .map_or_else(|| Heard::NoAnswer("it was not asked".to_string()), |(_, heard)| heard),
-            _ => Heard::NoAnswer("it was not asked in time: too many were asked before it".to_string()),
+        let mut tries = 0;
+        let (heard, changed) = loop {
+            tries += 1;
+            let moves = weak.upgrade().map_or(0, |node| {
+                node.elsewhere.held.lock().expect("never poisoned").moves.get(&place).copied().unwrap_or(0)
+            });
+            let heard = match tokio::time::timeout(WAITED, turns.clone().acquire_owned()).await {
+                Ok(Ok(_turn)) => fastctx_net::around::ask_known(vec![target.clone()], |_| kind.call(), WAITED)
+                    .await
+                    .pop()
+                    .map_or_else(|| Heard::NoAnswer("it was not asked".to_string()), |(_, heard)| heard),
+                _ => Heard::NoAnswer("it was not asked in time: too many were asked before it".to_string()),
+            };
+            let Some(node) = weak.upgrade() else { return };
+            if epoch(&node, &key.1) != since {
+                break (
+                    Heard::NoAnswer("what it may show changed while it was asked; it is asked anew".to_string()),
+                    false,
+                );
+            }
+            match keep(&node, &key, &heard, number, moves) {
+                Some(changed) => break (heard, changed),
+                // Changed here while it was asked: asked once more.
+                None if tries < 2 => continue,
+                None => break (heard, true),
+            }
         };
         let Some(node) = weak.upgrade() else { return };
-        let changed = keep(&node, &key, &heard, number, moves);
         node.elsewhere.asking.lock().expect("never poisoned").remove(&key);
         let again = match &heard {
             Heard::NoAnswer(_) => Some(FAILED),
@@ -299,7 +337,7 @@ fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: 
         };
         answer.send_replace(Some(heard));
         if changed {
-            node.topics.changed(fastctx_types::topics::LOGINS);
+            node.topics.changed(TOPIC);
         }
         // One that did not answer, or tells no number, is read again once
         // what is kept of it stands no longer, by whoever still reads.
@@ -307,7 +345,7 @@ fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: 
             drop(node);
             tokio::time::sleep(again + Duration::from_millis(100)).await;
             if let Some(node) = weak.upgrade() {
-                node.topics.changed(fastctx_types::topics::LOGINS);
+                node.topics.changed(TOPIC);
             }
         }
     });
@@ -326,20 +364,23 @@ async fn answered(mut underway: Asking) -> Option<Heard> {
     }
 }
 
-/// Keeps what a machine said; one away is told as away by its hub, not
-/// kept. Something done here to its logins since it was asked (`moves` then)
-/// leaves it to be asked again. Whether it differs from what was kept.
-fn keep(node: &Node, key: &Target, answer: &Heard, number: Option<u64>, moves: u64) -> bool {
+/// Keeps what a machine said, unless something done here to its logins
+/// since it was asked (`moves` then) leaves it to be asked again (`None`);
+/// one away is told as away by its hub, not kept. Whether it differs from
+/// what was kept.
+fn keep(node: &Node, key: &Target, answer: &Heard, number: Option<u64>, moves: u64) -> Option<bool> {
     let place = (key.1.clone(), key.2.clone());
-    let moved = node.elsewhere.moves.lock().expect("never poisoned").get(&place).copied().unwrap_or(0) != moves;
-    let mut kept = node.elsewhere.kept.lock().expect("never poisoned");
+    let mut held = node.elsewhere.held.lock().expect("never poisoned");
+    if held.moves.get(&place).copied().unwrap_or(0) != moves {
+        return None;
+    }
     match answer {
-        Heard::Offline(_) => kept.remove(key).is_some(),
+        Heard::Offline(_) => Some(held.kept.remove(key).is_some()),
         answer => {
-            let changed = kept.get(key).is_none_or(|before| told(&before.heard) != told(answer));
-            let kept_now = Kept { heard: answer.clone(), at: Instant::now(), number, moved, seen: (true, number) };
-            kept.insert(key.clone(), kept_now);
-            changed
+            let changed = held.kept.get(key).is_none_or(|before| told(&before.heard) != told(answer));
+            let kept = Kept { heard: answer.clone(), at: Instant::now(), number, moved: false, seen: (true, number) };
+            held.kept.insert(key.clone(), kept);
+            Some(changed)
         }
     }
 }
@@ -355,13 +396,23 @@ fn told(heard: &Heard) -> Vec<u8> {
 
 /// `link`'s directory changed, not only who is online: when what decides
 /// what each account may see of each machine changed with it, nothing kept
-/// from its hub is told again before it is asked anew.
+/// from its hub, nor asked for before, is told again; readers read anew.
 pub(crate) fn directory_changed(node: &Node, link: &Link) {
     let hub = link.membership().id;
     let now = rights(link);
-    let before = node.elsewhere.rights.lock().expect("never poisoned").insert(hub.clone(), now);
-    if before.is_some_and(|before| before != now) {
-        node.elsewhere.kept.lock().expect("never poisoned").retain(|(_, at, _, _, _), _| *at != hub);
+    let changed = {
+        let mut rights = node.elsewhere.rights.lock().expect("never poisoned");
+        let entry = rights.entry(hub.clone()).or_insert((now, 0));
+        let changed = entry.0 != now;
+        if changed {
+            *entry = (now, entry.1 + 1);
+        }
+        changed
+    };
+    if changed {
+        node.elsewhere.held.lock().expect("never poisoned").kept.retain(|(_, at, _, _, _), _| *at != hub);
+        node.elsewhere.asking.lock().expect("never poisoned").retain(|(_, at, _, _, _), _| *at != hub);
+        node.topics.changed(TOPIC);
     }
     view_changed(node, link);
 }
@@ -400,9 +451,9 @@ pub(crate) fn view_changed(node: &Node, link: &Link) {
         .expect("never poisoned")
         .insert(hub.clone(), online.clone())
         .is_some_and(|before| before != online);
-    let mut kept = node.elsewhere.kept.lock().expect("never poisoned");
-    kept.retain(|(_, at, key, _, _), _| *at != hub || standing.contains_key(key));
-    for ((_, at, key, _, _), kept) in kept.iter_mut() {
+    let mut held = node.elsewhere.held.lock().expect("never poisoned");
+    held.kept.retain(|(_, at, key, _, _), _| *at != hub || standing.contains_key(key));
+    for ((_, at, key, _, _), kept) in held.kept.iter_mut() {
         if *at != hub {
             continue;
         }
@@ -412,9 +463,9 @@ pub(crate) fn view_changed(node: &Node, link: &Link) {
             moved = true;
         }
     }
-    drop(kept);
+    drop(held);
     if moved {
-        node.topics.changed(fastctx_types::topics::LOGINS);
+        node.topics.changed(TOPIC);
     }
 }
 
@@ -430,13 +481,11 @@ pub(crate) fn moved(node: &Node, machine: &Written) {
             Some((link.membership().id, key))
         })
         .collect();
-    {
-        let mut moves = node.elsewhere.moves.lock().expect("never poisoned");
-        for place in &places {
-            *moves.entry(place.clone()).or_default() += 1;
-        }
+    let mut held = node.elsewhere.held.lock().expect("never poisoned");
+    for place in &places {
+        *held.moves.entry(place.clone()).or_default() += 1;
     }
-    for ((_, at, key, _, _), kept) in node.elsewhere.kept.lock().expect("never poisoned").iter_mut() {
+    for ((_, at, key, _, _), kept) in held.kept.iter_mut() {
         if places.iter().any(|(hub, of)| hub == at && of == key) {
             kept.moved = true;
         }

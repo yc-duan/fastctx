@@ -43,7 +43,7 @@ import type { Words } from "../words";
 import type { HubAccount, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import { followState, LOGINS, type Following } from "../world/topics";
+import { followStates, LOGINS, LOGINS_ELSEWHERE, type Following } from "../world/topics";
 import type { Attachment, FilePlace, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
@@ -456,7 +456,7 @@ export class NewTalk {
     // answers again: the node answers with what stands, asks only the
     // machines whose logins moved, and the topic moves once they answered.
     this.following?.();
-    this.following = followState(LOGINS, () => this.askAll(), () => false);
+    this.following = followStates([LOGINS, LOGINS_ELSEWHERE], () => this.askAll(), () => false);
     this.stopDrops?.();
     this.stopDrops = this.listen();
     this.draw();
