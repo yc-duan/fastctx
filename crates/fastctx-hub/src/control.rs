@@ -1208,6 +1208,29 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        // An account's model collaboration written under a name: once,
+        // however often it is asked again (`manage::submission::collab`).
+        Up::Ask {
+            id,
+            question: Question::Manage { account, change: Change::Collab { collab } },
+            submission: Some(submission),
+        } => {
+            let named = match crate::submitted::named(name, &submission) {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::manage::submission::collab(&hub, origin, account, collab, Some(&named)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::Manage { account, change }, submission: Some(submission) }
             if crate::manage::submission::handles(&change) =>
         {

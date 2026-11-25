@@ -1510,7 +1510,10 @@ fn submits(question: &Question) -> bool {
                 | crate::wire::Change::DeleteProject { .. }
                 | crate::wire::Change::RenameGroup { .. }
                 | crate::wire::Change::SetRole { .. }
-                | crate::wire::Change::Direct { .. },
+                | crate::wire::Change::Direct { .. }
+                // Compared with the version read, written once under its name
+                // (H10): asked again after a lost answer, it is not refused.
+                | crate::wire::Change::Collab { .. },
             ..
         } | Question::Forget { .. }
         | Question::NetworkUpdates {

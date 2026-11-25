@@ -1044,6 +1044,7 @@ async fn serving(
     // requests are heard. A queue that does not start is told and tried
     // again beside the hub, which serves meanwhile.
     manage::submission::register(&hub);
+    manage::submission::register_collab(&hub);
     forget::submission::register(&hub);
     direct::submission::register(&hub);
     updates::submission::register(&hub);

@@ -219,3 +219,74 @@ pub(crate) async fn change(
     }
     (crate::submitted::told(came.map(|()| Told::Done)), None)
 }
+
+/// An account's model collaboration written under a name (H10): written once
+/// however often it is asked again, the version it made answering each
+/// asking. A write whose answer was lost and that is asked again gets that
+/// version, not a refusal saying the version read is behind, which made
+/// the asker make its change again over its own and undo a choice it
+/// toggled.
+const COLLAB: Family = Family {
+    name: "ask/collab",
+    at_once: 4,
+    within: Duration::from_secs(60),
+    stays: Duration::from_secs(45),
+    // The write compares the version it was read at: done again, it would
+    // be refused, so it is not.
+    again: false,
+};
+
+#[derive(Serialize, Deserialize)]
+struct CollabAsked {
+    from: MachineName,
+    key: PublicKey,
+    account: AccountName,
+    collab: fastctx_types::collab::Collab,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opened: Option<jiff::Timestamp>,
+}
+
+/// Registers the work of `collab`.
+pub(crate) fn register_collab(hub: &Arc<Hub>) {
+    crate::submitted::register(hub, COLLAB, |hub: Arc<Hub>, asked: CollabAsked| async move {
+        hub.blocking(move |hub| {
+            let CollabAsked { from, key, account, collab, opened } = asked;
+            let origin = crate::origin::Origin { name: from, key };
+            let (answer, ended) =
+                super::change_checked(&hub, &origin, &account, Change::Collab { collab }, |store, _| {
+                    if asked_as(store, &account, opened) { Ok(()) } else { Err(reopened(&account)) }
+                });
+            super::end(&hub, ended);
+            // Refused, nothing was written.
+            match answer.map_err(Failure::not_run)? {
+                Told::CollabWritten { version } => Ok(version),
+                _ => Err(Failure::new("the collaboration change answered unexpectedly")),
+            }
+        })
+        .await
+    });
+}
+
+/// Writes `collab` for `account`, as `origin` asked under `named`.
+pub(crate) async fn collab(
+    hub: &Arc<Hub>,
+    origin: crate::origin::Origin,
+    account: AccountName,
+    collab: fastctx_types::collab::Collab,
+    named: Option<&Submission>,
+) -> Result<Told, String> {
+    let opened = hub.store().book.directory.account(&account).map(|found| found.opened);
+    let asked = CollabAsked { from: origin.name.clone(), key: origin.key, account: account.clone(), collab, opened };
+    let identity = serde_json::to_vec(&asked).map_err(|error| error.to_string())?;
+    let make = async || {
+        let (checking, source, actor) =
+            (Change::Collab { collab: asked.collab.clone() }, origin.clone(), account.clone());
+        hub.blocking(move |hub| super::admission::check(&hub, &source, &actor, &checking))
+            .await
+            .map_err(Failure::not_run)?;
+        Ok((format!("collab/{account}"), &asked))
+    };
+    let came: Result<u64, Failure> =
+        fastctx_jobs::submitted::submit(hub.as_ref(), &COLLAB, &identity, named, make, || {}).await;
+    crate::submitted::told(came.map(|version| Told::CollabWritten { version }))
+}
