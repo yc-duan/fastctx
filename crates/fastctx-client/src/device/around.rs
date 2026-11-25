@@ -4,6 +4,13 @@
 //! that account may see; no machine answers for another. What only the
 //! projects' ledgers know, a project's record or its projects, one machine
 //! that acts for the device's account answers from its own copy.
+//!
+//! Machines are asked as their hubs last told who is connected, none of the
+//! hubs asked again first: the views follow their hubs' changes on their own.
+//! Each round is answered within its bound (`WAITED_ON`, `SEARCHED`); a
+//! machine that does not answer by then is told as not answering. What a
+//! machine says of its agents and logins is kept, and asked again only once
+//! its logins number moved (`Kept`).
 
 use fastctx_types::access::Written;
 
@@ -21,6 +28,42 @@ use jiff::Timestamp;
 
 use super::{Device, Session, failed};
 use crate::Error;
+
+/// How long a question of every machine waits for each (`fastctx w`, the
+/// conversations of late, agents and logins), as a computer's node waits.
+const WAITED_ON: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a search for one thing by its id waits for each machine.
+const SEARCHED: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What each machine last answered of one kind, by hub and machine key: how
+/// it is written, its logins number when it answered, and the answer.
+pub(super) type Kept<T> = std::sync::Mutex<std::collections::HashMap<(String, String), (Written, u64, T)>>;
+
+/// The logins number `machine`'s hub tells of it now, where it tells one.
+fn logins_number(machine: &Reachable) -> Option<u64> {
+    machine.link.view().machines().find(|member| member.key == machine.key).and_then(|member| member.numbers?.logins)
+}
+
+/// The answers of `kept` still standing for the machines of `asked`, their
+/// numbers not moved since; and the machines to ask.
+fn kept_or_asked<T: Clone>(kept: &Kept<T>, asked: Vec<Reachable>) -> (Vec<(Written, T)>, Vec<Reachable>) {
+    let kept = kept.lock().expect("never poisoned");
+    let mut standing: Vec<(Written, T)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut ask = Vec::new();
+    for machine in asked {
+        let at = (machine.link.membership().id.to_string(), machine.key.to_string());
+        match (logins_number(&machine), kept.get(&at)) {
+            (Some(number), Some((written, was, answer))) if *was == number => {
+                if seen.insert(at) {
+                    standing.push((written.clone(), answer.clone()));
+                }
+            }
+            _ => ask.push(machine),
+        }
+    }
+    (standing, ask)
+}
 
 impl Device {
     /// Each machine once for every account of this device that may use it;
@@ -86,7 +129,9 @@ impl Device {
             Some(town) => self.town(town).await?,
             None => WhoScope::World { towns: self.towns().await? },
         };
-        let heard = around::ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
+        let heard =
+            around::ask_known(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }, WAITED_ON)
+                .await;
         let machines =
             around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())).collect();
         let mut reply = WorldWho {
@@ -154,7 +199,8 @@ impl Device {
         let mut issues = Vec::new();
         let mut events = Vec::new();
         let mut undated = Vec::new();
-        let heard = around::ask_each(self.asked(&scope), |_| RemoteCall::Since { since, town: town.clone() }).await;
+        let heard =
+            around::ask_known(self.asked(&scope), |_| RemoteCall::Since { since, town: town.clone() }, WAITED_ON).await;
         let mut machines = Vec::new();
         for group in around::answers::collect(heard) {
             let source = group.source.clone();
@@ -188,17 +234,18 @@ impl Device {
     }
 
     pub(super) async fn look(&self, ids: Vec<String>) -> Result<Vec<LookedUp>, Error> {
-        let mut looked = Vec::new();
-        for id in ids {
-            let heard = around::ask_each(self.reachable_each(), |_| RemoteCall::Look { id: id.clone() }).await;
+        // Every id at once, each answered in its place.
+        Ok(futures_util::future::join_all(ids.into_iter().map(|id| async move {
+            let heard =
+                around::ask_known(self.reachable_each(), |_| RemoteCall::Look { id: id.clone() }, SEARCHED).await;
             let mut one = LookedUp { id, found: Vec::new(), jobs: Vec::new(), unasked: Vec::new() };
             for answers in around::answers::collect(heard) {
                 answers.look(&mut one);
             }
             one.attach_jobs();
-            looked.push(one);
-        }
-        Ok(looked)
+            one
+        }))
+        .await)
     }
 
     pub(super) async fn agents(&self, machine: Option<Written>) -> Result<WorldAgents, Error> {
@@ -220,9 +267,27 @@ impl Device {
             }
             None => reachable,
         };
-        let heard = around::ask_each(asked, |_| RemoteCall::Agents).await;
-        let machines = around::answers::collect(heard).into_iter().map(|answers| answers.agents()).collect();
-        Ok(WorldAgents { machine: self.here(), machines })
+        let (mut machines, asked) = kept_or_asked(&self.agents_kept, asked);
+        let numbers: Vec<(String, String, Option<u64>)> = asked
+            .iter()
+            .map(|machine| (machine.link.membership().id.to_string(), machine.key.to_string(), logins_number(machine)))
+            .collect();
+        let heard = around::ask_known(asked, |_| RemoteCall::Agents, WAITED_ON).await;
+        for answers in around::answers::collect(heard) {
+            let (hub, key, written) =
+                (answers.source.hub.to_string(), answers.source.key.clone(), answers.source.written.clone());
+            let answer = answers.agents();
+            let number = numbers.iter().find(|(at, of, _)| *at == hub && *of == key).and_then(|(_, _, number)| *number);
+            if let (Some(number), fastctx_types::agents::MachineAgents::Answered { .. }) = (number, &answer) {
+                self.agents_kept
+                    .lock()
+                    .expect("never poisoned")
+                    .insert((hub, key), (written.clone(), number, answer.clone()));
+            }
+            machines.push((written, answer));
+        }
+        machines.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(WorldAgents { machine: self.here(), machines: machines.into_iter().map(|(_, answer)| answer).collect() })
     }
 
     pub(super) async fn agent_logins(&self, machine: Option<Written>) -> Result<WorldLogins, Error> {
@@ -244,9 +309,27 @@ impl Device {
             }
             None => reachable,
         };
-        let heard = around::ask_each(asked, |_| RemoteCall::AgentLogins).await;
-        let machines = around::answers::collect(heard).into_iter().map(|answers| answers.logins()).collect();
-        Ok(WorldLogins { machine: self.here(), machines })
+        let (mut machines, asked) = kept_or_asked(&self.logins_kept, asked);
+        let numbers: Vec<(String, String, Option<u64>)> = asked
+            .iter()
+            .map(|machine| (machine.link.membership().id.to_string(), machine.key.to_string(), logins_number(machine)))
+            .collect();
+        let heard = around::ask_known(asked, |_| RemoteCall::AgentLogins, WAITED_ON).await;
+        for answers in around::answers::collect(heard) {
+            let (hub, key, written) =
+                (answers.source.hub.to_string(), answers.source.key.clone(), answers.source.written.clone());
+            let answer = answers.logins();
+            let number = numbers.iter().find(|(at, of, _)| *at == hub && *of == key).and_then(|(_, _, number)| *number);
+            if let (Some(number), fastctx_types::logins::MachineLoginsHeard::Answered { .. }) = (number, &answer) {
+                self.logins_kept
+                    .lock()
+                    .expect("never poisoned")
+                    .insert((hub, key), (written.clone(), number, answer.clone()));
+            }
+            machines.push((written, answer));
+        }
+        machines.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(WorldLogins { machine: self.here(), machines: machines.into_iter().map(|(_, answer)| answer).collect() })
     }
 
     pub(super) async fn nodes(&self) -> Result<NodesReply, Error> {
