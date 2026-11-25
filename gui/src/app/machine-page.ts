@@ -1017,8 +1017,16 @@ export class MachinePage implements Page {
     if (facts?.home) rows.push({ label: words.home, value: facts.home, code: true });
     if (stats?.boot) rows.push({ label: words.booted, value: words.stamp(new Date(stats.boot), new Date(stats.at)) });
     if (stats) rows.push({ label: words.node, value: words.nodeFor(words.span(Date.parse(stats.at) - Date.parse(stats.node.started))) });
+    // Claude Code passing the World's hooks over there, and what to add to
+    // its managed settings (`fastctx_types::world::HooksSkipped::remedy`).
+    const skipped = facts?.hooks_skipped;
+    if (skipped) {
+      const plugins = skipped.plugins.replace(/\\/g, "/");
+      const keys = `"extraKnownMarketplaces": {"fastctx": {"source": {"source": "directory", "path": "${plugins}"}}}, "enabledPlugins": {"fastctx-world@fastctx": true}, "appendPlugins": ["fastctx-world@fastctx"]`;
+      rows.push({ label: words.hooksSkipped, value: words.hooksSkippedSaid(skipped.by), title: `${skipped.hooks.join(", ")}\n${keys}` });
+    }
     this.factsBox.hidden = !rows.length;
-    const said = rows.map((row) => setRow(escape(row.label), "", `<span${row.code ? ` class="code"` : ""}>${escape(row.value)}</span>`)).join("");
+    const said = rows.map((row) => setRow(escape(row.label), "", `<span${row.code ? ` class="code"` : ""}${row.title ? ` title="${escape(row.title)}"` : ""}>${escape(row.value)}</span>`)).join("");
     this.put("facts", this.factsBox, `<h2 class="mp-sec-title">${escape(words.about)}</h2>${said}`);
   }
 

@@ -108,3 +108,67 @@ pub fn slug(text: &str) -> String {
     }
     key
 }
+
+/// What the start of a session's record says of the World's hooks: those
+/// Claude Code passed over, with what ran first and sent the events on past
+/// them (`"<plugin>: its <hook> hook was skipped. \"<by>\" runs first …"`,
+/// 2.1.322), and whether the record goes as far as a reply of the model's,
+/// past which no such notice comes for its first turn.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct HooksSeen {
+    pub skipped: Vec<String>,
+    pub by: Option<String>,
+    pub answered: bool,
+}
+
+/// `HooksSeen` of the record at `path`, from its first `HEAD` bytes, for
+/// the plugin named `plugin`.
+pub fn hooks_seen(path: &Path, plugin: &str) -> io::Result<HooksSeen> {
+    let file = std::fs::File::open(path)?;
+    let mut seen = HooksSeen::default();
+    let prefix = format!("{plugin}: its ");
+    for line in io::BufReader::new(file.take(HEAD)).split(b'\n') {
+        let Ok(row) = serde_json::from_slice::<serde_json::Value>(&line?) else { continue };
+        match (row["type"].as_str(), row["subtype"].as_str()) {
+            (Some("assistant"), _) => seen.answered = true,
+            (Some("system"), Some("informational")) => {
+                let Some(content) = row["content"].as_str() else { continue };
+                let Some(rest) = content.strip_prefix(&prefix) else { continue };
+                let Some((hook, rest)) = rest.split_once(" hook was skipped.") else { continue };
+                if !seen.skipped.iter().any(|known| known == hook) {
+                    seen.skipped.push(hook.to_string());
+                }
+                if seen.by.is_none() {
+                    seen.by = rest.split('"').nth(1).map(str::to_string);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(seen)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hooks_seen_names_what_was_skipped_and_by_what() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let rows = [
+            r#"{"type":"queue-operation","operation":"enqueue","content":"<task-notification>"}"#,
+            r#"{"type":"system","subtype":"informational","content":"fastctx-world: its classic.SessionStart hook was skipped. \"cc-plugin-sec-default\" runs first and sent the event on past it.","level":"notice"}"#,
+            r#"{"type":"system","subtype":"informational","content":"fastctx-world: its prompt.section hook was skipped. \"cc-plugin-sec-default\" runs first and sent the event on past it."}"#,
+            r#"{"type":"system","subtype":"informational","content":"other-plugin: its prompt.section hook was skipped. \"x\" runs first."}"#,
+            r#"{"type":"assistant","message":{"content":[]}}"#,
+        ];
+        std::fs::write(&path, rows.join("\n")).unwrap();
+        let seen = hooks_seen(&path, "fastctx-world").unwrap();
+        assert_eq!(seen.skipped, vec!["classic.SessionStart".to_string(), "prompt.section".to_string()]);
+        assert_eq!(seen.by.as_deref(), Some("cc-plugin-sec-default"));
+        assert!(seen.answered);
+        std::fs::write(&path, r#"{"type":"user","message":{"content":"hi"}}"#).unwrap();
+        assert_eq!(hooks_seen(&path, "fastctx-world").unwrap(), HooksSeen::default());
+    }
+}

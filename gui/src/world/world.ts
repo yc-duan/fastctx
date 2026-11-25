@@ -225,6 +225,9 @@ export interface MachineFacts {
     windows_job: { kill_on_close: boolean; breakaway_allowed: boolean; silent_breakaway: boolean } | null;
   };
   shell: string;
+  /** The World's hooks Claude Code passes over there, as a session's own
+   *  record said lately; absent while they run, or from an older node. */
+  hooks_skipped?: { by: string; hooks: string[]; session: string; at?: Timestamp; plugins: string };
   /** What kind of device it is; older nodes do not say. */
   form?: "desktop" | "laptop" | "server";
   /** It tells how it is doing (`machine_stats`); older nodes do not. */

@@ -722,6 +722,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
+        hooks_skipped: crate::claude::hooks::skipped(),
     }
 }
 

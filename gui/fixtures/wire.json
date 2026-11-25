@@ -14943,6 +14943,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -15121,6 +15131,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -15301,6 +15321,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -15481,6 +15511,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -15660,6 +15700,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -15840,6 +15890,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -16023,6 +16083,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -16207,6 +16277,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -16391,6 +16471,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [
@@ -16574,6 +16664,16 @@
               "breakaway_allowed": false,
               "silent_breakaway": false
             }
+          },
+          "hooks_skipped": {
+            "by": "cc-plugin-sec-default",
+            "hooks": [
+              "classic.SessionStart",
+              "prompt.section"
+            ],
+            "session": "7b3b03f7-c93a-4561-bb21-9d4d4b08af2f",
+            "at": "2026-10-04T12:06:07Z",
+            "plugins": "/root/.fastctx/world/claude-plugins"
           }
         },
         "hubs": [

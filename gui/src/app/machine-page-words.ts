@@ -98,6 +98,10 @@ export interface MachinePageWords {
   upFor: string;
   bootAt(stamp: string): string;
   nodeFor(span: string): string;
+  /** Claude Code passing the World's hooks over there: the row's name, and
+   *  what it says, what runs before them named. */
+  hooksSkipped: string;
+  hooksSkippedSaid(by: string): string;
   service: string;
   noService: string;
 
@@ -250,6 +254,8 @@ export const zhMachinePage: MachinePageWords = {
   upFor: "已开机",
   bootAt: (stamp) => `开机于 ${stamp}`,
   nodeFor: (span) => `已运行 ${span}`,
+  hooksSkipped: "World 钩子",
+  hooksSkippedSaid: (by) => `被 Claude Code 跳过（${by} 先运行），这里的会话拿不到 World 上下文；指针停在这里看要加到托管设置里的键`,
   service: "开机服务",
   noService: "随登录运行",
 
@@ -379,6 +385,8 @@ export const enMachinePage: MachinePageWords = {
   upFor: "Up for",
   bootAt: (stamp) => `Started ${stamp}`,
   nodeFor: (span) => `Up for ${span}`,
+  hooksSkipped: "World hooks",
+  hooksSkippedSaid: (by) => `Skipped by Claude Code (${by} runs first): sessions here work without the World. Hover for the keys to add to its managed settings`,
   service: "Starts with the computer",
   noService: "Runs while signed in",
 

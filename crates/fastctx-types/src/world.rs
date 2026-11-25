@@ -152,6 +152,40 @@ pub struct MachineFacts {
     /// The running node's own observation; older nodes do not report it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_lifetime: Option<Box<crate::node_lifetime::NodeLifetime>>,
+    /// The World's hooks Claude Code skips here, as its own record of a
+    /// session said lately; none while they run, or from an older node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hooks_skipped: Option<HooksSkipped>,
+}
+
+/// Claude Code passing the World's hooks over on a machine: something that
+/// runs before them, as a machine's managed settings seat a plugin of
+/// Claude Code's own (2.1.322), sends each event on past them, and the
+/// sessions there work without the World (`host-integration-route`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HooksSkipped {
+    /// What runs first and sends the events on past them.
+    pub by: String,
+    /// The hooks it passed over, as Claude Code names them.
+    pub hooks: Vec<String>,
+    /// The session whose record said so, and when it began.
+    pub session: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Timestamp>,
+    /// Where the World keeps its Claude Code plugin there: the marketplace
+    /// the machine's managed settings are to name.
+    pub plugins: String,
+}
+
+impl HooksSkipped {
+    /// What to add to the machine's managed settings so that the World's
+    /// plugin runs as theirs.
+    pub fn remedy(&self) -> String {
+        format!(
+            "add to Claude Code's managed settings: \"extraKnownMarketplaces\": {{\"fastctx\": {{\"source\": {{\"source\": \"directory\", \"path\": \"{}\"}}}}}}, \"enabledPlugins\": {{\"fastctx-world@fastctx\": true}}, \"appendPlugins\": [\"fastctx-world@fastctx\"]",
+            self.plugins.replace('\\', "/")
+        )
+    }
 }
 
 /// How this machine's link to the hub stands.

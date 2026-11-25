@@ -36,6 +36,7 @@ mod fork_source;
 pub(crate) mod garbage;
 pub(crate) mod goal_compaction;
 pub(crate) mod history;
+pub(crate) mod hooks;
 mod image_records;
 pub(crate) mod isolation;
 pub(crate) mod resume;
@@ -898,6 +899,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     let Some((about, _)) = node.residents.about(&resident).filter(|(about, _)| about.world_managed()) else {
         return true;
     };
+    // Whether Claude Code runs the World's hooks for it, read until its
+    // record tells (`hooks`).
+    hooks::look(node, &session, directory, crate::usage::login_of(node, &resident, &about));
     // With the workbench closed in its login, Claude Code's own record of
     // the session is not read: the turn under way is heard through what the
     // World's plugin reports alone.
