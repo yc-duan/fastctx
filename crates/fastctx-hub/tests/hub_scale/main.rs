@@ -220,9 +220,10 @@ async fn drill(
         "heartbeat gap exceeded twelve seconds"
     );
     let locks = final_health["locks"].as_array().ok_or_else(|| anyhow::anyhow!("hub omitted lock measurements"))?;
+    // What each member was given of its view is kept by its session's queue
+    // since beta.27, under no lock of the hub's own.
     for name in [
         "hub sessions",
-        "hub given",
         "hub calls",
         "hub data",
         "hub ledgers",
@@ -235,7 +236,7 @@ async fn drill(
             "hub omitted {name} measurements"
         );
     }
-    for name in ["hub sessions", "hub given", "hub updates", "hub presence"] {
+    for name in ["hub sessions", "hub updates", "hub presence"] {
         anyhow::ensure!(
             locks
                 .iter()
