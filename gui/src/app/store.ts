@@ -143,6 +143,9 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
       watched = piece.kind === "world" ? piece.world : (applyChange(watched, piece.change) as WorldNow);
       broken = null;
       failed = null;
+      // Answered: a break after this, in the same batch, counts from its own
+      // start.
+      waiting = null;
       say();
       showSoon();
       return;

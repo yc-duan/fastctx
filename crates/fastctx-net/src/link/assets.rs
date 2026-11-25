@@ -10,7 +10,10 @@ impl Link {
     /// older than any this machine speaks, or none.
     pub async fn assets(&self, request: Request) -> Result<Reply, String> {
         if self.view().asset_sync < OLDEST {
-            return Err(format!("the hub speaks asset sync {}, this machine {OLDEST} to {VERSION}", self.view().asset_sync));
+            return Err(format!(
+                "the hub speaks asset sync {}, this machine {OLDEST} to {VERSION}",
+                self.view().asset_sync
+            ));
         }
         match self.inner.ask(Question::Assets { request }).await? {
             Told::Assets { reply } => Ok(reply),
@@ -42,10 +45,8 @@ impl Link {
         let crate::data::Endpoint::Hub { upstreams, hub, cert } = self.inner.data_endpoint() else {
             return Err("objects travel with the hub itself".into());
         };
-        crate::data::Stream::to_hub(&upstreams, &hub, cert, &self.inner.key, move |key, proof| crate::wire::Intent::Asset {
-            key,
-            proof,
-            ticket,
+        crate::data::Stream::to_hub(&upstreams, &hub, cert, &self.inner.key, move |key, proof| {
+            crate::wire::Intent::Asset { key, proof, ticket }
         })
         .await
     }

@@ -87,7 +87,9 @@ impl Link {
                     .await
                     .map(|()| None);
             }
-            AccountChange::Plan { machine, agent, home, plan, ultra } => Change::Plan { machine, agent, home, plan, ultra },
+            AccountChange::Plan { machine, agent, home, plan, ultra } => {
+                Change::Plan { machine, agent, home, plan, ultra }
+            }
             AccountChange::StopActing { machine } => Change::StopActing { machine },
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason, then } => Change::Remove { name, reason, then },
@@ -207,7 +209,9 @@ impl Link {
             }
             if !view.managing {
                 let hub = self.hub_name();
-                return Err(format!("the hub {hub} takes a share from no one but the login's owner; upgrade it for that"));
+                return Err(format!(
+                    "the hub {hub} takes a share from no one but the login's owner; upgrade it for that"
+                ));
             }
             let change = Change::Assist {
                 machine: assist.machine,

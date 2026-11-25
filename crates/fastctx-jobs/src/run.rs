@@ -120,15 +120,20 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
     // A kind that paces its jobs looks further: one it keeps waiting is not
     // taken, and must not hide one behind it that may begin.
     let limit = if registered.kind.ready.is_some() { LOOKED_AT } else { (most * 8).min(LOOKED_AT) };
+    // The units a job of the kind runs for are not looked at: those waiting
+    // on them would fill what is looked at, and hide one free behind them.
+    let busy_units: Vec<String> = registered.busy.lock().expect("busy units").iter().cloned().collect();
+    let busy_units = serde_json::to_string(&busy_units).unwrap_or_else(|_| "[]".to_string());
     let due: Vec<(i64, String, String, Vec<u8>, u32, i64)> = db
         .prepare_cached(
             "SELECT id, key, unit, payload, tries, due FROM jobs AS job \
              WHERE kind = ?1 AND state = ?2 AND due <= ?3 AND NOT EXISTS (\
                  SELECT 1 FROM jobs AS earlier WHERE earlier.kind = job.kind AND earlier.unit = job.unit \
                  AND earlier.state = ?2 AND earlier.id < job.id) \
+             AND job.unit NOT IN (SELECT value FROM json_each(?5)) \
              ORDER BY due, id LIMIT ?4",
         )?
-        .query_map(params![kind, WAITING, at, limit as i64], |row| {
+        .query_map(params![kind, WAITING, at, limit as i64, busy_units], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;

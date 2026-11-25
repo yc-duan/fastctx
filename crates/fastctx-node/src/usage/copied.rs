@@ -103,19 +103,28 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
         (false, _) => return None,
     };
     let mut waiting = false;
-    let scopes: Vec<_> = library
-        .held_scopes()
-        .ok()?
-        .into_iter()
-        .filter(|scope| crate::timeline::copy::records_here(node, scope) && scope.hub.as_deref() == Some(hub.as_str()))
+    let mut scopes = Vec::new();
+    for scope in library.held_scopes().ok()? {
+        if scope.hub.as_deref() != Some(hub.as_str()) {
+            continue;
+        }
+        // Records of the machine's network not pulled whole yet: what the
+        // others hold is not all of it.
+        if crate::timeline::copy::records_coming(node, &scope) {
+            waiting = true;
+            continue;
+        }
+        if !crate::timeline::copy::records_here(node, &scope) {
+            continue;
+        }
         // Taken only once read: asked for now where it is not here, and no
         // whole answer till it is.
-        .filter(|scope| {
-            let held = crate::assets::lazy::held(node, scope, &stream);
-            waiting |= !held;
-            held
-        })
-        .collect();
+        if !crate::assets::lazy::held(node, &scope, &stream) {
+            waiting = true;
+            continue;
+        }
+        scopes.push(scope);
+    }
     if waiting {
         return None;
     }

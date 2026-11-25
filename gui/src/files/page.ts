@@ -133,13 +133,13 @@ export class FilesPage implements Page {
   }
 
   /** Follows the changes of the machine shown, as `options.follow` tells
-   *  they move, else on the clock. */
+   *  they move, else on the clock. A reading that fails says so to what
+   *  follows, which reads again (`app/numbers.ts`). */
   private follow(): void {
     this.following?.();
-    const read = () => void this.readChanges();
-    if (this.options.follow) this.following = this.options.follow(this.machine, read);
+    if (this.options.follow) this.following = this.options.follow(this.machine, () => this.readChanges(true));
     else {
-      const timer = window.setInterval(read, AGAIN_MS);
+      const timer = window.setInterval(() => void this.readChanges(), AGAIN_MS);
       this.following = () => clearInterval(timer);
     }
   }
@@ -223,12 +223,15 @@ export class FilesPage implements Page {
     return holding?.path ?? (split(path).folder || home);
   }
 
-  private async readChanges(): Promise<void> {
+  /** Reads the machine's changes; one that cannot be read leaves what is
+   *  shown, and, with `told`, says so. */
+  private async readChanges(told = false): Promise<void> {
     const machine = this.machine;
     let changes: FileChange[];
     try {
       changes = await this.options.changes(machine);
-    } catch {
+    } catch (error) {
+      if (told) throw error;
       return;
     }
     if (this.left || machine !== this.machine) return;

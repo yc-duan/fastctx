@@ -29,10 +29,10 @@ impl Transport {
     /// The number the sentinels of `registration`'s home stand at, as its
     /// hub last told it, where it tells it, is online, and the sentinel's
     /// account may use it still (as `send_to` asks); none for this
-    /// computer, which is asked at no cost, and none for a conversation's
-    /// sharer, whom the home judges itself.
+    /// computer, which is asked at no cost, and none for another account a
+    /// conversation is shared with, whom the home judges itself.
     fn standing(&self, registration: &Registration) -> Option<u64> {
-        if crate::record_access::current().is_some() {
+        if crate::record_access::current().is_some_and(|access| access.actor != registration.scope) {
             return None;
         }
         let link = self.0.link_of(&registration.scope.hub)?;

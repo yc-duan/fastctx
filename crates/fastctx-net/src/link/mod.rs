@@ -839,6 +839,14 @@ impl Link {
         self.inner.afoot_elsewhere()
     }
 
+    /// What is afoot on the other machines the hub told of on the connection
+    /// up now, as `afoot`: one it told of only before, and not since (its
+    /// assets sealed, or no longer told whole), is left out, as what is
+    /// kept of it may not hold. None while no connection is up.
+    pub fn afoot_now(&self) -> std::collections::BTreeMap<MachineName, Elsewhere> {
+        self.inner.afoot_told_now()
+    }
+
     /// Whether `afoot` is what the session on now first told, or there is
     /// no session; false between a session's start and its first telling.
     pub fn afoot_ready(&self) -> bool {

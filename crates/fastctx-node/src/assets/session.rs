@@ -918,10 +918,12 @@ async fn turn(
     // nothing failed: its machine did not give it just now.
     let owed = owes(assets, scope).await;
     // Not gone through whole, it is looked at by itself again next pass
-    // until it is (HH03, HH06).
+    // until it is (HH03, HH06); nor is one with a stream asked for by a
+    // reader while this pass went on, which it passed over (`lazy::held`).
+    let asked = assets.lazy.of(scope).iter().any(|stream| !assets.lazy.whole(scope, stream, holding));
     {
         let mut relook = assets.relook.lock().expect("relook");
-        if whole_here && !owed {
+        if whole_here && !owed && !asked {
             relook.remove(scope);
         } else {
             relook.insert(scope.clone());

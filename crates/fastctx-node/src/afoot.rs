@@ -63,7 +63,9 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// What `link`'s hub hears of `reply`: the residents and jobs that work for
 /// one of its accounts, with those accounts; a page's job, which whoever
-/// may work here sees, for the accounts this machine is logged in to there.
+/// may work here sees, for the account this machine is registered under
+/// where it is logged in here, which works here whatever else does (a login
+/// here that only lends its agents to others does not see it).
 fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
     let mut afoot = Afoot::default();
     let mut working: HashMap<ResidentId, Vec<fastctx_types::AccountName>> = HashMap::new();
@@ -92,7 +94,11 @@ fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
                 working.get(&owner.resident).cloned().unwrap_or_default()
             }
             (None, Some(_)) => Vec::new(),
-            (None, None) => node.accounts_on(link, &fastctx_types::access::Acting::Here),
+            (None, None) => {
+                let view = link.view();
+                let owner = view.me().and_then(|me| me.home.clone().filter(|home| me.logins.contains(home)));
+                owner.into_iter().collect()
+            }
         };
         if !accounts.is_empty() {
             afoot.jobs.insert(job.job.clone(), AfootJob { job: job.clone(), accounts });

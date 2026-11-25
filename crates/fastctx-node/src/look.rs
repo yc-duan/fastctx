@@ -45,7 +45,7 @@ fn holders(node: &Node, acting: &Acting, id: &str) -> Vec<crate::around::Reachab
         let member = view.machines().find(|member| member.key == machine.key).map(|member| member.name.clone());
         let afoot = match (told, member) {
             (true, Some(member)) => {
-                afoots.entry(link.membership().id.clone()).or_insert_with(|| link.afoot()).get(&member).cloned()
+                afoots.entry(link.membership().id.clone()).or_insert_with(|| link.afoot_now()).get(&member).cloned()
             }
             _ => None,
         };

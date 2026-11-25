@@ -81,7 +81,10 @@ impl Questions {
         long: bool,
     ) {
         let asked = awake();
-        self.pending.lock().expect("never poisoned").insert(id, Pending { generation, answer, parts: None, progress, long, asked });
+        self.pending
+            .lock()
+            .expect("never poisoned")
+            .insert(id, Pending { generation, answer, parts: None, progress, long, asked });
         if long {
             return;
         }
@@ -127,7 +130,10 @@ impl Questions {
         let (waiting, long) = pending.values().filter(|question| question.generation == generation).fold(
             (false, false),
             |(waiting, long), question| {
-                let waited = question.asked.and_then(|asked| now.checked_sub(asked)).is_some_and(|waited| waited >= STALLED_WAITING);
+                let waited = question
+                    .asked
+                    .and_then(|asked| now.checked_sub(asked))
+                    .is_some_and(|waited| waited >= STALLED_WAITING);
                 (waiting || (!question.long && waited), long || question.long)
             },
         );

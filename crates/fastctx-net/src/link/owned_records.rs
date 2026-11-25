@@ -40,8 +40,10 @@ impl Link {
             match self.owned_records(&actor, Request::Resolve { conversation: address.clone() }).await {
                 Ok(Response::Conversation { conversation }) => {
                     if found.as_ref().is_some_and(|(_, other)| *other != *conversation) {
-                        return Err("more than one signed-in account has a different record at this conversation address"
-                            .into());
+                        return Err(
+                            "more than one signed-in account has a different record at this conversation address"
+                                .into(),
+                        );
                     }
                     if found.is_none() {
                         found = Some((actor, *conversation));

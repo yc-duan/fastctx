@@ -78,9 +78,8 @@ impl NetDir {
     pub(super) fn open_database(&mut self, hub: &HubId) -> io::Result<()> {
         self.authority = hub.as_str().to_owned();
         if self.database.is_none() {
-            self.database = Some(
-                fastctx_storage::Database::open(&self.root.join("node.sqlite3"), "").map_err(io::Error::other)?,
-            );
+            self.database =
+                Some(fastctx_storage::Database::open(&self.root.join("node.sqlite3"), "").map_err(io::Error::other)?);
         }
         Ok(())
     }

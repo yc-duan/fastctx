@@ -21,7 +21,9 @@ impl Link {
         // A hub from before presets would keep a scout as a reviewer, offer
         // a preset turned off and forget what a conversation's colleagues
         // work within together: nothing of them is sent to it.
-        let presets = collab.shelved.is_some() || collab.at_once.is_some() || collab.callees.iter().any(|callee| callee.preset.is_some());
+        let presets = collab.shelved.is_some()
+            || collab.at_once.is_some()
+            || collab.callees.iter().any(|callee| callee.preset.is_some());
         if presets && !self.view().collab_presets {
             return Err(format!("upgrade hub {} to keep the presets of model collaboration", self.hub_name()));
         }

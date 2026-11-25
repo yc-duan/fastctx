@@ -62,12 +62,15 @@ struct Mark {
     imported: (u64, u64),
 }
 
-/// Each conversation's mark when its records were last read, and when the
-/// latest of what they told happened, by its world and its id.
+/// Each conversation's mark when its records were last read, when the
+/// latest of what they told happened, and the `since` they were read for
+/// (the reading passed over what was written well before it), by its world
+/// and its id.
 static READ: LazyLock<Mutex<Read>> = LazyLock::new(Default::default);
 
-/// Each conversation's mark and latest time, by its world and id (`READ`).
-type Read = HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>)>;
+/// Each conversation's mark, latest time and `since` read for, by its world
+/// and id (`READ`).
+type Read = HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>, Timestamp)>;
 
 /// Every conversation's mark in `world`, by its id, in four reads for all
 /// of them, and the mark of one none of them names; none where its database
@@ -203,16 +206,17 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
         files.birth_sources.push(scan.location(&directory.about()));
         files.about = Some(about.clone());
         files.places = Some(places);
-        // Its records quiet since they last told nothing after `since`
-        // are not read again.
+        // Its records quiet since they last told nothing after `since`, read
+        // then for as far back as now or further, are not read again.
         let mark = marks
             .as_ref()
             .map(|(marks, unnamed)| marks.get(about.id.as_str()).cloned().unwrap_or_else(|| unnamed.clone()));
         let quiet = mark.as_ref().is_some_and(|mark| {
-            READ.lock()
-                .expect("never poisoned")
-                .get(&(world.path().to_path_buf(), about.id.clone()))
-                .is_some_and(|(read, latest)| read == mark && latest.is_none_or(|latest| latest <= since))
+            READ.lock().expect("never poisoned").get(&(world.path().to_path_buf(), about.id.clone())).is_some_and(
+                |(read, latest, read_since)| {
+                    read == mark && *read_since <= since && latest.is_none_or(|latest| latest <= since)
+                },
+            )
         });
         if quiet {
             continue;
@@ -242,7 +246,7 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
                     .chain(files.uncertain.values().filter_map(|uncertain| uncertain.at))
                     .chain(scan.events[told.clone()].iter().map(|event| event.at))
                     .max();
-                READ.lock().expect("never poisoned").insert(at, (mark.clone(), latest));
+                READ.lock().expect("never poisoned").insert(at, (mark.clone(), latest, since));
             }
             // Read, though not whole: read again the next time.
             Some(_) => {

@@ -2469,15 +2469,20 @@ function liveTalk(address: Address): DeskTalk {
       sentinelAgain = true;
       return sentinelReading;
     }
-    const reading = (async () => {
+    // Begun after it is kept, so even one that fails at once lets go.
+    const reading = Promise.resolve().then(async () => {
       let read = false;
-      do {
-        sentinelAgain = false;
-        read = await readSentinelsOnce();
-      } while (sentinelAgain && !left);
+      try {
+        do {
+          sentinelAgain = false;
+          read = await readSentinelsOnce();
+        } while (sentinelAgain && !left);
+      } finally {
+        // Let go as the last look at `sentinelAgain` is taken, so a question
+        // after it begins a reading of its own.
+        sentinelReading = null;
+      }
       return read;
-    })().finally(() => {
-      sentinelReading = null;
     });
     sentinelReading = reading;
     return reading;

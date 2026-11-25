@@ -53,6 +53,14 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     let mut found = false;
     let mut waiting = false;
     for scope in library.held_scopes().ok()? {
+        // Records of the machine's network not pulled whole yet: what the
+        // others hold is not all of it.
+        if crate::timeline::copy::records_coming(node, &scope)
+            && streams.iter().any(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str()))
+        {
+            waiting = true;
+            continue;
+        }
         if !crate::timeline::copy::records_here(node, &scope) {
             continue;
         }

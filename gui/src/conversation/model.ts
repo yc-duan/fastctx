@@ -1715,6 +1715,20 @@ export class Fold {
     for (const word of this.haltedWords) if (word.key === key) word.delivery = delivery;
   }
 
+  /** The tools of `turn`, which runs, that stood as cut off: they run on,
+   *  as far as is known (`now`). */
+  private uncut(turn: string): void {
+    let changed = false;
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind === "tool" && entry.ended?.use === "cut") {
+        entry.ended = null;
+        this.touch(entry);
+        changed = true;
+      }
+    }
+    if (changed) this.clock += 1;
+  }
+
   /** The World says no turn runs: what is still shown under way here
    *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
@@ -1850,6 +1864,10 @@ export class Fold {
       this.haltedUnseen = false;
     }
     if (busy && turn) this.underWay(turn, Date.now());
+    // A turn the machine says runs was not cut off: what an earlier word
+    // that none ran, laid over a reading that held it, stood as cut in it
+    // runs on.
+    if (busy && turn && !this.endedTurns.has(turn)) this.uncut(turn);
     if (!busy) {
       // No turn runs, but words the stop waits for may still be on their
       // way: kept by the machine, or not yet answered for. The stop of them
@@ -2258,13 +2276,25 @@ function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
   return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: null, text: entry.text, status: "info", attachments: [] };
 }
 
+/** How many of their first characters two messages are told apart by: a
+ *  long one is shown cut, and marked so, past many more than these. */
+const WORDS_COMPARED = 200;
+/** The fewest first characters two messages that are not the same whole
+ *  must share to be taken for one: one telling how the work goes shares
+ *  none so many with the answer. */
+const WORDS_AT_LEAST = 40;
+
 /** Whether a message saying `message` says the words a turn's end told it
- *  ended with: the same, or the one begun by the other — a message still
- *  coming in, or the end's words cut short. One saying nothing yet is not. */
+ *  ended with: the same, or the same so far — a message still coming in,
+ *  or either of them cut short and marked so. One saying nothing yet, or
+ *  too little to tell, is not. */
 function sameWords(message: string, told: string): boolean {
   const said = message.trim();
   const words = told.trim();
-  return said !== "" && words !== "" && (said === words || said.startsWith(words) || words.startsWith(said));
+  if (said === "" || words === "") return false;
+  if (said === words) return true;
+  const compared = Math.min(said.length, words.length, WORDS_COMPARED);
+  return compared >= WORDS_AT_LEAST && said.slice(0, compared) === words.slice(0, compared);
 }
 
 /** The item a turn's last words shown from its end stand as (`Fold.lastWords`). */

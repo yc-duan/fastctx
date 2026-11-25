@@ -410,15 +410,15 @@ impl Outq {
     /// told of next, shows any of `accounts` or `machines`: one that changed
     /// in a way that alters what no one may see changes the views of those
     /// that showed it, and of no others (`Hub::configuration_changed_for`).
-    /// None given yet shows nothing: the member asks for its view whole as
-    /// it begins.
+    /// With none given yet, the one being made for it may have been read
+    /// before the change: it is told to ask for it again (`view_changed`).
     pub(crate) fn view_shows(
         &self,
         accounts: &std::collections::BTreeSet<fastctx_types::AccountName>,
         machines: &std::collections::BTreeSet<MachineName>,
     ) -> bool {
         let state = self.0.state.lock().expect("never poisoned");
-        let Some((given, _)) = &state.view_given else { return false };
+        let Some((given, _)) = &state.view_given else { return true };
         let shows = |view: &View| {
             view.directory.accounts.iter().any(|account| accounts.contains(&account.name))
                 || view.directory.members.iter().any(|member| machines.contains(&member.name))

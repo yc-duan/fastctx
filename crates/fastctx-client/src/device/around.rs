@@ -41,28 +41,37 @@ const SEARCHED: std::time::Duration = std::time::Duration::from_secs(10);
 pub(super) type Kept<T> = std::sync::Mutex<std::collections::HashMap<(String, String), (Written, Standing, T)>>;
 
 /// What a machine's answer stands on: its logins number, and the accounts
-/// of this device that ask it with what each may do there, as its hub tells
-/// them. Another account asking, or one that may do less there, is
-/// answered anew: the machine answers each only what that account may see.
+/// of this device that ask it with what each may do there and the logins
+/// there that assist each (with the share each holds and whether it manages
+/// the login), as its hub tells them. Another account asking, or one that
+/// may do or see less there, is answered anew: the machine answers each only
+/// what that account may see (`logins::remote::seen`).
 #[derive(Clone, PartialEq)]
 pub(super) struct Standing {
     number: u64,
-    askers: Vec<(AccountName, fastctx_types::access::Rights)>,
+    askers: Vec<(AccountName, fastctx_types::access::Rights, Vec<fastctx_net::directory::Assist>)>,
 }
 
 /// What an answer of the machine of `asked`, one machine asked for each of
-/// its accounts, stands on now, as its hub tells while this device is
-/// connected to it and it tells a logins number; none otherwise.
+/// its accounts, stands on now, as its hub tells on the connection up now
+/// (a view kept from before it may hold what was taken back meanwhile)
+/// where it tells a logins number; none otherwise.
 fn standing(asked: &[Reachable]) -> Option<Standing> {
     let first = asked.first()?;
-    if !matches!(first.link.status(), fastctx_net::link::Status::Online { .. }) {
+    if !matches!(first.link.status(), fastctx_net::link::Status::Online { .. }) || !first.link.view_current() {
         return None;
     }
     let view = first.link.view();
     let member = view.machines().find(|member| member.key == first.key)?;
     let number = member.numbers?.logins?;
-    let mut askers: Vec<_> =
-        asked.iter().map(|one| (one.account.clone(), view.rights(&one.account, &member.name))).collect();
+    let mut askers: Vec<_> = asked
+        .iter()
+        .map(|one| {
+            let mut assists: Vec<_> = view.assisting(&one.account, &member.name).cloned().collect();
+            assists.sort();
+            (one.account.clone(), view.rights(&one.account, &member.name), assists)
+        })
+        .collect();
     askers.sort_by(|a, b| a.0.cmp(&b.0));
     askers.dedup();
     Some(Standing { number, askers })

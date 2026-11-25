@@ -1036,7 +1036,7 @@ async fn handle_frame(
             inner.node.account_record_changed(&changed);
             let _ = inner.record_changes.send(Some(changed));
         }
-        Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
+        Down::Afoot { machine, busy, change } => inner.heard_afoot(generation, machine, busy, *change),
         Down::Forget { forgetting } => {
             let (inner, up) = (inner.clone(), up.clone());
             fastctx_platform::task::spawn(async move {

@@ -112,9 +112,7 @@ impl PeerConn {
         let (written, received) = oneshot::channel();
         let size = bytes.len();
         if let Err(queued) = self.soon.try_send(Queued { bytes, written: Some(written) }, size) {
-            self.out
-                .send(queued, size)
-                .map_err(|_| "the direct link ended before the frame was queued".to_string())?;
+            self.out.send(queued, size).map_err(|_| "the direct link ended before the frame was queued".to_string())?;
         }
         received.await.map_err(|_| "the direct link ended before the frame was written".to_string())
     }
@@ -276,7 +274,10 @@ impl Inner {
                     // link ends as one the hub carried does: an answer to
                     // work aside (design §28.41).
                     .or_else(|| {
-                        let sealed = view.assets_sealed.as_ref().filter(|_| call.purpose != fastctx_types::access::Purpose::Echo);
+                        let sealed = view
+                            .assets_sealed
+                            .as_ref()
+                            .filter(|_| call.purpose != fastctx_types::access::Purpose::Echo);
                         sealed.map(|why| format!("{}{why}", fastctx_types::assets::SEALED_RELAY))
                     })
                     .map(|why| (*key, why))

@@ -24,14 +24,17 @@ static WHOLE: LazyLock<Mutex<Whole>> = LazyLock::new(Default::default);
 /// changes told by then (`WHOLE`).
 type Whole = HashMap<(HubId, TownName), (jiff::Timestamp, u64)>;
 
+/// How many times copies known whole were forgotten (`unknown`): a pass
+/// that found them whole before one, and records it after, records nothing.
+static FORGOTTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Forgets that the copies of `town`, or of every project, from `hub`, or
 /// from every hub, are known whole: one let go of, or taken by a pass the
 /// hub's telling did not start (`super::sync`).
 pub(crate) fn unknown(hub: Option<&HubId>, town: Option<&TownName>) {
-    WHOLE
-        .lock()
-        .expect("never poisoned")
-        .retain(|(from, name), _| !(hub.is_none_or(|hub| hub == from) && town.is_none_or(|town| town == name)));
+    let mut whole = WHOLE.lock().expect("never poisoned");
+    FORGOTTEN.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    whole.retain(|(from, name), _| !(hub.is_none_or(|hub| hub == from) && town.is_none_or(|town| town == name)));
 }
 
 /// Whether `town`'s copy here is known whole for `link`'s hub (`WHOLE`).
@@ -65,11 +68,13 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
     for link in node.links() {
         let hub = link.membership().id.clone();
         // What it is whole as of: the connection, and the changes told,
-        // before the catalog is asked.
+        // before the catalog is asked; and how many times copies known
+        // whole were forgotten by then.
         let as_of = match link.status() {
             fastctx_net::link::Status::Online { since, .. } => Some((since, super::syncing::told(node, &hub))),
             _ => None,
         };
+        let forgotten = FORGOTTEN.load(std::sync::atomic::Ordering::Acquire);
         let Some(catalog) = link.try_ledger_catalog().await? else { continue };
         let mut caught_up = Vec::new();
         for (id, latest) in catalog {
@@ -99,8 +104,11 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
         super::metadata::refresh(node, &link, wanted.as_ref()).await?;
         if let Some(as_of) = as_of {
             let mut whole = WHOLE.lock().expect("never poisoned");
-            for name in caught_up {
-                whole.insert((hub.clone(), name), as_of);
+            // Forgotten meanwhile: what this pass found may be let go of.
+            if FORGOTTEN.load(std::sync::atomic::Ordering::Acquire) == forgotten {
+                for name in caught_up {
+                    whole.insert((hub.clone(), name), as_of);
+                }
             }
         }
     }
