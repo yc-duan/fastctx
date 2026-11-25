@@ -23,6 +23,7 @@ import type { SentinelPhase, SentinelSummary } from "../world/sentinels";
 import { hubOf } from "./hub-model";
 import { hubPicture, type HubViewOptions } from "./hub-view";
 import "./hub.css";
+import { morph } from "../app/morph";
 
 export interface ProjectOptions {
   words: ProjectWords;
@@ -216,7 +217,7 @@ export class ProjectPage {
       this.drawn = board;
       redrawKeepingFocus(this.element, () => {
         this.intro.innerHTML = "";
-        this.board.innerHTML = board;
+        morph(this.board, board);
         this.choose();
       });
     }

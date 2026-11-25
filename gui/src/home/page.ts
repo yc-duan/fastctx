@@ -21,6 +21,7 @@ import { blot, ruled, seeded } from "../pen/shapes";
 import type { Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 import { agentName, titleOf } from "../world/names";
+import { morph } from "../app/morph";
 
 export interface HomeOptions {
   words: HomeWords;
@@ -220,7 +221,7 @@ export class HomePage {
     this.drawn = html;
     redrawKeepingFocus(this.board, () => {
       this.board.classList.toggle("two", two);
-      this.board.innerHTML = html;
+      morph(this.board, html);
     });
   }
 

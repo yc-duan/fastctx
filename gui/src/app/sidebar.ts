@@ -46,6 +46,7 @@ import type { ShellWords } from "./words";
 import type { Offered } from "./updates";
 import type { UpdateWords } from "./update-words";
 import { onHeld } from "./press";
+import { morph } from "./morph";
 
 export interface SidebarOptions {
   store: Store;
@@ -260,7 +261,7 @@ export class Sidebar {
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {
-      this.list.innerHTML = html;
+      morph(this.list, html);
     });
     keepWriting(this.list);
   }
