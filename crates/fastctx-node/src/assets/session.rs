@@ -209,7 +209,19 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
             && shared_elsewhere(&node, &hub).is_none()
             && !assets.copies.paused_now().contains(&scope)
         {
-            let left = match taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await {
+            let mut taken = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await;
+            // A turn of its scope that does not end soon held it: taken as
+            // soon as that turn ends, by one waiter for the stream, not at
+            // the driver's next round, a pass that may go on for minutes
+            // (codex-d0397b85).
+            if taken.as_ref().is_err_and(|why| why == BUSY)
+                && assets.moves_waiting.lock().expect("moves waiting").insert((scope.clone(), stream.clone()))
+            {
+                drop(assets.turn_of(&scope).lock().await);
+                assets.moves_waiting.lock().expect("moves waiting").remove(&(scope.clone(), stream.clone()));
+                taken = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await;
+            }
+            let left = match taken {
                 // Left to the pass, which says why should it fail there too.
                 Err(why) => !why.starts_with(REVOKED),
                 // Taken as far as its machine stood when it was asked, a
@@ -224,6 +236,10 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
         wake(&node, &hub);
     });
 }
+
+/// Why frames told moved were not taken at once: a turn of their scope was
+/// under way, and did not end within `TURN_WAITED`.
+const BUSY: &str = "a turn of the scope is under way";
 
 /// How long what moved waits for a turn of its scope under way to end.
 const TURN_WAITED: std::time::Duration = std::time::Duration::from_secs(2);
@@ -248,7 +264,11 @@ async fn taken_at_once(
     // what moved meanwhile need not wait for the driver's next round to be
     // shown (codex-79f63b53); one taken further meanwhile asks for nothing.
     let Ok(_turn) = tokio::time::timeout(TURN_WAITED, turning.lock()).await else {
-        return if super::direct::stays(link, scope, stream) { Err("left to the pass".into()) } else { Ok(()) };
+        return if super::direct::stays(link, scope, stream) {
+            Err("left to the pass".into())
+        } else {
+            Err(BUSY.into())
+        };
     };
     let (key_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
     let held = blocking(library, move |library| {

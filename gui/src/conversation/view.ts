@@ -1879,6 +1879,11 @@ export class ConversationView {
   unfollowed(): void {
     this.followed = false;
   }
+  /** The session is followed again, its watch taken up anew after it was
+   *  refused or ended (codex-fb2e1cc5): the line says what it hears. */
+  followedAgain(): void {
+    this.followed = true;
+  }
   private followed = true;
 
   /** Whether the conversation can be heard from at all: out of reach for

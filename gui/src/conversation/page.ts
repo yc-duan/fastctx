@@ -80,6 +80,10 @@ const LATEST_KEPT = 800;
 /** How long a turn asked to stop shows ended before its host has ended it
  *  (`ConversationPage.stop`). */
 const STOP_OVERDUE_MS = 2000;
+/** How long a conversation out of reach keeps what was last heard of its
+ *  turn said before nothing is: longer than a way to it takes to come back
+ *  after a moment's loss (codex-fb2e1cc5 saw 1.2 s and 39 s). */
+const UNREACHED_GRACE_MS = 60_000;
 /** How long a stop of words on their way waits for the World to answer
  *  for them, and how often it looks (`stopNamed`). */
 const NAMING_MS = 60_000;
@@ -3027,6 +3031,8 @@ export class ConversationPage {
   }
 
   private away: "removed" | "deleted" | "away" | "unreached" | "stopped" | null = null;
+  /** Says nothing more is heard of it once it stayed out of reach so long. */
+  private unheardLater: ReturnType<typeof setTimeout> | null = null;
 
   /** Whether the user archived it, or deleted it, as the World last listed
    *  it. Archived, it is kept to read and can be brought back where the
@@ -3043,10 +3049,28 @@ export class ConversationPage {
     }
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
     // Nothing more is heard of it: no turn is said to go on, and its goal's
-    // bar, whose acts would reach nothing, steps aside.
+    // bar, whose acts would reach nothing, steps aside. A moment's loss of
+    // the way to it says nothing of whether its model works: what was last
+    // heard stays said for a while, and only then nothing (codex-fb2e1cc5).
     const unheard = away !== null && away !== "removed";
-    this.view.hearing(!unheard);
-    this.element.toggleAttribute("data-unheard", unheard);
+    if (this.unheardLater !== null) {
+      clearTimeout(this.unheardLater);
+      this.unheardLater = null;
+    }
+    const silence = () => {
+      this.view.hearing(!unheard);
+      this.element.toggleAttribute("data-unheard", unheard);
+    };
+    if (away === "unreached") {
+      this.unheardLater = setTimeout(() => {
+        this.unheardLater = null;
+        if (this.away !== "unreached") return;
+        silence();
+        this.update();
+      }, UNREACHED_GRACE_MS);
+    } else {
+      silence();
+    }
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
     gone.hidden = away === null;
     const manage = this.options.manage;
@@ -3246,7 +3270,13 @@ export class ConversationPage {
   resumed(): void {
     // What it offers may have changed while it was away.
     void this.askOffers();
-    if (!this.interrupted) return;
+    // Heard again: whether its model works is said again, even after a
+    // watch that was refused or ended (codex-fb2e1cc5).
+    this.view.followedAgain();
+    if (!this.interrupted && this.gone === null) {
+      this.update();
+      return;
+    }
     this.interrupted = false;
     this.gone = null;
     this.goneWhy = "";

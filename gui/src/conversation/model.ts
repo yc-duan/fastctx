@@ -947,6 +947,7 @@ export class Fold {
           this.touch(shown);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
+          this.lastWordsTaken(event.turn);
           this.overtaken(event.turn);
           this.add({
             kind: "prose",
@@ -1000,6 +1001,7 @@ export class Fold {
           }
         }
         this.endedTurns.add(event.turn);
+        this.lastWords(event.turn, event.end);
         this.add({ kind: "ended", key: `e:${event.turn}`, stamp: 0, at: 0, turn: event.turn, end: event.end });
         return;
       }
@@ -1183,9 +1185,34 @@ export class Fold {
     this.add({ kind: "health", key: `x:${this.currentPlace}`, stamp: 0, at: 0, health });
   }
 
+  /** A turn that ended telling its last words, where no message of it after
+   *  its last tool shows them — its machine told the end first, and the
+   *  record of the words is on its way (codex-d0397b85) — shows them from
+   *  its end until that message comes and takes their place (`item`). The
+   *  host may have told a summary of the message: the message replaces it. */
+  private lastWords(turn: string, end: TurnEnd): void {
+    const words = end.last_message?.trim();
+    if (!words) return;
+    const entries = this.byTurn.get(turn) ?? [];
+    let tool = -1;
+    entries.forEach((entry, at) => {
+      if (entry.kind === "tool") tool = at;
+    });
+    if (entries.some((entry, at) => at > tool && entry.kind === "prose" && entry.prose === "message" && entry.text.trim() !== "")) return;
+    this.add({ kind: "prose", key: lastWordsKey(turn), stamp: 0, at: 0, item: LAST_WORDS, turn, prose: "message", text: words, writing: false, version: 0 });
+  }
+
+  /** A message of `turn` came: the last words shown from its end, if any,
+   *  give it their place. */
+  private lastWordsTaken(turn: string): void {
+    const key = lastWordsKey(turn);
+    if (this.byKey.has(key)) this.remove((entry) => entry.key === key);
+  }
+
   /** An item began or finished: shown where it first appeared, as it now
    *  stands. */
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
+    if (native.kind === "message") this.lastWordsTaken(turn);
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
@@ -2226,4 +2253,12 @@ function askedText(words: string, questions: Asked[]): string {
 /** What was asked without stopping, as words said to the user. */
 function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
   return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: null, text: entry.text, status: "info", attachments: [] };
+}
+
+/** The item a turn's last words shown from its end stand as (`Fold.lastWords`). */
+const LAST_WORDS = "last-words";
+
+/** Where a turn's last words shown from its end are kept. */
+function lastWordsKey(turn: string): string {
+  return `w:${turn}`;
 }

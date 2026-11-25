@@ -383,11 +383,18 @@ export class Conversation {
       }
       if (event.event === "turn_ended") this.turnRecorded(event.turn);
     }
+    // An item of a turn whose end is recorded but not the item itself stays
+    // shown as it came: its record is on its way, and the turn's last words
+    // are not to vanish until it comes (codex-d0397b85).
     this.aheadEvents = this.aheadEvents.filter((event) => {
       const item = itemOf(event);
-      return now - Date.parse(event.at) < AHEAD_FOR_MS && !!item && !inPart.has(item) && !this.endedTurns.has(turnOf(event) ?? "");
+      return now - Date.parse(event.at) < AHEAD_FOR_MS && !!item && !inPart.has(item) && this.stillAhead(event);
     });
     for (const event of this.aheadEvents) tail.late(event);
+    // What its machine last said holds now goes on holding over the part
+    // read anew, which has only its records to go by (codex-fb2e1cc5).
+    const told = this.nowTold;
+    if (told) tail.now(told.busy, told.turn, told.kept, told.halted);
     const held = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold: tail }, span);
     this.spans = new Map([[held, span]]);
     this.parts = [held];
@@ -482,9 +489,18 @@ export class Conversation {
         this.turnRecorded(record.shown.event.turn);
       }
     }
+    // What came ahead goes as its own record comes, the turn's end recorded
+    // or not: the end may come before its last words' record, and those
+    // words are not to vanish meanwhile (codex-d0397b85).
     const ahead = this.aheadEvents.length;
     if (ahead) {
-      this.aheadEvents = this.aheadEvents.filter((event) => !this.recordedItems.has(itemOf(event) ?? "") && !ended.has(turnOf(event) ?? ""));
+      const now = Date.now();
+      this.aheadEvents = this.aheadEvents.filter(
+        (event) =>
+          !this.recordedItems.has(itemOf(event) ?? "") &&
+          this.stillAhead(event) &&
+          (!ended.has(turnOf(event) ?? "") || now - Date.parse(event.at) < AHEAD_FOR_MS),
+      );
     }
     const dropped = ahead > 0 && this.aheadEvents.length < ahead;
     const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
@@ -584,6 +600,8 @@ export class Conversation {
     if (!this.replica || !span) return;
     const events_now = this.shown(span);
     this.tail.fold = this.tail.fold.revised(events_now, span.keys, events_now, span.keys, this.asks);
+    const told = this.nowTold;
+    if (told) this.tail.fold.now(told.busy, told.turn, told.kept, told.halted);
     this.reahead();
     this.parts = [...this.parts];
     this.structure += 1;
@@ -614,6 +632,13 @@ export class Conversation {
     }
     this.aheadEvents.push(event);
     if (this.aheadEvents.length > AHEAD_MOST) this.aheadEvents.splice(0, this.aheadEvents.length - AHEAD_MOST);
+  }
+
+  /** Whether what came ahead of the timeline is still shown: of a turn whose
+   *  end is recorded, only items ended as they came (their last words among
+   *  them), never one shown as still under way after its turn ended. */
+  private stillAhead(event: SessionEvent): boolean {
+    return !this.endedTurns.has(turnOf(event) ?? "") || event.event === "finished";
   }
 
   /** The timeline recorded the end of `turn`. */

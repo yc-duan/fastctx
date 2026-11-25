@@ -159,11 +159,14 @@ impl Forwarder {
         Ok(())
     }
 
-    /// More of an item whose last piece waiting is also more of it, with
-    /// nothing after that every piece must stay behind, joins that piece: it
-    /// leaves its place and goes at the end, carrying the newer mark, so the
-    /// marks a watcher sees still only rise. The piece as it goes on, merged
-    /// or as it came, its size, and what it took of the budget so far.
+    /// More of an item whose last piece waiting is also more of it, that
+    /// piece the last of all waiting, joins it, carrying the newer mark. One
+    /// with any piece after it, of another item, is not joined past that
+    /// piece: a watcher that took the joined one and lost its way before the
+    /// other would ask again from the newer mark, and the other's words,
+    /// told before it, would never come (codex-8cc17361). The piece as it
+    /// goes on, merged or as it came, its size, and what it took of the
+    /// budget so far.
     fn merged(
         &mut self,
         piece: Watched,
@@ -173,16 +176,18 @@ impl Forwarder {
         let Happened::Grew { turn, item, part, text, revision } = event.happened else {
             return (Watched::Live { event, mark, likeness }, size, Vec::new());
         };
-        let earlier =
-            self.items.get(&(turn.clone(), item.clone())).copied().filter(|number| *number > self.barrier).filter(
-                |number| {
-                    self.waiting.get(number).is_some_and(|waiting| {
-                        matches!(&waiting.piece, Watched::Live { event: before, .. }
-                        if matches!(&before.happened, Happened::Grew { turn: t, item: i, part: p, .. }
-                            if *t == turn && *i == item && *p == part))
-                    })
-                },
-            );
+        let earlier = self
+            .items
+            .get(&(turn.clone(), item.clone()))
+            .copied()
+            .filter(|number| *number > self.barrier && *number == self.next)
+            .filter(|number| {
+                self.waiting.get(number).is_some_and(|waiting| {
+                    matches!(&waiting.piece, Watched::Live { event: before, .. }
+                    if matches!(&before.happened, Happened::Grew { turn: t, item: i, part: p, .. }
+                        if *t == turn && *i == item && *p == part))
+                })
+            });
         let at = event.at;
         let Some(number) = earlier else {
             let event = fastctx_types::session::SessionEvent {
@@ -275,11 +280,12 @@ mod tests {
             forwarder.push(grew(sequence, &format!("filler {sequence}"), "x")).unwrap();
         }
         let filled = sequence - 1;
-        // That last one waits; then two items grow, interleaved, with a turn
-        // boundary after which nothing joins what came before it.
+        // That last one waits; then two items grow one after the other, each
+        // joined, with a turn boundary after which nothing joins what came
+        // before it.
         forwarder.push(grew(sequence + 1, "a", "1")).unwrap();
-        forwarder.push(grew(sequence + 2, "b", "1")).unwrap();
-        forwarder.push(grew(sequence + 3, "a", "2")).unwrap();
+        forwarder.push(grew(sequence + 2, "a", "2")).unwrap();
+        forwarder.push(grew(sequence + 3, "b", "1")).unwrap();
         forwarder.push(grew(sequence + 4, "b", "2")).unwrap();
         forwarder.push(live(sequence + 5, Happened::TurnStarted { turn: "u".into() })).unwrap();
         forwarder.push(grew(sequence + 6, "a", "3")).unwrap();
@@ -315,5 +321,47 @@ mod tests {
             })
             .collect();
         assert_eq!(tail, ["a:12", "b:12", "turn u", "a:3"]);
+    }
+
+    #[test]
+    fn more_of_an_item_never_joins_past_another_items_piece() {
+        let (sender, mut receiver) = watch_queue::channel(|piece: &Result<Watched, Failure>| match piece {
+            Ok(piece) => watch_queue::watched_size(piece),
+            Err(error) => (error.message.len(), None),
+        });
+        let mut forwarder = Forwarder::new(sender);
+        let mut sequence = 0;
+        while !forwarder.waiting() {
+            sequence += 1;
+            forwarder.push(grew(sequence, &format!("filler {sequence}"), "x")).unwrap();
+        }
+        // Interleaved, nothing joins: a watcher that took a joined piece and
+        // lost its way would ask again past the other's words (codex-8cc17361).
+        forwarder.push(grew(sequence + 1, "a", "1")).unwrap();
+        forwarder.push(grew(sequence + 2, "b", "1")).unwrap();
+        forwarder.push(grew(sequence + 3, "a", "2")).unwrap();
+        forwarder.push(grew(sequence + 4, "b", "2")).unwrap();
+        assert_eq!(forwarder.waiting.len(), 5);
+        let mut seen = Vec::new();
+        loop {
+            while let Ok(piece) = receiver.try_recv() {
+                seen.push(piece.unwrap());
+            }
+            if !forwarder.waiting() {
+                break;
+            }
+            forwarder.flush().unwrap();
+        }
+        let tail: Vec<String> = seen[seen.len() - 4..]
+            .iter()
+            .map(|piece| match piece {
+                Watched::Live { event, .. } => match &event.happened {
+                    Happened::Grew { item, text, .. } => format!("{item}:{text}"),
+                    _ => panic!("unexpected"),
+                },
+                _ => panic!("unexpected"),
+            })
+            .collect();
+        assert_eq!(tail, ["a:1", "b:1", "a:2", "b:2"]);
     }
 }

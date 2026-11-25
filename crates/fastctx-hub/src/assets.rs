@@ -215,6 +215,10 @@ pub(crate) struct Assets {
     receipted: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
     /// What is to be told unasked, by whom answers a request.
     pushes: Mutex<Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)>>,
+    /// Of what is to be told, the streams that moved, by machine, scope and
+    /// stream, as far as each moved: many moves of one stream before the
+    /// round tells them are one, the furthest (codex-9ecf0ab9).
+    moves: Mutex<std::collections::HashMap<(fastctx_types::MachineName, String, String), u64>>,
     /// The tickets for objects' data connections, and the proofs of
     /// holding that stand (design §6.5, §7.3).
     pub(crate) objects: objects::Objects,
@@ -283,6 +287,7 @@ impl Assets {
             followers: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
+            moves: Mutex::new(std::collections::HashMap::new()),
             objects: objects::Objects::default(),
             lines: line::Lines::default(),
             work: work::Work::default(),
@@ -1379,12 +1384,10 @@ impl Assets {
         if let Some(by) = by {
             told.remove(by);
         }
-        let mut pushes = self.pushes.lock().expect("pushes");
+        let mut moves = self.moves.lock().expect("moves");
         for machine in told {
-            pushes.push((
-                machine,
-                fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next },
-            ));
+            let furthest = moves.entry((machine, scope.to_string(), stream.to_string())).or_insert(next);
+            *furthest = (*furthest).max(next);
         }
     }
 
@@ -1392,7 +1395,12 @@ impl Assets {
     /// in `directory` as it stands (design §6.4): one that no longer does
     /// is told nothing more of the scope until it reads it again.
     pub(crate) fn drain_pushes(&self) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
-        std::mem::take(&mut *self.pushes.lock().expect("pushes"))
+        let moves = std::mem::take(&mut *self.moves.lock().expect("moves"));
+        let mut pushes = std::mem::take(&mut *self.pushes.lock().expect("pushes"));
+        pushes.extend(moves.into_iter().map(|((machine, scope, stream), next)| {
+            (machine, fastctx_types::assets::Push::Moved { scope, stream, next })
+        }));
+        pushes
     }
 
     /// Of `pushes`, taken off before `directory` was read (so a revocation

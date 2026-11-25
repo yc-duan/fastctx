@@ -122,6 +122,9 @@ pub(crate) struct Assets {
     /// check or a giving back failed — looked at by themselves again until
     /// one does (HH03, HH06).
     pub(crate) relook: Mutex<std::collections::BTreeSet<String>>,
+    /// The streams whose frames, told moved while a turn of their scope was
+    /// under way, wait for that turn to end to be taken (`session::moved`).
+    pub(crate) moves_waiting: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Counted up as a conversation's description, place, title or
     /// archiving comes here from the hub: the World the interfaces are
     /// shown is worked out again, a machine that is away listed from the
@@ -303,6 +306,7 @@ impl Assets {
             looked: Mutex::new(HashMap::new()),
             uploads: Mutex::new(std::collections::BTreeSet::new()),
             relook: Mutex::new(std::collections::BTreeSet::new()),
+            moves_waiting: Mutex::new(std::collections::BTreeSet::new()),
             metadata_moved: tokio::sync::watch::channel(0).0,
             seeded: Mutex::new(std::collections::BTreeSet::new()),
             taken: Mutex::new(HashMap::new()),
