@@ -214,7 +214,25 @@ fn tell(hub: &Hub, shown: &mut HashMap<MachineName, Shown>, scope: Scope<'_>) {
         let next = groups.len();
         let group = *groups.entry((logins.clone(), replicated_records)).or_insert(next);
         let machines: HashSet<_> = match scope {
-            Scope::Machines(machines) if !current.fresh => machines.iter().cloned().collect(),
+            // Of what changed, what it may see or was told of, walked from
+            // whichever side is smaller: each reader walking every change made
+            // a pass quadratic when thousands of machines told anew at once,
+            // as they do coming back after the hub starts again.
+            Scope::Machines(changed) if !current.fresh => {
+                if changed.len() <= visibility::reach(&directory, &logins) {
+                    changed
+                        .iter()
+                        .filter(|machine| current.machines.contains_key(*machine) || sees(&directory, &logins, machine))
+                        .cloned()
+                        .collect()
+                } else {
+                    visibility::candidates(&directory, &logins)
+                        .into_iter()
+                        .chain(current.machines.keys().cloned())
+                        .filter(|machine| changed.contains(machine))
+                        .collect()
+                }
+            }
             _ => visibility::candidates(&directory, &logins)
                 .into_iter()
                 .chain(current.machines.keys().cloned())
