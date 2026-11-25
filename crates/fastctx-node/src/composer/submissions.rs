@@ -263,12 +263,18 @@ fn wait_coming(node: &Arc<Node>, id: &ResidentId, since: std::time::Instant) {
     let (node, id) = (node.clone(), id.clone());
     fastctx_platform::task::spawn(async move {
         tokio::time::sleep_until((since + COMING_WAITS).into()).await;
-        let over = matches!(
-            node.composers.stopping.lock().expect("composer stops").get(&id),
-            Some(Stop::Coming(at)) if *at == since
-        );
+        // Looked at and let go under one hold: a stop asked meanwhile, of
+        // the turn those words began, stands (codex-580b4d87).
+        let over = {
+            let mut stopping = node.composers.stopping.lock().expect("composer stops");
+            let over = matches!(stopping.get(&id), Some(Stop::Coming(at)) if *at == since);
+            if over {
+                stopping.remove(&id);
+            }
+            over
+        };
         if over {
-            mark(&node, &id, None);
+            told(&node, &id);
         }
         schedule(&node, &id);
     });
@@ -302,6 +308,12 @@ fn mark(node: &Arc<Node>, id: &ResidentId, stop: Option<Stop>) {
             None => stopping.remove(id),
         };
     }
+    told(node, id);
+}
+
+/// The stop held in memory changed: viewers hear of it, and it is kept with
+/// the composer's state.
+fn told(node: &Arc<Node>, id: &ResidentId) {
     node.residents.touch();
     let (node, id) = (node.clone(), id.clone());
     fastctx_platform::task::spawn(async move {

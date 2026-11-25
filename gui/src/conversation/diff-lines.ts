@@ -162,8 +162,10 @@ const WHOLE_MOST = 1024 * 1024;
 export async function wholeDiff(diff: DiffRef): Promise<RawLines | null> {
   if (diff.bytes === undefined || diff.bytes > WHOLE_MOST) return null;
   try {
-    const read = await readText(diff.machine, diff.path, { kind: "all" });
-    if (read.text === null) return null;
+    // No more than the most, whatever the file grew to since it was
+    // written: one larger is read as lines (codex-580b4d87).
+    const read = await readText(diff.machine, diff.path, { kind: "range", offset: 0, bytes: WHOLE_MOST });
+    if (read.text === null || read.info.file.size > read.info.length) return null;
     const lines = read.text.split("\n");
     if (lines[lines.length - 1] === "") lines.pop();
     return Object.assign(new MemoryLines(lines), { close: async () => {} });

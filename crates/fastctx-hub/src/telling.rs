@@ -56,9 +56,10 @@ pub(crate) async fn run(hub: Weak<Hub>, changed: Arc<Notify>, present: Arc<Notif
             () = present.notified() => Some(false),
             () = until(due) => None,
         };
-        // Taken only when woken by a change: a session owed one meanwhile
-        // is told it with the rest.
-        let urgent = woke.is_some() && authority.swap(false, Ordering::SeqCst);
+        // Taken only when woken by a change of the directory: one of who is
+        // online leaves it for that change, which wakes this next
+        // (codex-580b4d87).
+        let urgent = woke == Some(true) && authority.swap(false, Ordering::SeqCst);
         let Some(hub) = hub.upgrade() else { return };
         spacing = hub.blocking(move |hub| tell(&hub, woke, urgent, spacing)).await;
         drop(hub);

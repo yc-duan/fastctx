@@ -675,7 +675,8 @@ function agentsPage(next: Place): Page {
       store,
       words: english ? enAgentLogins : zhAgentLogins,
       changeWords: english ? enAgentChange : zhAgentChange,
-      read: readAllLogins,
+      // Every machine's at once: the page follows the logins topic.
+      read: (machine) => readAllLogins(machine, machine === null),
       scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen!.now)),
       add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent as "claude" | "codex", dir, specimen!.now)),
       folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen!.now)),
@@ -716,15 +717,15 @@ function agentsPage(next: Place): Page {
   return agentsShown;
 }
 
-function readAllLogins(machine: string | null): Promise<WorldLogins> {
-  return live ? agentLogins(machine) : specimenLoginsRead(machine);
+function readAllLogins(machine: string | null, atOnce = false): Promise<WorldLogins> {
+  return live ? agentLogins(machine, atOnce) : specimenLoginsRead(machine);
 }
 
 /** What a machine's own programs say of its agents, or with null every
  *  machine's this computer reaches, as a live World or the specimen
  *  answers. */
-function agentsOn(machine: string | null) {
-  if (live) return agents(machine);
+function agentsOn(machine: string | null, atOnce = false) {
+  if (live) return agents(machine, atOnce);
   const names = machine
     ? [machine]
     : [...new Set([...machinesOf(specimen!.world).filter((one) => one.here || one.online).map((one) => one.name), ...assistantsOf(specimen!.world).map((one) => one.machine)])];
@@ -769,7 +770,8 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   defaults: profileDefaults,
   homeWords: agentHomeWords,
   modelWords: english ? enModelPanel : zhModelPanel,
-  agents: (machine) => agentsOn(machine),
+  // Every machine's at once: the picker follows the logins topic.
+  agents: (machine) => agentsOn(machine, machine === null),
   folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn, mcpOff }) {
     if (!live) return specimenBegin(params.get("start")).then((to) => ({ to, delivery: null }));

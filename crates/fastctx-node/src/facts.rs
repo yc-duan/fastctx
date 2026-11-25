@@ -24,11 +24,24 @@ const FILE: &str = "machine-facts.json";
 /// How soon a machine that could not say what it is like is asked again.
 const AGAIN: jiff::SignedDuration = jiff::SignedDuration::from_secs(30);
 
-#[derive(Default)]
 pub(crate) struct Facts {
     kept: Mutex<HashMap<HubId, BTreeMap<MachineName, Kept>>>,
     asking: Mutex<HashSet<(HubId, MachineName)>>,
     current: Mutex<HashMap<(HubId, MachineName), Declaration>>,
+    /// The askings behind a listing that may go at once: a network of
+    /// hundreds is asked a few dozen at a time (codex-580b4d87).
+    turns: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for Facts {
+    fn default() -> Self {
+        Self {
+            kept: Mutex::default(),
+            asking: Mutex::default(),
+            current: Mutex::default(),
+            turns: Arc::new(tokio::sync::Semaphore::new(32)),
+        }
+    }
 }
 
 struct Declaration {
@@ -152,8 +165,9 @@ fn ask(
     account: AccountName,
     before: Option<Result<MachineFacts, String>>,
 ) {
-    let (node, link) = (node.clone(), link.clone());
+    let (node, link, turns) = (node.clone(), link.clone(), node.facts.turns.clone());
     fastctx_platform::task::spawn(async move {
+        let _turn = turns.acquire_owned().await;
         let answer = match declared(&node, &link, &name, &account).await {
             Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
             Ok(Ok(_)) => Err("it answered something else".to_string()),

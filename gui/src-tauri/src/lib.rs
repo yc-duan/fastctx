@@ -605,8 +605,14 @@ async fn since(
 async fn agents(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
+    at_once: Option<bool>,
 ) -> Result<fastctx_types::agents::WorldAgents, String> {
-    shell.world().agents_at_once(machine(machine_name)?).await.map_err(|error| error.to_string())
+    let machine = machine(machine_name)?;
+    // What is known of each machine at once, for a page that follows the
+    // logins topic for the rest (`Call::Agents::at_once`); else each waited on.
+    let world = shell.world();
+    if at_once.unwrap_or(false) { world.agents_at_once(machine).await } else { world.agents(machine).await }
+        .map_err(|error| error.to_string())
 }
 
 /// Stops the turn a resident is running; says whether one was. Seeing no

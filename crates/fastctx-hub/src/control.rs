@@ -348,7 +348,7 @@ pub(crate) async fn session(
                 if let Up::Ping { health, workbench, logins_number, .. } = &frame {
                     heard.heartbeat(&hub, &name, key, generation, health.as_ref());
                     crate::workbench::heard(&hub, &name, *workbench);
-                    crate::workbench::logins_heard(&hub, &name, *logins_number);
+                    crate::workbench::logins_heard(&hub, &name, generation, *logins_number);
                 }
                 Some(Err(frame))
             },
@@ -474,6 +474,7 @@ pub(crate) async fn session(
         writer.abort();
     }
     out.shut();
+    crate::workbench::logins_gone(&hub, &name, generation);
     match ended {
         Some(reason) => hub.log.line(format_args!("{name} disconnected: {reason}")),
         None => hub.log.line(format_args!("{name} disconnected")),

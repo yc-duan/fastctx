@@ -342,8 +342,10 @@ export function since(at: Date, town: string | null): Promise<WorldSince> {
 
 /** The agents each machine can start, as their own programs say; one
  *  machine, or all of them. */
-export function agents(machine: MachineName | null): Promise<WorldAgents> {
-  return invoke("agents", { machineName: machine });
+/** `atOnce`: what is known of each machine at once, one not heard from
+ *  lately told as being asked; the logins topic moves once it answered. */
+export function agents(machine: MachineName | null, atOnce = false): Promise<WorldAgents> {
+  return invoke("agents", { machineName: machine, atOnce });
 }
 
 /** Stops the turn the user saw running (`turn`), and no turn begun since.
@@ -416,8 +418,9 @@ export function agentHomes(machine: MachineName, change: HomeChange): Promise<vo
 
 /** What one machine, or every machine the user may look at, keeps of its
  *  agents' logins; nothing is started to read it. */
-export function agentLogins(machine: MachineName | null): Promise<WorldLogins> {
-  return invoke("agent_logins", { machineName: machine });
+/** `atOnce`, as `agents` takes it. */
+export function agentLogins(machine: MachineName | null, atOnce = false): Promise<WorldLogins> {
+  return invoke("agent_logins", { machineName: machine, atOnce });
 }
 
 /** Scans a machine for its agents, answered once the usual places are

@@ -282,23 +282,18 @@ async fn resumes_there(
     Ok(facts_of(node, link, machine, account).await?.is_some_and(|facts| facts.upload_resumes))
 }
 
-/// What `machine` says of itself, as this node keeps it for its connection
-/// now (`crate::facts`): asked only when not kept yet, where an upload asked
-/// it up to three times, a round trip each before the first byte went.
-/// None from one that answered something else.
+/// What `machine` says of itself on its connection now, as this node keeps
+/// it for that connection and key (`crate::facts::declared`): asked only
+/// when not kept for it yet, where an upload asked it up to three times, a
+/// round trip each before the first byte went. None from one that answered
+/// something else.
 async fn facts_of(
     node: &Arc<Node>,
     link: &Arc<fastctx_net::link::Link>,
     machine: &MachineName,
     account: &fastctx_types::AccountName,
 ) -> Result<Option<fastctx_types::world::MachineFacts>, Failure> {
-    let member = link.view().member(machine).cloned();
-    if let Some(member) = &member
-        && let Ok(facts) = crate::facts::of(node, link, member, Some(account.clone()))
-    {
-        return Ok(Some(facts));
-    }
-    match link.call(machine, account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
+    match crate::facts::declared(node, link, machine, account).await.map_err(broke)?? {
         RemoteReply::Facts(facts) => Ok(Some(facts)),
         _ => Ok(None),
     }

@@ -1815,7 +1815,7 @@ impl fastctx_net::link::Node for Handler {
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         let Some(link) = node.link_of(&self.hub) else { return };
-        crate::elsewhere::view_changed(&node, &link);
+        crate::elsewhere::directory_changed(&node, &link);
         // An account made again is seen so before anything is asked here
         // for it (`incarnations`).
         node.incarnations.saw(&node, &self.hub, &link.view().directory);

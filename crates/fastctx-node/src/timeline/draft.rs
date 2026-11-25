@@ -34,10 +34,27 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 /// writing, which reads the composer as it stands then, and nothing else
 /// kept beside the timeline is made again for it (codex-1c5d39f1).
 pub(crate) fn changed(node: &Node, resident: &ResidentId) {
-    if CHANGED.lock().expect("changed drafts").insert(resident.clone()) {
+    let first = CHANGED.lock().expect("changed drafts").insert(resident.clone());
+    // Asked again now and then all the same: a writing set aside after its
+    // failures is taken up again only when asked (codex-580b4d87).
+    let now = std::time::Instant::now();
+    let due = {
+        let mut asked = ASKED.lock().expect("drafts asked");
+        let due = first || asked.get(resident).is_none_or(|at| now.duration_since(*at) >= ASKED_AGAIN);
+        if due {
+            asked.insert(resident.clone(), now);
+        }
+        due
+    };
+    if due {
         super::tail::wanted_draft(node, resident);
     }
 }
+
+/// When each conversation's draft was last asked to be written, and how long
+/// after a draft still waiting to be written is asked for again.
+static ASKED: LazyLock<Mutex<std::collections::HashMap<ResidentId, std::time::Instant>>> = LazyLock::new(Mutex::default);
+const ASKED_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Brings `resident`'s draft in the asset library to its composer here;
 /// how many items were written.

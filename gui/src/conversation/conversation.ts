@@ -155,6 +155,11 @@ function itemOf(event: SessionEvent): string | null {
   }
 }
 
+/** The turn an event told as it happens is of. */
+function turnOf(event: SessionEvent): string | null {
+  return "turn" in event && typeof event.turn === "string" ? event.turn : null;
+}
+
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
 export class Conversation {
@@ -203,6 +208,9 @@ export class Conversation {
   /** The items, by turn and id, whose ending the timeline recorded: what
    *  comes of one as it happens after that is late, and not shown. */
   private recordedItems = new Set<string>();
+  /** The turns whose end the timeline recorded: what comes of one as it
+   *  happens after that is late, and not shown. */
+  private endedTurns = new Set<string>();
   /** Moves when parts come and go. */
   private structure = 0;
   private folds = 0;
@@ -359,8 +367,20 @@ export class Conversation {
     span.last = true;
     const tail = this.live;
     tail.history([...span.events], [], span.keys, false, this.asks);
+    // What the part read holds stands for what was shown of it ahead: only
+    // items it has not, of turns it has not seen end, are shown again over
+    // it, and none written twice (codex-580b4d87).
     const now = Date.now();
-    this.aheadEvents = this.aheadEvents.filter((event) => now - Date.parse(event.at) < AHEAD_FOR_MS);
+    const inPart = new Set<string>();
+    for (const event of span.events) {
+      const item = itemOf(event);
+      if (item) inPart.add(item);
+      if (event.event === "turn_ended") this.turnRecorded(event.turn);
+    }
+    this.aheadEvents = this.aheadEvents.filter((event) => {
+      const item = itemOf(event);
+      return now - Date.parse(event.at) < AHEAD_FOR_MS && !!item && !inPart.has(item) && !this.endedTurns.has(turnOf(event) ?? "");
+    });
     for (const event of this.aheadEvents) tail.late(event);
     const held = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold: tail }, span);
     this.spans = new Map([[held, span]]);
@@ -445,18 +465,20 @@ export class Conversation {
     if (records.length === 0) return;
     if (!again) for (const since of this.meanwhile) since.push(...records);
     this.searchVersion += 1;
-    const tailFold = this.tail.fold;
     // A turn the timeline recorded the end of stands as recorded: what was
     // shown of it ahead goes, whatever names its items had as they happened.
     const ended = new Set<string>();
     for (const record of records) {
       if (record.record !== "is") continue;
       this.recorded(record.shown.event);
-      if (record.shown.event.event === "turn_ended") ended.add(record.shown.event.turn);
+      if (record.shown.event.event === "turn_ended") {
+        ended.add(record.shown.event.turn);
+        this.turnRecorded(record.shown.event.turn);
+      }
     }
     const ahead = this.aheadEvents.length;
     if (ahead) {
-      this.aheadEvents = this.aheadEvents.filter((event) => !this.recordedItems.has(itemOf(event) ?? "") && !("turn" in event && typeof event.turn === "string" && ended.has(event.turn)));
+      this.aheadEvents = this.aheadEvents.filter((event) => !this.recordedItems.has(itemOf(event) ?? "") && !ended.has(turnOf(event) ?? ""));
     }
     const dropped = ahead > 0 && this.aheadEvents.length < ahead;
     const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
@@ -502,8 +524,6 @@ export class Conversation {
       if (span) touched.set(this.tail, { events: this.shown(span), keys: [...span.keys] });
     }
     for (const [part, previous] of touched) this.refold(part, previous);
-    // Folded anew, the latest part is shown again what came ahead of it.
-    if (this.tail.fold !== tailFold) this.reahead();
     if (touched.size) {
       this.parts = [...this.parts];
       this.structure += 1;
@@ -522,6 +542,9 @@ export class Conversation {
     // what its machine holds of it now.
     const now = this.nowTold;
     if (part === this.tail && now) part.fold.now(now.busy, now.turn, now.kept, now.halted);
+    // Folded anew from its records, the latest part is shown again what came
+    // ahead of them, whatever folded it.
+    if (part === this.tail) this.reahead();
   }
 
   /** Tells `part` what the parts after it hold of its runs and agents: a
@@ -567,10 +590,25 @@ export class Conversation {
   ahead(event: SessionEvent): void {
     if (!this.replica) return;
     const item = itemOf(event);
-    if (!item || this.recordedItems.has(item)) return;
+    if (!item || this.recordedItems.has(item) || this.endedTurns.has(turnOf(event) ?? "")) return;
+    this.live.late(event);
+    // Kept as one growth for each item's part, so a long answer is shown
+    // again whole however many pieces it came in.
+    const last = this.aheadEvents.length ? this.aheadEvents[this.aheadEvents.length - 1] : undefined;
+    if (event.event === "grew" && last?.event === "grew" && last.turn === event.turn && last.item === event.item && last.part === event.part) {
+      this.aheadEvents[this.aheadEvents.length - 1] = { ...last, text: last.text + event.text };
+      return;
+    }
     this.aheadEvents.push(event);
     if (this.aheadEvents.length > AHEAD_MOST) this.aheadEvents.splice(0, this.aheadEvents.length - AHEAD_MOST);
-    this.live.late(event);
+  }
+
+  /** The timeline recorded the end of `turn`. */
+  private turnRecorded(turn: string): void {
+    this.endedTurns.add(turn);
+    if (this.endedTurns.size > RECORDED_MOST) {
+      for (const old of [...this.endedTurns].slice(0, this.endedTurns.size - RECORDED_MOST)) this.endedTurns.delete(old);
+    }
   }
 
   /** The latest part was folded anew from its records: what was shown

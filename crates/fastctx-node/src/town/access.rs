@@ -68,7 +68,16 @@ pub(crate) fn current(node: &Node, resident: &fastctx_types::ResidentId) -> Resu
 /// asked again: someone waiting to start a colleague, or a `w`, does not
 /// wait on the hub's directory and ledger first.
 pub(crate) async fn ready(node: &Arc<Node>, acting: &Acting, town: &TownName) -> Result<(), Failure> {
-    if check(node, acting, town).is_ok()
+    // Only while the project's hub is heard now: a machine cut off from it
+    // does not go on by what it last told, which may have been taken back
+    // meanwhile (codex-580b4d87).
+    let heard = crate::ledger::names::place(&node.world, town)
+        .ok()
+        .flatten()
+        .and_then(|place| node.link_of(&place.hub))
+        .is_some_and(|link| matches!(link.status(), fastctx_net::link::Status::Online { .. }) && link.view_current());
+    if heard
+        && check(node, acting, town).is_ok()
         && crate::ledger::query::available(node, Some(town)).await.is_ok_and(|records| records.contains_key(town))
     {
         return Ok(());

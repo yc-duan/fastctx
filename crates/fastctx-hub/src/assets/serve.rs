@@ -322,6 +322,7 @@ pub(crate) fn recheck(
     }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
     if !scopes::readable(directory, machine, &scope)
+        || super::retired::whole(&scope)
         || stream.is_some_and(|stream| !scopes::holds(directory, machine, &scope, stream))
     {
         assets.gone(key, machine);
@@ -625,10 +626,11 @@ pub(crate) fn ask_in(
         return Ok(Reply::Revoked { scope: scope.clone() });
     }
     // A scope this machine reads no more is answered so, whatever was asked
-    // of it: its device stops using what it holds (§4.5, §6.3).
+    // of it: its device stops using what it holds (§4.5, §6.3). So is one the
+    // hub gives no device any more (`retired`).
     if let Some(key) = scope_of(&request)
         && let Some(scope) = scopes::scope(assets, key)?
-        && !scopes::readable(directory, machine, &scope)
+        && (!scopes::readable(directory, machine, &scope) || super::retired::whole(&scope))
     {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });

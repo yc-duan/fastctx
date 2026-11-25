@@ -17,6 +17,12 @@ use fastctx_types::{JobId, Reply};
 use crate::Node;
 use crate::around::Heard;
 
+/// How long a stop asked of every machine waits for them: a stop taken is
+/// not given up, and ending a job's processes and records takes its own
+/// time (`fastctx_types::contract`, `StopJob`): one told sooner it did not
+/// stop would be told wrong (codex-580b4d87).
+const STOPPED: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Stops `job` for `by`, who works for `acting`: on `machine`, or else on
 /// the one machine it may work on that has a job with this id.
 pub async fn stop(
@@ -55,7 +61,7 @@ pub async fn stop(
                 return Err(Failure::new(format!("{here} has no job {job}")));
             }
             let machines = crate::around::reachable(node, acting, Purpose::Hands);
-            crate::around::ask_known(machines, |_| call.clone(), crate::around::SEARCHED)
+            crate::around::ask_known(machines, |_| call.clone(), STOPPED)
                 .await
                 .into_iter()
                 .map(|(asked, heard)| (asked.source.written, heard))

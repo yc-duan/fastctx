@@ -90,9 +90,10 @@ pub async fn ask_each(machines: Vec<Reachable>, call: impl Fn(&MachineName) -> R
 /// Asks every machine concurrently as its hub last told who is connected,
 /// none of the hubs asked again first: what someone waits on is answered
 /// from what is here, and the directory follows its hub's changes on its
-/// own. Each call answers within `within` at most, besides its own
-/// contract; one that does not is told as no answer, the others not held
-/// for it. Results are sorted by machine name.
+/// own. All of them are answered within `within` at most, besides each
+/// call's own contract, the wait for a turn to ask included: one that is not
+/// is told as no answer, the others not held for it (codex-580b4d87).
+/// Results are sorted by machine name.
 pub async fn ask_known(
     machines: Vec<Reachable>,
     call: impl Fn(&MachineName) -> RemoteCall,
@@ -147,6 +148,8 @@ async fn ask<F: Future<Output = Result<(), String>>>(
 ) -> Vec<(Asked, Heard)> {
     let mut asks = FuturesUnordered::new();
     let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE));
+    // A cap bounds the whole round, waiting for a turn to ask included.
+    let deadline = cap.map(|cap| tokio::time::Instant::now() + cap);
     let sources: Vec<_> = machines
         .iter()
         .map(|machine| MachineSource {
@@ -172,12 +175,20 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                 }
                 match seen {
                     Some(seen) if seen.online => {
-                        let _turn = asking.acquire().await;
+                        let turn = match deadline {
+                            Some(deadline) => match tokio::time::timeout_at(deadline, asking.acquire()).await {
+                                Ok(turn) => turn,
+                                Err(_) => return Heard::NoAnswer("it was not asked in time: too many were asked before it".to_string()),
+                            },
+                            None => asking.acquire().await,
+                        };
+                        let _turn = turn;
                         let name = &seen.name;
                         let purpose = call.purpose();
-                        let within = match (call.contract().within, cap) {
-                            (Some(within), Some(cap)) => Some(within.min(cap)),
-                            (within, cap) => within.or(cap),
+                        let left = deadline.map(|deadline| deadline.saturating_duration_since(tokio::time::Instant::now()));
+                        let within = match (call.contract().within, left) {
+                            (Some(within), Some(left)) => Some(within.min(left)),
+                            (within, left) => within.or(left),
                         };
                         let work = link.call(name, &account, purpose, call);
                         let answer = match within {

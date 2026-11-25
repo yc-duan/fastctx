@@ -329,9 +329,9 @@ pub(crate) struct Hub {
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
-    /// The number each machine's agents and logins stand at, as it last
-    /// told (`workbench::logins_heard`).
-    logins: Mutex<HashMap<MachineName, u64>>,
+    /// The number each machine's agents and logins stand at, as its session
+    /// (by generation) last told (`workbench::logins_heard`).
+    logins: Mutex<HashMap<MachineName, (u64, u64)>>,
 }
 
 /// Full views built at once when many sessions are told of a change.

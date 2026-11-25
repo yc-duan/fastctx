@@ -122,7 +122,9 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
                  AND earlier.state = ?2 AND earlier.id < job.id) \
              ORDER BY due, id LIMIT ?4",
         )?
-        .query_map(params![kind, WAITING, at, (most * 8).min(LOOKED_AT) as i64], |row| {
+        // A kind that paces its jobs looks further: one it keeps waiting is
+        // not taken, and must not hide one behind it that may begin.
+        .query_map(params![kind, WAITING, at, if registered.kind.ready.is_some() { LOOKED_AT } else { (most * 8).min(LOOKED_AT) } as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;
