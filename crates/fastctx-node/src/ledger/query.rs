@@ -86,17 +86,30 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
                 continue;
             }
             caught_up.push(name.clone());
+            let listed = name.clone();
             let name = {
                 let _syncing = node.syncing.lock().await;
                 let have = crate::ledger::replica_seq(&node.world, &name)
                     .map_err(|error| format!("reading {name}: {error}"))?;
-                if have >= latest {
+                // A cursor a release before left beside a projection may count
+                // entries the projection does not hold: it is made again.
+                if have >= latest && !super::projected::left_behind(&node.world.town(&name)) {
                     continue;
                 }
                 let Some(name) = super::sync_name(node, &link, &id)? else { continue };
                 name
             };
-            super::take(node, &link, &name, &id, latest).await?;
+            // From the hub's projection where it writes one, as every other
+            // taking: entries replicated beside one leave its history out.
+            // One not all here yet is shown as this machine has it, and taken
+            // whole on a later ask; any other failure is the reader's to see.
+            if let Err(error) = super::take_latest(node, &link, &name, &id, latest, true).await {
+                if !error.contains(super::projected::NOT_HERE) {
+                    return Err(error);
+                }
+                node.log.line(format_args!("taking the ledger of {name}: {error}"));
+                caught_up.retain(|kept| *kept != listed);
+            }
         }
         let wanted = town.and_then(|town| {
             link.view().projects.iter().find(|project| project.name == *town).map(|project| project.town.clone())

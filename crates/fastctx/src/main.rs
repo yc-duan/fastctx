@@ -15,18 +15,19 @@ mod claude_context;
 mod claude_session_directory;
 mod claude_subagents;
 mod command_guard;
-mod copy;
 mod compact;
+mod copy;
 mod data;
-mod move_login;
 mod doctor;
 mod first_program;
 mod host_change;
 mod hub_intake;
-mod hub_starts;
 mod hub_retire;
+mod hub_starts;
+mod move_login;
 
 mod goal;
+mod history;
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -116,6 +117,8 @@ enum Command {
     Timer(timer::TimerArgs),
     /// Read or mark this conversation's goal.
     Goal(goal::GoalArgs),
+    /// Delete a history document for good.
+    History(history::HistoryArgs),
     #[command(hide = true)]
     TurnFacts(turn_facts::TurnFactsArgs),
     #[command(hide = true)]
@@ -512,6 +515,7 @@ fn main() -> ExitCode {
         Command::Doctor(command) => doctor::run(command),
         Command::Timer(args) => timer::run(args),
         Command::Goal(args) => goal::run(args),
+        Command::History(args) => history::run(args),
         Command::TurnFacts(args) => turn_facts::run(args),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),

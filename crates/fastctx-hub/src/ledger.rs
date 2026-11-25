@@ -540,6 +540,11 @@ pub(crate) async fn write_as(
             _ => Down::LedgerChanged { town: town.clone() },
         };
         hub.tell(&machine, changed);
+        // A release before deletion takes the change of one deleted for good
+        // as an update it cannot read: the whole list of copies withdraws it.
+        if reads_history && history.as_ref().is_some_and(|revision| revision.deleted) {
+            hub.tell(&machine, Down::ReplicasChanged);
+        }
     }
     Ok(Told::Written { seq })
 }

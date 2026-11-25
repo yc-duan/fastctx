@@ -19,6 +19,9 @@ import "./history.css";
  *  given up. */
 const SAVE_TRIES = 3;
 
+/** The document read was deleted for good and written anew since. */
+class Rewritten extends Error {}
+
 export interface HistoryPageOptions {
   words: HistoryWords;
   head(title: string, actions?: string): string;
@@ -31,6 +34,8 @@ export interface HistoryPageOptions {
   save(text: string, expected: number): Promise<HistoryRevision>;
   /** Asks first, then takes it down. */
   retire(expected: number, done: () => void): void;
+  /** Asks first, then deletes it for good. */
+  remove(expected: number): void;
   /** Takes a version's text as the newest. */
   restore(version: number): Promise<HistoryRevision>;
   /** Who wrote it, in the interface's words. */
@@ -142,7 +147,7 @@ export class HistoryPage {
           </li>`;
         })
         .join("")}</ol>
-      <footer class="sheet-foot">${latest && !latest.retired ? `<button class="text-button danger hd-retire" type="button">${escape(words.retire)}</button>` : "<span></span>"}<button class="sheet-go sheet-close" type="button">${escape(this.options.close)}</button></footer>`;
+      <footer class="sheet-foot"><span class="hd-foot-acts">${latest && !latest.retired ? `<button class="text-button danger hd-retire" type="button">${escape(words.retire)}</button>` : ""}${latest ? `<button class="text-button danger hd-remove" type="button">${escape(words.remove)}</button>` : ""}</span><button class="sheet-go sheet-close" type="button">${escape(this.options.close)}</button></footer>`;
     sheet.body.onsubmit = (event) => event.preventDefault();
     sheet.body.querySelectorAll<HTMLButtonElement>("[data-look]").forEach((button) =>
       button.addEventListener("click", () => {
@@ -160,6 +165,10 @@ export class HistoryPage {
     sheet.body.querySelector(".hd-retire")?.addEventListener("click", () => {
       sheet.close();
       if (latest) this.options.retire(latest.version, () => void this.load(null));
+    });
+    sheet.body.querySelector(".hd-remove")?.addEventListener("click", () => {
+      sheet.close();
+      if (latest) this.options.remove(latest.version);
     });
     sheet.show();
   }
@@ -205,7 +214,11 @@ export class HistoryPage {
           return await this.options.save(composeText(standing.name, about, body), standing.version);
         } catch (error) {
           if (tries >= SAVE_TRIES || !stale(error, whyOf(error))) throw error;
-          standing = (await this.options.read(null)).revision;
+          const now = await this.options.read(null);
+          // Deleted for good and written anew since it was read: the edit is
+          // not written over the new one.
+          if (!now.versions.some((one) => one.version === doc.revision.version)) throw new Rewritten();
+          standing = now.revision;
         }
       }
     });
@@ -233,9 +246,12 @@ export class HistoryPage {
       said.hidden = false;
       said.classList.add("hd-wrong");
       said.title = why;
-      said.innerHTML = stale(error, why)
-        ? `<span>${escape(words.changedElsewhere)}</span><button class="text-button" type="button" data-hd="reload">${escape(words.loadThat)}</button>`
-        : escape(words.notSaved);
+      said.innerHTML =
+        error instanceof Rewritten
+          ? `<span>${escape(words.rewritten)}</span><button class="text-button" type="button" data-hd="reload">${escape(words.loadThat)}</button>`
+          : stale(error, why)
+            ? `<span>${escape(words.changedElsewhere)}</span><button class="text-button" type="button" data-hd="reload">${escape(words.loadThat)}</button>`
+            : escape(words.notSaved);
     }
   }
 }

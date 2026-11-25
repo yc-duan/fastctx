@@ -1759,6 +1759,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::history::api::call(node, &Caller::User, request).await.map(Reply::History)
         }
+        Call::HistoryDelete { path } => crate::history::delete::command(node, peer, path).await.map(Reply::History),
         Call::TimelinePreview { machine, resident } => {
             users_voice(node, peer)?;
             let page = crate::timeline::last_page::get(node, machine, resident).await;

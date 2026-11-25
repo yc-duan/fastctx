@@ -1,4 +1,8 @@
 //! Signed project history revisions. Bodies are read on demand, never indexed.
+//! A document deleted for good keeps its revisions in the ledger, which only
+//! grows, but leaves the catalog, is read no more, and gives its place back.
+//! Written again under its name, it continues the name's version numbers and
+//! shows only what was written since.
 
 use crate::ledger::{Entry, File};
 use crate::sign::Bytes;
@@ -25,28 +29,41 @@ pub struct Index {
 }
 
 impl Index {
-    /// The number of distinct documents, including retired ones.
+    /// The number of distinct documents, including retired ones, not those
+    /// deleted for good.
     pub fn document_count(&self) -> usize {
-        self.documents.len()
+        self.documents.keys().filter(|name| !self.deleted(name)).count()
     }
 
+    /// Whether `name` stands deleted for good.
+    pub fn deleted(&self, name: &str) -> bool {
+        self.latest(name).is_some_and(|revision| revision.deleted)
+    }
+
+    /// The latest revision of `name`, a deletion included.
     pub fn latest(&self, name: &str) -> Option<&HistoryRevision> {
         self.documents.get(name).and_then(|versions| versions.last()).map(|stored| &stored.revision)
     }
 
+    /// The revisions of `name` written since it was last deleted.
+    fn life(&self, name: &str) -> &[Revision] {
+        let versions = self.documents.get(name).map_or(&[][..], Vec::as_slice);
+        let start = versions.iter().rposition(|stored| stored.revision.deleted).map_or(0, |at| at + 1);
+        &versions[start..]
+    }
+
+    /// Every revision of `name` since it was last deleted, oldest first.
     pub fn versions(&self, name: &str) -> Vec<HistoryRevision> {
-        self.documents.get(name).into_iter().flatten().map(|stored| stored.revision.clone()).collect()
+        self.life(name).iter().map(|stored| stored.revision.clone()).collect()
     }
 
     pub fn get(&self, name: &str, version: Option<u64>) -> Option<&HistoryRevision> {
+        let life = self.life(name);
         match version {
-            None => self.latest(name),
-            Some(version) => self
-                .documents
-                .get(name)?
-                .get(usize::try_from(version.checked_sub(1)?).ok()?)
-                .map(|stored| &stored.revision),
+            None => life.last(),
+            Some(version) => life.iter().find(|stored| stored.revision.version == version),
         }
+        .map(|stored| &stored.revision)
     }
 
     pub fn submitted(&self, name: &str, submission: &str) -> Option<&HistoryRevision> {
@@ -54,20 +71,24 @@ impl Index {
     }
 
     pub fn catalog(&self) -> Catalog {
-        let mut catalog = Catalog {
-            documents: self
-                .documents
-                .values()
-                .filter_map(|versions| versions.last())
-                .map(|stored| stored.revision.clone())
-                .collect(),
-        };
+        let mut catalog = Catalog::default();
+        for latest in self.documents.values().filter_map(|versions| versions.last()) {
+            if latest.revision.deleted {
+                catalog.deleted.insert(latest.revision.name.clone(), latest.revision.version);
+            } else {
+                catalog.documents.push(latest.revision.clone());
+            }
+        }
         catalog.sort();
         catalog
     }
 
     pub fn check(&self, stored: &Revision) -> Result<(), String> {
-        let current = self.latest(&stored.revision.name).map(|revision| revision.version);
+        let latest = self.latest(&stored.revision.name);
+        if stored.revision.deleted && latest.is_none_or(|latest| latest.deleted) {
+            return Err("there is no such history document to delete".into());
+        }
+        let current = latest.map(|revision| revision.version);
         if current.unwrap_or(0).checked_add(1) != Some(stored.revision.version) {
             return Err(fastctx_types::history::conflict(current));
         }
@@ -90,6 +111,9 @@ impl Index {
     }
 
     pub fn document(&self, name: &str, version: Option<u64>, files: &[File]) -> Result<Document, String> {
+        if self.deleted(name) {
+            return Err(fastctx_types::history::gone(name));
+        }
         let versions = self.versions(name);
         let revision = match version {
             Some(version) => versions.iter().find(|revision| revision.version == version),
@@ -153,7 +177,7 @@ pub fn revision_files(
 ) -> Result<(HistoryRevision, Vec<File>), String> {
     let description = markdown::parse_written(name, text)?.description;
     let version = expected.unwrap_or(0).checked_add(1).ok_or("history revision numbers are exhausted")?;
-    let revision = HistoryRevision { name: name.into(), description, version, retired, author };
+    let revision = HistoryRevision { name: name.into(), description, version, retired, deleted: false, author };
     let stored = Revision { revision: revision.clone(), submission };
     let files = vec![
         File {
@@ -161,6 +185,38 @@ pub fn revision_files(
             bytes: Bytes(serde_json::to_vec(&stored).map_err(|error| error.to_string())?),
         },
         File { path: path(name, version, "md"), bytes: Bytes(text.as_bytes().to_vec()) },
+    ];
+    decode(&files)?;
+    Ok((revision, files))
+}
+
+/// The revision that deletes `name` for good, as it stands at `expected`
+/// with `description`: retired as well, and holding no more than its header,
+/// so what it said goes no further than the revisions before it.
+pub fn deletion_files(
+    name: &str,
+    description: &str,
+    expected: u64,
+    author: Author,
+) -> Result<(HistoryRevision, Vec<File>), String> {
+    let quoted = serde_json::to_string(description).map_err(|error| error.to_string())?;
+    let text = format!("---\nname: {name}\ndescription: {quoted}\n---\n");
+    let version = expected.checked_add(1).ok_or("history revision numbers are exhausted")?;
+    let revision = HistoryRevision {
+        name: name.into(),
+        description: description.into(),
+        version,
+        retired: true,
+        deleted: true,
+        author,
+    };
+    let stored = Revision { revision: revision.clone(), submission: None };
+    let files = vec![
+        File {
+            path: path(name, version, "json"),
+            bytes: Bytes(serde_json::to_vec(&stored).map_err(|error| error.to_string())?),
+        },
+        File { path: path(name, version, "md"), bytes: Bytes(text.into_bytes()) },
     ];
     decode(&files)?;
     Ok((revision, files))

@@ -29,6 +29,13 @@ mod vouch;
 
 pub(crate) use session::{Proposal, committed, pushed, shared_elsewhere, wake};
 
+/// Brings what the records taken from `hub` refer to and this machine has
+/// not yet, off the passes, now: a reader waits on one of them.
+pub(crate) fn fetch_soon(node: &Arc<crate::Node>, hub: &HubId) {
+    objects::lane(node, hub);
+    wake(node, hub);
+}
+
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
 use fastctx_platform::Permissions;

@@ -5,10 +5,10 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
-#[cfg(desktop)]
-mod board;
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(desktop)]
+mod board;
 mod book;
 mod collab;
 mod collaboration;
@@ -1315,6 +1315,7 @@ pub fn run() {
             history::history_save,
             history::history_retire,
             history::history_restore,
+            history::history_delete,
             history::history_watch,
             layers::bring_in,
             book::book,

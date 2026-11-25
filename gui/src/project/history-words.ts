@@ -24,6 +24,8 @@ export interface HistoryWords {
   restore: string;
   /** Another version came first while this one was edited. */
   changedElsewhere: string;
+  /** It was deleted for good and written anew while this one was edited. */
+  rewritten: string;
   loadThat: string;
   notSaved: string;
   unreadable: string;
@@ -40,6 +42,10 @@ export interface HistoryWords {
   /** A document taken down, read. */
   retired: string;
   bringBack: string;
+  /** Deleting a document for good, and the card that asks first. */
+  remove: string;
+  removeTitle(name: string): string;
+  removeWhat: string;
   /** The new document's card. */
   name: string;
   nameRule: string;
@@ -57,6 +63,10 @@ export interface HistoryWords {
   /** What a conversation wrote in its own history before it joined its
    *  project. */
   earlier: string;
+  /** The box that finds documents by their name and what they cover, and
+   *  what it says when it finds none. */
+  find: string;
+  noneFound: string;
   /** A conversation the World no longer lists, as the way back names it. */
   untitled: string;
 }
@@ -83,6 +93,7 @@ export const zhHistory: HistoryWords = {
   latest: "查看最新版",
   restore: "恢复此版",
   changedElsewhere: "已在别处修改",
+  rewritten: "此篇已在别处删除并重写",
   loadThat: "载入该版本",
   notSaved: "保存失败",
   unreadable: "无法读取",
@@ -94,6 +105,9 @@ export const zhHistory: HistoryWords = {
   retireWhat: "撤下后智能体不再读取此篇；各版本保留，可随时恢复。",
   retired: "已撤下",
   bringBack: "恢复",
+  remove: "彻底删除",
+  removeTitle: (name) => `彻底删除「${name}」？`,
+  removeWhat: "删除后所有版本都不能再读取，也无法恢复；以后可以用同一个名称新写一篇。",
   name: "名称",
   nameRule: "只用小写字母、数字与连字符",
   description: "适用范围与检索关键词",
@@ -104,6 +118,8 @@ export const zhHistory: HistoryWords = {
   date: (at, now) => shortDate(at, now, "zh-CN"),
   of: (project) => `${project}${/[A-Za-z0-9]$/.test(project) ? " " : ""}的笔记`,
   earlier: "此前的笔记",
+  find: "搜索笔记",
+  noneFound: "没有找到",
   untitled: "对话",
 };
 
@@ -123,6 +139,7 @@ export const enHistory: HistoryWords = {
   latest: "See the newest",
   restore: "Make this the newest",
   changedElsewhere: "Changed elsewhere just now",
+  rewritten: "Deleted and written anew elsewhere",
   loadThat: "Load that version",
   notSaved: "Not saved",
   unreadable: "This one cannot be read",
@@ -134,6 +151,9 @@ export const enHistory: HistoryWords = {
   retireWhat: "Agents stop receiving it once it is taken down. Every version stays, and it can be brought back.",
   retired: "Taken down",
   bringBack: "Bring back",
+  remove: "Delete for good",
+  removeTitle: (name) => `Delete “${name}” for good?`,
+  removeWhat: "Every version goes and none can be brought back. The name can be used again for a new one.",
   name: "Name",
   nameRule: "Lower-case letters, numbers and hyphens only",
   description: "What it covers, and the words to find it by",
@@ -144,5 +164,7 @@ export const enHistory: HistoryWords = {
   date: (at, now) => shortDate(at, now, "en-GB"),
   of: (project) => `Notes of ${project}`,
   earlier: "Earlier notes",
+  find: "Find a note",
+  noneFound: "Nothing found",
   untitled: "Conversation",
 };

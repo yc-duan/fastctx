@@ -3,6 +3,10 @@
 pub const DISABLED: &str =
     "Notes are turned off for this account. Enable Notes in Fastctx account settings before creating or changing them.";
 
+/// Why a note is not deleted for good where its hub is of a release before.
+pub const DELETION_UNSUPPORTED: &str = "this network's hub must be updated before a note can be deleted for good; \
+     write its file empty to take it down instead";
+
 pub const TEMPLATE: &str = r####"HISTORY
 This project's history is in <path> on <machine>: one Markdown file per topic, each a
 coherent account of that topic as it stands now: how it works, what was decided and why,
@@ -28,10 +32,11 @@ where the words matter; a finding that took real work; a path that failed and wh
 when you stop, what is still open and what comes next. It is not a log: what was done is
 in git. Write each file to read well from top to bottom as the topic stands now: when
 something in it no longer holds, change it or take it out; when a whole topic no longer
-matters, write its file empty, which deletes it. Search first: if a file's topic is this
-very thing, change that file; if none is, start a new one. Change the files only with
-`write` and `edit`; nothing else reaches the user's other computers, and anything else is
-undone.
+matters, write its file empty, which takes it down for the user to bring back if wanted,
+or delete it for good, every version of it, with `fastctx history delete <file>`. Search
+first: if a file's topic is this very thing, change that file; if none is, start a new
+one. Change the files only with `write`, `edit` and `fastctx history delete`; nothing
+else reaches the user's other computers, and anything else is undone.
 
 A description is how the next reader finds a topic. Say in plain words what it covers,
 then add the words they may search with: how the trouble shows (symptoms, error text), its

@@ -109,6 +109,11 @@ pub enum Call {
         paths: Vec<std::path::PathBuf>,
     },
     History(crate::history::HistoryCall),
+    /// `fastctx history delete`: the history document whose file is at
+    /// `path` here, deleted for good by the conversation running the command.
+    HistoryDelete {
+        path: std::path::PathBuf,
+    },
     /// A conversation's installed timeline, read without its host's record
     /// (`crate::timeline_pages`).
     Timeline {
@@ -1566,6 +1571,7 @@ impl Call {
             | Self::GoalCommand { .. }
             | Self::HandOver { .. }
             | Self::History { .. }
+            | Self::HistoryDelete { .. }
             | Self::HistorySwitchRead { .. }
             | Self::HistorySwitchWrite { .. }
             | Self::HoldHost { .. }

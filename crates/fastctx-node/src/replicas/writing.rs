@@ -144,6 +144,7 @@ async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Op
         .values()
         .filter(|route| {
             route.account == folder.account
+                && !route.head.deleted
                 && matches!(&route.head.document, Document::History { scope, .. } if *scope == folder.scope)
         })
         .count();
@@ -157,6 +158,7 @@ async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Op
         document: Document::History { scope: folder.scope, name: name.into() },
         version: None,
         retired: false,
+        deleted: false,
         history: None,
     };
     Ok(Some(node.replicas.state.insert(Copy {
@@ -213,43 +215,19 @@ pub(crate) async fn intercept(
     let Some(path) = paths.first() else { return Ok(None) };
     let Some(slot) = locate(node, path).await? else { return Ok(None) };
     if crate::history::emptied::emptied(operation) {
-        let (document, version, previous, observed, copy_path) = {
-            let copy = slot.lock().await;
-            let previous = sync::text(node, &copy, copy.effective()).await.map_err(failure)?;
-            // Whether the writer's last view was of it as it stands.
-            let observed = match caller {
-                Caller::Resident(owner) => copy
-                    .observed
-                    .get(&owner.key())
-                    .and_then(|observed| observed.hash.as_ref())
-                    .is_some_and(|hash| *hash == copy.effective().hash),
-                _ => false,
-            };
-            (copy.head.document.clone(), copy.head.version, previous, observed, copy.path.clone())
-        };
-        if let Document::History { scope, name } = document {
+        let standing = Standing::of(node, caller, &slot).await?;
+        if let Document::History { scope, name } = standing.document.clone() {
             // Written empty, it is taken out as it stands: a version the
             // writer never read is read first, as before replacing it whole.
-            if let Caller::Resident(owner) = caller
-                && !previous.is_empty()
-                && !observed
-                && !viewed(node, owner, &[path.as_path(), copy_path.as_path()], &previous).await?
-            {
+            if !standing.read_by(node, caller, path).await? {
                 return Ok(Some(Err(crate::history::emptied::UNSEEN.to_string().into())));
             }
-            let scope = match scope {
-                Scope::Project { name: project, .. } => history::Scope::Project { project },
-                Scope::Conversation { conversation } => history::Scope::Conversation {
-                    resident: conversation.address.resident,
-                    machine: conversation.address.machine,
-                },
-            };
-            let request = match crate::history::emptied::request(scope, name, version) {
+            let request = match crate::history::emptied::request(history_scope(scope), name, standing.version) {
                 Ok(request) => request,
                 Err(told) => return Ok(Some(told)),
             };
             crate::history::api::call(node, caller, request).await?;
-            return Ok(Some(crate::history::emptied::told(path, &previous)));
+            return Ok(Some(crate::history::emptied::told(path, &standing.previous)));
         }
     }
     let author = crate::history::api::author(node, caller).await?;
@@ -261,7 +239,9 @@ pub(crate) async fn intercept(
         }
     }
     authorize(node, caller, &copy)?;
-    if copy.head.retired {
+    // A document deleted for good is written anew; a retired one is brought
+    // back in the app.
+    if copy.head.retired && !copy.head.deleted {
         return Ok(Some(Err("this document was retired; restore it in the app before editing".to_string().into())));
     }
     super::publication::repair(node, &mut copy).await.map_err(failure)?;
@@ -462,8 +442,26 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
         if !missing {
             sync::fetch(node, link, copy).await?;
         }
-        if copy.head.retired && !pending.offline {
+        if copy.head.retired && !copy.head.deleted && !pending.offline {
             return reject(copy, "the document was retired; restore it in the app before editing");
+        }
+        // Edits of a document since deleted for good go with it, those made
+        // offline too: the deletion was meant for good. Its file written
+        // again after the deletion starts it anew.
+        if copy.head.deleted && pending.base != copy.head.version {
+            let deletion = copy.head.version;
+            copy.pending.retain(|pending| pending.base == deletion);
+            return Err("this history document was deleted; write its file again to start it anew".into());
+        }
+        // Nor are edits of a life of it before its last deletion merged into
+        // the one written since.
+        if let (Some(base), Some(version)) = (pending.base, copy.head.version)
+            && base != version
+            && let Some(first) = life_from(link, copy).await?
+            && base < first
+        {
+            copy.pending.retain(|pending| pending.base.is_none_or(|base| base >= first));
+            return Err("this history document was deleted and written anew since these edits; read it again".into());
         }
         if matches!(copy.head.document, Document::Plan { .. }) && copy.head.retired {
             return reject(copy, "this conversation's plan was deleted");
@@ -521,8 +519,107 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
     Ok(())
 }
 
+/// The first version of the copy's history document since it was last
+/// deleted for good; none for a plan.
+async fn life_from(link: &fastctx_net::link::Link, copy: &Copy) -> Result<Option<u64>, String> {
+    let versions = match &copy.head.document {
+        Document::History { scope: Scope::Project { town, .. }, name } => {
+            link.history_read(&copy.account.account, town, name, None).await?.versions
+        }
+        Document::History { scope: Scope::Conversation { conversation }, name } => {
+            link.conversation_history_read(&copy.account.account, &conversation.address, name, None).await?.versions
+        }
+        Document::Plan { .. } => return Ok(None),
+    };
+    Ok(versions.first().map(|revision| revision.version))
+}
+
 /// Drops the first waiting edit, which the hub will not take.
 fn reject(copy: &mut Copy, reason: &str) -> Result<(), String> {
     copy.pending.remove(0);
     Err(reason.into())
+}
+
+/// The history scope a replica's scope names.
+fn history_scope(scope: Scope) -> history::Scope {
+    match scope {
+        Scope::Project { name: project, .. } => history::Scope::Project { project },
+        Scope::Conversation { conversation } => history::Scope::Conversation {
+            resident: conversation.address.resident,
+            machine: conversation.address.machine,
+        },
+    }
+}
+
+/// A copy as it stands, for taking its document out whole.
+struct Standing {
+    document: Document,
+    /// None for a document already deleted for good.
+    version: Option<u64>,
+    /// Taken down, and not deleted for good.
+    retired: bool,
+    previous: String,
+    /// Whether the caller's last view of the copy was of it as it stands.
+    observed: bool,
+    path: std::path::PathBuf,
+}
+
+impl Standing {
+    async fn of(node: &Arc<Node>, caller: &Caller, slot: &Slot) -> Result<Self, Failure> {
+        let copy = slot.lock().await;
+        let previous = sync::text(node, &copy, copy.effective()).await.map_err(failure)?;
+        let observed = match caller {
+            Caller::Resident(owner) => copy
+                .observed
+                .get(&owner.key())
+                .and_then(|observed| observed.hash.as_ref())
+                .is_some_and(|hash| *hash == copy.effective().hash),
+            _ => false,
+        };
+        Ok(Self {
+            document: copy.head.document.clone(),
+            version: copy.head.version.filter(|_| !copy.head.deleted),
+            retired: copy.head.retired && !copy.head.deleted,
+            previous,
+            observed,
+            path: copy.path.clone(),
+        })
+    }
+
+    /// Whether a conversation taking it out read it as it stands; a user
+    /// always has.
+    async fn read_by(&self, node: &Arc<Node>, caller: &Caller, path: &Path) -> Result<bool, Failure> {
+        match caller {
+            Caller::Resident(owner) if !self.previous.is_empty() && !self.observed => {
+                viewed(node, owner, &[path, self.path.as_path()], &self.previous).await
+            }
+            _ => Ok(true),
+        }
+    }
+}
+
+/// Deletes for good the history document whose copy is at `path`, as the
+/// caller last viewed it; `None` where no copy is there.
+pub(crate) async fn delete(
+    node: &Arc<Node>,
+    caller: &Caller,
+    path: &Path,
+) -> Result<Option<history::HistoryReply>, Failure> {
+    let Some(slot) = locate(node, path).await? else { return Ok(None) };
+    authorize(node, caller, &*slot.lock().await)?;
+    let standing = Standing::of(node, caller, &slot).await?;
+    let Document::History { scope, name } = standing.document.clone() else {
+        return Err(Failure::refused("only a history document is deleted this way"));
+    };
+    // What was taken down is not in the copy to read first: a conversation
+    // leaves deleting it to the app.
+    if standing.retired && matches!(caller, Caller::Resident(_)) {
+        return Err(Failure::refused(crate::history::delete::RETIRED));
+    }
+    if !standing.read_by(node, caller, path).await? {
+        return Err(Failure::refused(crate::history::delete::UNSEEN));
+    }
+    let expected = standing.version.ok_or_else(|| Failure::new("there is no such history document to delete"))?;
+    let request = history::HistoryCall::Delete { scope: history_scope(scope), name, expected };
+    crate::history::api::call(node, caller, request).await.map(Some)
 }

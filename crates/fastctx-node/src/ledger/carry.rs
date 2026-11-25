@@ -203,6 +203,20 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         if entries.is_empty() {
             return Ok(());
         }
+        // A hub before deletion would keep a note deleted for good as taken
+        // down, its versions read again: the project waits for it to update.
+        if !link.view().history_deletion
+            && entries.iter().any(|(_, entry, _)| {
+                fastctx_net::topic_history::decode(&entry.files)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|stored| stored.revision.deleted)
+            })
+        {
+            return Err(
+                "this project has notes deleted for good; the network's hub must be updated before it joins".into()
+            );
+        }
         let opened = link.view().account(home).ok_or("the importing account is unavailable")?.opened;
         let journal = fastctx_net::link::state::read_or(&path(&node.world, town), None)
             .map_err(|error| error.to_string())?

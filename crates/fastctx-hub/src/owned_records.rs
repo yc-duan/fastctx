@@ -289,12 +289,18 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let mut catalog = fastctx_types::history::Catalog {
-                documents: records
-                    .history(access.conversation.address.resident.as_str())
-                    .filter_map(|entry| entry.history.clone())
-                    .collect(),
-            };
+            let mut catalog = fastctx_types::history::Catalog::default();
+            for entry in records.history(access.conversation.address.resident.as_str()) {
+                match &entry.history {
+                    Some(revision) => catalog.documents.push(revision.clone()),
+                    None if entry.metadata.deleted => {
+                        if let Some((_, name)) = entry.metadata.key.split_once('/') {
+                            catalog.deleted.insert(name.to_owned(), entry.metadata.version);
+                        }
+                    }
+                    None => {}
+                }
+            }
             catalog.sort();
             Response::Catalog { catalog }
         }
@@ -307,10 +313,13 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let current = records
-                .entries
-                .get(&(kind.clone(), record_key_name.clone()))
-                .is_some_and(|entry| entry.metadata.version == version);
+            let entry = records.entries.get(&(kind.clone(), record_key_name.clone()));
+            // A history document deleted for good has no version to read, even
+            // while what was archived of it is still being let go.
+            if kind == fastctx_types::history::RECORD_KIND && entry.is_none_or(|entry| entry.metadata.deleted) {
+                return Err("the history document or revision does not exist".into());
+            }
+            let current = entry.is_some_and(|entry| entry.metadata.version == version);
             let path = if current {
                 slot.path(&kind, &record_key_name)
             } else {

@@ -11,7 +11,8 @@ pub const MAX_DOCUMENT_BYTES: usize = 512 * 1024;
 /// A description is one line in the list every conversation holds, all of
 /// it, so each is kept short (`world-history.md`, 为 grep 写).
 pub const MAX_DESCRIPTION_BYTES: usize = 1024;
-/// Each history holds at most this many documents, including retired ones.
+/// Each history holds at most this many documents, including retired ones;
+/// one deleted gives its place back.
 pub const MAX_DOCUMENTS: usize = 2048;
 pub const RECORD_KIND: &str = "history";
 
@@ -42,13 +43,24 @@ pub struct HistoryRevision {
     pub version: u64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub retired: bool,
+    /// Deleted for good: the document leaves every list, its versions can no
+    /// longer be read, and its place is given back; written again under its
+    /// name, it starts anew. A deletion is retired too, so a release before
+    /// deletion keeps it as taken down.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
     pub author: Author,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Catalog {
-    /// Latest revisions, including retired documents, newest first.
+    /// Latest revisions, including retired documents, newest first; none
+    /// of a deleted one.
     pub documents: Vec<HistoryRevision>,
+    /// The version each document deleted for good was deleted at, by name:
+    /// a document written again under the name continues from it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub deleted: std::collections::BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +121,13 @@ pub enum HistoryCall {
         name: String,
         version: u64,
     },
+    /// Deletes the document for good, as it stands at `expected`, retired
+    /// or not: unlike retiring, nothing of it can be brought back.
+    Delete {
+        scope: Scope,
+        name: String,
+        expected: u64,
+    },
 }
 
 impl HistoryCall {
@@ -118,13 +137,19 @@ impl HistoryCall {
             | Self::Read { scope, .. }
             | Self::Save { scope, .. }
             | Self::Retire { scope, .. }
-            | Self::Restore { scope, .. } => scope,
+            | Self::Restore { scope, .. }
+            | Self::Delete { scope, .. } => scope,
         }
     }
 
     pub fn writes(&self) -> bool {
-        matches!(self, Self::Save { .. } | Self::Retire { .. } | Self::Restore { .. })
+        matches!(self, Self::Save { .. } | Self::Retire { .. } | Self::Restore { .. } | Self::Delete { .. })
     }
+}
+
+/// Why a document deleted for good is not read again.
+pub fn gone(name: &str) -> String {
+    format!("the history document {name} was deleted")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

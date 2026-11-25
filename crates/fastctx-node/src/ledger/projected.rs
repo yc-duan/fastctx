@@ -175,9 +175,38 @@ pub(crate) struct KeptEntry {
     pub projection: Projection,
 }
 
-/// The entries of the projection after `after`, at most `most`, each
-/// checked against what its record says of it.
-fn entries(library: &Library, source: &Source, after: u64, most: usize) -> Result<Vec<Projection>, String> {
+/// What a projection's entries not here yet are told by: the hub has them,
+/// and they are on their way (`ledger::query` shows the project as it is
+/// here meanwhile).
+pub(crate) const NOT_HERE: &str = "ledger is not here yet";
+
+/// Whether a cursor a release before this one left beside the projection
+/// `directory` is kept from: what it counts may not be in the projection.
+pub(crate) fn left_behind(directory: &TownDir) -> bool {
+    fastctx_platform::disk::is_file(directory.path().join("projection-through.json"))
+        && fastctx_platform::disk::is_dir(directory.projected())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The number an entry's record says it has.
+fn number(record: &[u8]) -> Result<u64, String> {
+    let said: serde_json::Value = serde_json::from_slice(record).map_err(|error| error.to_string())?;
+    said.get("seq").and_then(serde_json::Value::as_u64).ok_or_else(|| "a projected entry says no number".into())
+}
+
+/// The entries of the projection after `after` through `through`, at most
+/// `most`, each checked against what its record says of it; and the object
+/// of the first whose object is not here yet, the entries before it given.
+fn entries(
+    library: &Library,
+    source: &Source,
+    after: u64,
+    through: u64,
+    most: usize,
+) -> Result<(Vec<Projection>, Option<String>), String> {
     let from = after.to_be_bytes().to_vec();
     let page = library
         .page(&source.scope, &source.stream, Some((from.clone(), from)), most)
@@ -185,20 +214,57 @@ fn entries(library: &Library, source: &Source, after: u64, most: usize) -> Resul
     let mut found = Vec::with_capacity(page.len());
     for entry in page {
         let said: serde_json::Value = serde_json::from_slice(&entry.body).map_err(|error| error.to_string())?;
+        let seq = said.get("seq").and_then(serde_json::Value::as_u64).ok_or("a projected entry says no number")?;
+        if seq > through {
+            break;
+        }
         let [object] = entry.objects.as_slice() else { return Err("a projected entry is its one object".into()) };
-        let bytes =
-            crate::timeline::copy::object_bytes(library, object).ok_or("a projected entry is not all here yet")?;
-        let digest: String = fastctx_net::sign::sha256(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+        let Some(bytes) = crate::timeline::copy::object_bytes(library, object) else {
+            return Ok((found, Some(hex(&object.hash))));
+        };
+        let digest = hex(&fastctx_net::sign::sha256(&bytes));
         if said.get("sha256").and_then(serde_json::Value::as_str) != Some(digest.as_str()) {
             return Err("a projected entry is not what its record says".into());
         }
         let projection: Projection = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-        if said.get("seq").and_then(serde_json::Value::as_u64) != Some(projection.seq) {
+        if seq != projection.seq {
             return Err("a projected entry is not the number its record says".into());
         }
         found.push(projection);
     }
-    Ok(found)
+    Ok((found, None))
+}
+
+/// Entries of a projection looked over at a time for whether their objects
+/// are here: only their records are read, not their objects.
+const LOOKED_OVER: usize = 256;
+
+/// The object of the first entry after `after` through `through` whose
+/// object is not here yet, where there is one. A projected entry's frame
+/// comes before its object, which is fetched off the passes
+/// (`assets::objects`) a moment later.
+fn waiting_object(library: &Library, source: &Source, after: u64, through: u64) -> Result<Option<String>, String> {
+    let from = after.to_be_bytes().to_vec();
+    let mut at = Some((from.clone(), from));
+    loop {
+        let page =
+            library.page(&source.scope, &source.stream, at.take(), LOOKED_OVER).map_err(|error| error.to_string())?;
+        let Some(last) = page.last() else { return Ok(None) };
+        for entry in &page {
+            if number(&entry.body)? > through {
+                return Ok(None);
+            }
+            let [object] = entry.objects.as_slice() else { return Err("a projected entry is its one object".into()) };
+            let here = object.size == 0 || library.read(&object.hash, 0, 1).is_ok_and(|piece| !piece.is_empty());
+            if !here {
+                return Ok(Some(hex(&object.hash)));
+            }
+        }
+        if page.len() < LOOKED_OVER {
+            return Ok(None);
+        }
+        at = Some((last.order.clone(), last.item.clone()));
+    }
 }
 
 /// The number of the last entry of the projection here, as its record
@@ -227,8 +293,11 @@ pub(crate) fn clear(node: &Node, name: &TownName) -> io::Result<()> {
 }
 
 /// Takes `town`'s entries through `latest` from its projection, kept as
-/// `name`, waiting until `until` for the projection to come up to it. Says
+/// `name`, waiting until `until` for the projection to come up to it and,
+/// where `waits`, for the objects of its entries: one asked in the
+/// background is taken as far as it is here, and asked again later. Says
 /// whether anything changed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn take(
     node: &Arc<Node>,
     link: &Arc<Link>,
@@ -237,6 +306,7 @@ pub(crate) async fn take(
     latest: u64,
     source: Source,
     until: Instant,
+    waits: bool,
 ) -> Result<bool, String> {
     let library = node.assets.as_ref().ok_or("the asset library is not open")?.library.clone();
     loop {
@@ -248,45 +318,97 @@ pub(crate) async fn take(
             break;
         }
         if Instant::now() >= until {
-            return Err(format!(
-                "the hub's projection of {name}'s ledger has come up to {here} of {latest} here so far"
-            ));
+            return Err(format!("the hub's projection of {name}'s {NOT_HERE}: {here} of {latest} came so far"));
         }
         tokio::time::sleep(LOOKS).await;
     }
-    let _syncing = node.syncing.lock().await;
-    let (keeping, link, name, town) = (node.clone(), link.clone(), name.clone(), town.clone());
-    fastctx_platform::task::blocking(move || {
-        super::check_place(&keeping, &link, &name, &town)?;
-        let directory = keeping.world.town(&name);
-        let _map_changed = keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
-        let key = super::own_key(&keeping.world).map_err(|error| format!("this machine's key: {error}"))?;
-        // Kept as signed entries, from another projection, or not at all
-        // yet: made from the first.
-        let from = kept_from(&directory).map_err(|error| error.to_string())?;
-        if fastctx_platform::disk::is_dir(directory.signed())
-            || !fastctx_platform::disk::is_dir(directory.projected())
-            || from.as_deref() != Some(source.named().as_str())
-        {
-            again(&library, &source, &directory, &town, &key)
-                .map_err(|error| format!("making {name}'s ledger from its projection: {error}"))?;
-            return Ok(true);
-        }
-        let mut after = super::cursor(&directory, &Default::default()).map_err(|error| error.to_string())?;
-        let mut changed = false;
+    let missing = |object: &str| {
+        format!("the hub's projection of {name}'s {NOT_HERE}: the object {object} of one of its entries has not come")
+    };
+    // Made again from the first, every entry through `latest` at once:
+    // their objects are all here first, and asked for meanwhile, rather
+    // than failing what the hub already accepted for the moment between a
+    // frame and its object.
+    let (world, looked, named) = (node.world.clone(), name.clone(), source.named());
+    let remade = fastctx_platform::task::spawn_blocking(move || again_needed(&world.town(&looked), &named))
+        .await
+        .map_err(|error| error.to_string())??;
+    if remade {
         loop {
-            let page = entries(&library, &source, after, AT_ONCE)?;
-            let Some(last) = page.last().map(|projection| projection.seq) else { break };
-            for projection in &page {
-                keep(&directory.projected(), &directory.ledger(), &town, projection, &key)
-                    .map_err(|error| format!("keeping entry {} of {name}: {error}", projection.seq))?;
+            let (reading, looked) = (library.clone(), source.clone());
+            let waiting = fastctx_platform::task::spawn_blocking(move || waiting_object(&reading, &looked, 0, latest))
+                .await
+                .map_err(|error| error.to_string())??;
+            let Some(object) = waiting else { break };
+            crate::assets::fetch_soon(node, &link.membership().id);
+            if !waits || Instant::now() >= until {
+                return Err(missing(&object));
             }
-            after = last;
-            changed = true;
+            tokio::time::sleep(LOOKS).await;
         }
-        Ok::<_, String>(changed)
-    })
-    .await
+    }
+    // Taken on from where it was, as far as the objects are here: what is
+    // here goes in before the rest is waited for.
+    let mut changed = false;
+    loop {
+        let landed = {
+            let _syncing = node.syncing.lock().await;
+            let (keeping, link, name, town, library, source) =
+                (node.clone(), link.clone(), name.clone(), town.clone(), library.clone(), source.clone());
+            fastctx_platform::task::blocking(move || -> Result<(bool, Option<String>), String> {
+                super::check_place(&keeping, &link, &name, &town)?;
+                let directory = keeping.world.town(&name);
+                let _map_changed = keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
+                let key = super::own_key(&keeping.world).map_err(|error| format!("this machine's key: {error}"))?;
+                if again_needed(&directory, &source.named())? {
+                    again(&library, &source, &directory, &town, &key, latest)
+                        .map_err(|error| format!("making {name}'s ledger from its projection: {error}"))?;
+                    return Ok((true, None));
+                }
+                let mut after = super::cursor(&directory, &Default::default()).map_err(|error| error.to_string())?;
+                let mut changed = false;
+                loop {
+                    let (page, waiting) = entries(&library, &source, after, latest, AT_ONCE)?;
+                    for projection in &page {
+                        keep(&directory.projected(), &directory.ledger(), &town, projection, &key)
+                            .map_err(|error| format!("keeping entry {} of {name}: {error}", projection.seq))?;
+                    }
+                    if let Some(last) = page.last() {
+                        after = last.seq;
+                        changed = true;
+                    }
+                    if waiting.is_some() || page.is_empty() {
+                        return Ok((changed, waiting));
+                    }
+                }
+            })
+            .await?
+        };
+        changed |= landed.0;
+        let Some(object) = landed.1 else { return Ok(changed) };
+        crate::assets::fetch_soon(node, &link.membership().id);
+        if !waits || Instant::now() >= until {
+            if changed {
+                crate::context::invalidations::project(node, name);
+            }
+            return Err(missing(&object));
+        }
+        tokio::time::sleep(LOOKS).await;
+    }
+}
+
+/// Whether the project in `directory` is made again from its projection,
+/// `named` as it is kept from now: kept as signed entries, from another
+/// projection, or not at all yet; or with a cursor a release before this one
+/// left beside it, from entries replicated past what was kept of the
+/// projection, which left out their history (the user, 2026-11-25:
+/// 项目的编辑在目前生产环境就是失败的).
+fn again_needed(directory: &TownDir, named: &str) -> Result<bool, String> {
+    let from = kept_from(directory).map_err(|error| error.to_string())?;
+    Ok(fastctx_platform::disk::is_dir(directory.signed())
+        || !fastctx_platform::disk::is_dir(directory.projected())
+        || from.as_deref() != Some(named)
+        || fastctx_platform::disk::is_file(directory.path().join("projection-through.json")))
 }
 
 /// Keeps `projection` of `town` under `projected`, under this machine's
@@ -308,15 +430,28 @@ fn keep(
 /// Makes a project from its projection: every entry kept and written out
 /// beside what is kept of it now, then put in its place, with what it is
 /// kept from; the signed entries of before and what their reading kept let
-/// go of. A stop on the way makes it again from the start.
-fn again(library: &Library, source: &Source, directory: &TownDir, town: &TownId, key: &SecretKey) -> io::Result<()> {
+/// go of; entries after `through` are taken on later. A stop on the way
+/// makes it again from the start.
+fn again(
+    library: &Library,
+    source: &Source,
+    directory: &TownDir,
+    town: &TownId,
+    key: &SecretKey,
+    through: u64,
+) -> io::Result<()> {
     let root = directory.path();
     let (projected, ledger) = (root.join(NEXT.0), root.join(NEXT.1));
     super::remove(&projected)?;
     super::remove(&ledger)?;
     let mut after = 0;
     loop {
-        let page = entries(library, source, after, AT_ONCE).map_err(io::Error::other)?;
+        let (page, waiting) = entries(library, source, after, through, AT_ONCE).map_err(io::Error::other)?;
+        if let Some(object) = waiting {
+            return Err(io::Error::other(format!(
+                "{NOT_HERE}: the object {object} of one of its entries has not come"
+            )));
+        }
         let Some(last) = page.last().map(|projection| projection.seq) else { break };
         for projection in &page {
             keep(&projected, &ledger, town, projection, key)?;

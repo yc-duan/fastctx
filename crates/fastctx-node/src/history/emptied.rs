@@ -1,6 +1,7 @@
-//! Writing a history document empty deletes it: an agent takes a whole topic
-//! out through the same controlled write as any change. Deleted, the topic is
-//! retired, not erased: its versions stay, and the app can restore it.
+//! Writing a history document empty takes it down: an agent takes a whole
+//! topic out through the same controlled write as any change. Taken down, the
+//! topic is retired, not erased: its versions stay, and the app can bring it
+//! back. Deleting it for good is `fastctx history delete` (`super::delete`).
 
 use std::path::Path;
 
@@ -8,8 +9,8 @@ use fastctx_types::history::{HistoryCall, Scope};
 use fastctx_types::write::{ChangeKind, FileChange, WriteOp, WriteOutcome, WriteResult};
 
 /// What a writer is told who writes a document empty as it never read it.
-pub(crate) const UNSEEN: &str = "writing it empty deletes this whole history document as it stands now; view it \
-     with fastctx view first";
+pub(crate) const UNSEEN: &str = "writing it empty takes this whole history document down as it stands now; view \
+     it with fastctx view first";
 
 /// Whether `operation` writes its file empty, whitespace aside.
 pub(crate) fn emptied(operation: &WriteOp) -> bool {
@@ -21,7 +22,7 @@ pub(crate) fn emptied(operation: &WriteOp) -> bool {
 /// What deleting the document at `path` tells the writer; `previous` is
 /// what it held.
 pub(crate) fn told(path: &Path, previous: &str) -> WriteOutcome {
-    let text = format!("write {}: deleted; the app can restore it", path.display());
+    let text = format!("write {}: taken down; the app can bring it back", path.display());
     Ok(WriteResult {
         note_prefix: text.len(),
         text,
@@ -43,6 +44,6 @@ pub(crate) fn told(path: &Path, previous: &str) -> WriteOutcome {
 pub(crate) fn request(scope: Scope, name: String, version: Option<u64>) -> Result<HistoryCall, WriteOutcome> {
     match version {
         Some(expected) => Ok(HistoryCall::Retire { scope, name, expected }),
-        None => Err(Err("there is no such history document to delete".to_string().into())),
+        None => Err(Err("there is no such history document to take down".to_string().into())),
     }
 }

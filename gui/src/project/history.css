@@ -166,6 +166,13 @@
   color: var(--wrong);
 }
 
+/* Taking a document down and deleting it for good, side by side. */
+.hd-foot-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 /* A project's histories: each a line with what it holds. */
 .page-links li + li {
   border-top: 1px solid var(--hairline);

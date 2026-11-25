@@ -68,8 +68,19 @@ fn answered(node: &Node, acting: &Acting, request: &HistoryCall, first: bool) ->
                 let prefix = format!("{resident}/");
                 fresh_records(node, &scope, ConversationHistory::STREAM, RECORD_KIND, &prefix)?
             };
-            let mut catalog =
-                Catalog { documents: records.into_iter().filter_map(stored).map(|stored| stored.revision).collect() };
+            let mut catalog = Catalog::default();
+            for record in records {
+                // A note deleted for good is kept as where its name goes on.
+                if record.metadata.deleted
+                    && record.metadata.kind == RECORD_KIND
+                    && let Some((owner, name)) = record.metadata.key.split_once('/')
+                    && owner == resident.as_str()
+                {
+                    catalog.deleted.insert(name.to_owned(), record.metadata.version);
+                } else if let Some(stored) = stored(record) {
+                    catalog.documents.push(stored.revision);
+                }
+            }
             catalog.sort();
             HistoryReply::Catalog { catalog }
         }

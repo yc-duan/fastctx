@@ -61,6 +61,34 @@ fn locate(node: &Node, path: &Path) -> Result<Option<(Scope, String)>, Failure> 
     Ok(None)
 }
 
+/// Deletes for good the document whose local copy is at `path`, as the
+/// caller last viewed it; `None` where no local copy is there.
+pub(crate) async fn delete(node: &Arc<Node>, caller: &Caller, path: &Path) -> Result<Option<HistoryReply>, Failure> {
+    let Some((scope, name)) = locate(node, path)? else { return Ok(None) };
+    let HistoryReply::Document { document } =
+        super::api::call(node, caller, HistoryCall::Read { scope: scope.clone(), name: name.clone(), version: None })
+            .await?
+    else {
+        return Err(failure("the history document was not returned"));
+    };
+    if let Caller::Resident(owner) = caller
+        && !document.text.is_empty()
+    {
+        let seen = crate::write::load_seen(&node.world.owner(&node.names(), owner).seen()).map_err(failure)?;
+        let canonical = fastctx_hands::files::canonical_path(path).map_err(failure)?;
+        let read = matches!(
+            seen.get(&canonical).map(|seen| &seen.version),
+            Some(fastctx_types::files::SeenVersion::Full { sha256 })
+                if fastctx_hands::files::content_hash(document.text.as_bytes()) == *sha256
+        );
+        if !read {
+            return Err(Failure::refused(super::delete::UNSEEN));
+        }
+    }
+    let request = HistoryCall::Delete { scope, name, expected: document.revision.version };
+    super::api::call(node, caller, request).await.map(Some)
+}
+
 pub(crate) async fn intercept(
     node: &Arc<Node>,
     caller: &Caller,
@@ -143,7 +171,10 @@ pub(crate) async fn intercept(
         return Ok(Some(super::emptied::told(path, &previous)));
     }
     let mut before = previous.clone();
+    // A new document, one deleted for good among them, replaces nothing: what
+    // was seen of a file of its name before is of no matter.
     if matches!(operation, WriteOp::Write(_))
+        && document.is_some()
         && let Caller::Resident(owner) = caller
     {
         let seen = crate::write::load_seen(&node.world.owner(&node.names(), owner).seen()).map_err(failure)?;

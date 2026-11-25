@@ -264,6 +264,7 @@ pub(crate) fn view_for_in(
         profiles: true,
         account_records: true,
         conversation_plans: true,
+        history_deletion: true,
         plan_copies: true,
         skill_files: true,
         record_keys: true,

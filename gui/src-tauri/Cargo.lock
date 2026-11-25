@@ -1876,6 +1876,7 @@ dependencies = [
  "fastctx-platform",
  "fastctx-types",
  "fastctx-update",
+ "futures-util",
  "getrandom 0.3.4",
  "jiff",
  "serde",

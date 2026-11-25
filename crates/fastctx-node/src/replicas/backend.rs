@@ -107,13 +107,23 @@ pub(crate) async fn submit(
             }
         }
         Document::History { scope, name } => {
+            // A document deleted for good is written anew, not retired.
+            let retired = copy.head.retired && !copy.head.deleted;
             let result = match scope {
                 Scope::Project { town, .. } => {
+                    // A new name once deleted for good continues from its
+                    // deletion.
+                    let expected = match copy.head.version {
+                        Some(version) => Some(version),
+                        None => {
+                            link.shared_history_catalog(&copy.account.account, town).await?.deleted.get(name).copied()
+                        }
+                    };
                     let (revision, files) = fastctx_net::topic_history::revision_files(
                         name,
                         &text,
-                        copy.head.version,
-                        copy.head.retired,
+                        expected,
+                        retired,
                         pending.author.clone(),
                         Some(pending.id.clone()),
                     )?;
@@ -127,7 +137,7 @@ pub(crate) async fn submit(
                         name,
                         text.clone(),
                         copy.head.version,
-                        copy.head.retired,
+                        retired,
                         pending.author.clone(),
                         Some(pending.id.clone()),
                     )
@@ -142,6 +152,7 @@ pub(crate) async fn submit(
             let mut head = copy.head.clone();
             head.version = Some(revision.version);
             head.retired = revision.retired;
+            head.deleted = false;
             head.history = Some(revision);
             seen(&head);
             Ok(Some(Submitted { head, text }))

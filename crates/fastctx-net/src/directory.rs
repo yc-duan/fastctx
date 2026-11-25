@@ -763,7 +763,8 @@ impl Directory {
                     .shares
                     .iter()
                     .filter(|share| {
-                        share.machine == member.name && (share.pending.is_some() || self.holds(&share.account, &member.name))
+                        share.machine == member.name
+                            && (share.pending.is_some() || self.holds(&share.account, &member.name))
                     })
                     .all(|share| {
                         // A waiting share is judged as it will be: what holding
@@ -959,6 +960,11 @@ pub struct View {
     /// Plan operations and their authorized return from remote jobs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub conversation_plans: bool,
+    /// History documents are deleted for good: a project's deletion leaves
+    /// its catalog and its versions are read no more, a conversation's record
+    /// goes with every version. A hub before it keeps a deletion as taken down.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_deletion: bool,
     /// Versioned plan history and working-copy merges.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan_copies: bool,
@@ -1102,6 +1108,7 @@ impl View {
             profiles: false,
             account_records: false,
             conversation_plans: false,
+            history_deletion: false,
             plan_copies: false,
             skill_files: false,
             record_keys: false,

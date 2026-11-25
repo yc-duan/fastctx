@@ -2937,6 +2937,17 @@ function historyPage(scope: HistoryScope, name: string): Page {
         done,
       }),
     restore: (version) => (live ? historySeam.restore(scope, name, version) : notHere()),
+    // Deleted, it is read no more: the way back is taken.
+    remove: (expected) =>
+      historyConfirm.ask({
+        title: historyWords.removeTitle(name),
+        what: historyWords.removeWhat,
+        go: historyWords.remove,
+        act: () => (live ? historySeam.remove(scope, name, expected).then(() => undefined) : notHere()),
+        done: () => {
+          location.hash = back.href.replace(/^#/, "");
+        },
+      }),
     writer: (author) => historyWriter(author).name,
     ago: (at) => homeWords.ago((live ? Date.now() : specimen!.now.getTime()) - at.getTime()),
   });

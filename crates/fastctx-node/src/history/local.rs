@@ -9,6 +9,7 @@ use fastctx_types::{
     ipc::Failure,
 };
 use std::{path::PathBuf, sync::Arc};
+use tokio::sync::MutexGuard;
 
 use super::shelf::{Of, Place, Shelf};
 
@@ -125,9 +126,13 @@ pub(crate) async fn call(
                     .await?;
             (name, stored.text, Some(expected), false)
         }
+        HistoryCall::Delete { name, expected, .. } => return delete(node, &scope, shelf, name, expected, author).await,
     };
     let author = author.ok_or_else(|| failure("history writes require attribution"))?;
-    let current = shelf.document(&name).map(|document| document.latest.version);
+    // A document deleted for good is not current: written again, it
+    // continues from its deletion.
+    let latest = shelf.document(&name).map(|document| (document.latest.version, document.latest.deleted));
+    let current = latest.filter(|(_, deleted)| !deleted).map(|(version, _)| version);
     if expected != current {
         return Err(failure(fastctx_types::history::conflict(current)));
     }
@@ -147,8 +152,9 @@ pub(crate) async fn call(
             Some(stored.text)
         }
     };
+    let base = latest.map(|(version, _)| version);
     let (revision, files) =
-        fastctx_net::topic_history::revision_files(&name, &text, expected, retired, author, None).map_err(failure)?;
+        fastctx_net::topic_history::revision_files(&name, &text, base, retired, author, None).map_err(failure)?;
     let digest = fastctx_net::sign::sha256(text.as_bytes());
     match &scope {
         // The new entry is read into the shelf by the next call.
@@ -195,6 +201,89 @@ pub(crate) async fn call(
     crate::context::invalidations::history(node, &scope);
     node.memory_changed();
     // A standalone write may have begun just before its first link was installed.
+    super::import::schedule(node);
+    Ok(HistoryReply::Saved { revision: Box::new(revision) })
+}
+
+/// Deletes `name` in `scope` for good, as it stands at `expected`: a
+/// project's by a revision that deletes it, its ledger keeping what came
+/// before; a conversation's with every version of it.
+async fn delete(
+    node: &Arc<Node>,
+    scope: &Scope,
+    mut shelf: MutexGuard<'_, Shelf>,
+    name: String,
+    expected: u64,
+    author: Option<Author>,
+) -> Result<HistoryReply, Failure> {
+    let author = author.ok_or_else(|| failure("history writes require attribution"))?;
+    let current = shelf
+        .document(&name)
+        .map(|document| document.latest.clone())
+        .filter(|latest| !latest.deleted)
+        .ok_or_else(|| failure("there is no such history document to delete"))?;
+    if current.version != expected {
+        return Err(failure(fastctx_types::history::conflict(Some(current.version))));
+    }
+    let shown = name.clone();
+    let (previous, _) =
+        on_shelf(&mut shelf, place(node, scope), move |shelf, place| shelf.stored(place, &shown, expected)).await?;
+    let (revision, files) =
+        fastctx_net::topic_history::deletion_files(&name, &current.description, expected, author).map_err(failure)?;
+    match scope {
+        // The deletion is read into the shelf by the next call.
+        Scope::Project { project } => crate::ledger::write_memory(node, project, files, None).await?,
+        // The deletion takes the place of every version before it, and the
+        // name's numbers go on from it: nothing asked of a version before
+        // reaches a document written under the name since.
+        Scope::Conversation { .. } => {
+            let text = files
+                .iter()
+                .find(|file| file.path.ends_with(".md"))
+                .map(|file| String::from_utf8_lossy(&file.bytes.0).into_owned())
+                .ok_or_else(|| failure("the deletion has no text"))?;
+            let digest = fastctx_net::sign::sha256(text.as_bytes());
+            let folder = directory(node, scope).join(&name);
+            let stored = Stored { revision: revision.clone(), text, submission: None };
+            let _gate = node.syncing.lock().await;
+            fastctx_platform::task::spawn_blocking(move || -> Result<(), String> {
+                let path = folder.join(format!("{}.json", stored.revision.version));
+                fastctx_platform::publish_new(
+                    &path,
+                    &serde_json::to_vec(&stored).map_err(|error| error.to_string())?,
+                    fastctx_platform::Permissions::Private,
+                )
+                .map_err(|error| match error.kind() {
+                    std::io::ErrorKind::AlreadyExists => {
+                        fastctx_types::history::conflict(Some(stored.revision.version))
+                    }
+                    _ => error.to_string(),
+                })?;
+                for entry in fastctx_platform::disk::read_dir(&folder).map_err(|error| error.to_string())? {
+                    let version = entry.map_err(|error| error.to_string())?.path();
+                    if version != path && version.extension().is_some_and(|extension| extension == "json") {
+                        fastctx_platform::disk::remove_file(&version).map_err(|error| error.to_string())?;
+                    }
+                }
+                Ok(())
+            })
+            .await
+            .map_err(failure)?
+            .map_err(failure)?;
+            shelf.put(revision.clone(), digest, 0);
+        }
+    }
+    let (working, deleted) = (node.clone(), revision.clone());
+    on_shelf(&mut shelf, place(node, scope), move |shelf, place| {
+        if !super::switch::alone(&working) {
+            return Ok(());
+        }
+        let path = place.copies.join(format!("{}.md", deleted.name));
+        shelf.write_copy(&path, &deleted.name, &deleted, None, Some(&previous.text))
+    })
+    .await?;
+    crate::context::invalidations::history(node, scope);
+    node.memory_changed();
     super::import::schedule(node);
     Ok(HistoryReply::Saved { revision: Box::new(revision) })
 }
