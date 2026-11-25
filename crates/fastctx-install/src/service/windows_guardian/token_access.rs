@@ -87,7 +87,12 @@ fn set_default_dacl(token: HANDLE, sddl: &str) -> io::Result<()> {
     // SAFETY: the source is terminated; Windows allocates the descriptor,
     // freed below.
     if unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), SDDL_REVISION_1, &mut descriptor, ptr::null_mut())
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
     } == 0
     {
         return Err(io::Error::last_os_error());

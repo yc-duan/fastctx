@@ -127,7 +127,9 @@ impl Looking {
                 self.asked = Some(holder.clone());
             }
             Ok(Err(error)) => eprintln!("fastctx node: asking process {} to hand the World over: {error}", holder.pid),
-            Err(_) => eprintln!("fastctx node: process {} did not answer when asked to hand the World over", holder.pid),
+            Err(_) => {
+                eprintln!("fastctx node: process {} did not answer when asked to hand the World over", holder.pid)
+            }
         }
     }
 }
@@ -143,7 +145,9 @@ async fn end_silent(world: &WorldDir) {
     if fastctx_platform::current_identity().is_ok_and(|me| me == holder) {
         return;
     }
-    match fastctx_platform::task::blocking(move || fastctx_platform::terminate::terminate(&holder).map(|()| holder)).await {
+    match fastctx_platform::task::blocking(move || fastctx_platform::terminate::terminate(&holder).map(|()| holder))
+        .await
+    {
         Ok(holder) => eprintln!(
             "fastctx node: ended process {}, which held the World and answered nothing for {} minutes",
             holder.pid,

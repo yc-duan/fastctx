@@ -308,7 +308,8 @@ async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
             let mut state = node.handoff.state.lock().expect("never poisoned");
             if state.yielding {
                 let settled = node.codex.settled();
-                only_calls = (state.starting == 0 && settled).then(|| only_calls.unwrap_or_else(std::time::Instant::now));
+                only_calls =
+                    (state.starting == 0 && settled).then(|| only_calls.unwrap_or_else(std::time::Instant::now));
                 let calls_waited = only_calls.is_some_and(|since| since.elapsed() >= CALLS_WAIT_AT_MOST);
                 if state.starting == 0 && settled && (state.calls == 0 || calls_waited) {
                     if state.calls > 0 {
