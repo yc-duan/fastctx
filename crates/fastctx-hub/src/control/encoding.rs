@@ -26,7 +26,11 @@ pub(super) fn prepare(
     let (frames, last) = match next {
         Next::Frames(frames) => (frames, false),
         Next::End(reason) => (vec![Down::Refused { reason }], true),
-        Next::Overflowed(why) => return Err(why),
+        Next::Overflowed(why) => {
+            // What waited for it untaken goes with the session.
+            hub.health.egress.added(name, "dropped/overflow", 1, 0);
+            return Err(why);
+        }
     };
     let mut encoded = Vec::with_capacity(frames.len());
     let mut written = Vec::with_capacity(frames.len());

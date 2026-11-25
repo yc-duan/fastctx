@@ -1,8 +1,11 @@
-//! What the hub writes to each member on its control connection, counted by
-//! kind as each frame is encoded (`control::encoding`): where the hub's line
-//! goes. The hub's health names the member and kind pairs that took the
-//! most since the hub started and since its health was last written, and
-//! each kind's total, so it stays small however large the network.
+//! What the hub writes to each member, counted by kind: on its control
+//! connection as each frame is encoded (`control::encoding`), on its asset
+//! lines as each message goes (`assets::line`), and of what the hub relays
+//! between two machines, to each as it goes (`data`); and the queues it let
+//! go untaken (`dropped/…`). Where the hub's line goes. The hub's health
+//! names the member and kind pairs, and the members, that took the most
+//! since the hub started and since its health was last written, and each
+//! kind's total, so it stays small however large the network.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -48,11 +51,23 @@ impl Egress {
         }
     }
 
+    /// `member` was written `frames` messages of `kind`, `bytes` in all.
+    pub(crate) fn added(&self, member: &MachineName, kind: &'static str, frames: u64, bytes: u64) {
+        if frames == 0 && bytes == 0 {
+            return;
+        }
+        let mut counts = self.counts.lock().expect("never poisoned");
+        let tally = counts.sent.entry((member.clone(), kind)).or_default();
+        tally.frames += frames;
+        tally.bytes += bytes;
+    }
+
     /// The member and kind pairs that took the most, since the hub started
     /// and since the last look, and each kind's total.
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         let mut counts = self.counts.lock().expect("never poisoned");
         let mut kinds: HashMap<&'static str, Tally> = HashMap::new();
+        let mut members: HashMap<&str, (Tally, Tally)> = HashMap::new();
         let mut most = Vec::with_capacity(counts.sent.len());
         let mut lately = Vec::new();
         for ((member, kind), tally) in &counts.sent {
@@ -61,10 +76,29 @@ impl Egress {
             total.bytes += tally.bytes;
             most.push((tally.bytes, tally.frames, member.as_str(), *kind));
             let before = counts.read.get(&(member.clone(), *kind)).copied().unwrap_or_default();
+            let (all, since) = members.entry(member.as_str()).or_default();
+            all.frames += tally.frames;
+            all.bytes += tally.bytes;
             if tally.bytes > before.bytes {
                 lately.push((tally.bytes - before.bytes, tally.frames - before.frames, member.as_str(), *kind));
+                since.frames += tally.frames - before.frames;
+                since.bytes += tally.bytes - before.bytes;
             }
         }
+        // Each member's own, all kinds together.
+        let by_member = |pick: fn(&(Tally, Tally)) -> Tally| {
+            let mut rows: Vec<(&str, Tally)> = members
+                .iter()
+                .map(|(member, tallies)| (*member, pick(tallies)))
+                .filter(|(_, tally)| tally.bytes > 0)
+                .collect();
+            rows.sort_unstable_by(|a, b| b.1.bytes.cmp(&a.1.bytes));
+            rows.truncate(NAMED);
+            rows.into_iter()
+                .map(|(member, tally)| json!({ "member": member, "bytes": tally.bytes, "frames": tally.frames }))
+                .collect::<Vec<_>>()
+        };
+        let (members_most, members_lately) = (by_member(|tallies| tallies.0), by_member(|tallies| tallies.1));
         let named = |mut rows: Vec<(u64, u64, &str, &'static str)>| {
             rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
             rows.truncate(NAMED);
@@ -80,7 +114,7 @@ impl Egress {
             .map(|(kind, tally)| json!({ "kind": kind, "bytes": tally.bytes, "frames": tally.frames }))
             .collect();
         counts.read = counts.sent.clone();
-        json!({ "most": most, "lately": lately, "kinds": kinds })
+        json!({ "most": most, "lately": lately, "kinds": kinds, "members": members_most, "members_lately": members_lately })
     }
 }
 

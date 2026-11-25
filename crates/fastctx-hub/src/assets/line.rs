@@ -131,7 +131,16 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
     let (sink, stream) = socket.split();
     let mut beat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
     beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut io = Io { sink, stream, pulse, pace: Pace::default(), beat, heard: Instant::now() };
+    let mut io = Io {
+        sink,
+        stream,
+        pulse,
+        pace: Pace::default(),
+        beat,
+        heard: Instant::now(),
+        member: me.clone(),
+        hub: hub.clone(),
+    };
     let origin = Origin { name: me.clone(), key };
     if let Err(why) = run(&hub, &mut io, &origin).await {
         hub.log.line(format_args!("an asset line with {me}: {why}"));
@@ -148,10 +157,15 @@ struct Io {
     beat: tokio::time::Interval,
     /// When something of the member's own last came.
     heard: Instant,
+    /// Whose line it is, and the hub counting what goes down it
+    /// (`crate::egress`).
+    member: MachineName,
+    hub: Arc<Hub>,
 }
 
 impl Io {
     async fn put(&mut self, message: WsMessage) -> Result<(), String> {
+        self.hub.health.egress.added(&self.member, "assets/line", 1, message.len() as u64);
         write(&mut self.sink, &self.pulse, message).await
     }
 
