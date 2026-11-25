@@ -31,7 +31,7 @@ pub fn collect(heard: Vec<(Asked, Heard)>) -> Vec<Answers> {
             Heard::Offline(since) => {
                 group.unanswered.push(AccountFailure { account: asked.account, failure: Unanswered::Offline { since } })
             }
-            Heard::NoAnswer(reason) => group
+            Heard::NoAnswer(reason) | Heard::Late(reason) => group
                 .unanswered
                 .push(AccountFailure { account: asked.account, failure: Unanswered::NoAnswer { reason } }),
         }

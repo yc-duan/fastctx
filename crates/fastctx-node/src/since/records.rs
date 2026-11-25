@@ -51,12 +51,15 @@ const GRACE: Duration = Duration::from_secs(10 * 60);
 
 /// What tells whether a conversation's records in the database changed: how
 /// many times all its families were written, its session events' latest
-/// number, its handovers' latest change. The same mark, the same records.
+/// number, its handovers' latest change, and how many of its families and of
+/// the node's were brought over from older records, which writes them
+/// without counting. The same mark, the same records.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Mark {
     written: u64,
     events: Option<Vec<u8>>,
     handovers: Option<i64>,
+    imported: (u64, u64),
 }
 
 /// Each conversation's mark when its records were last read, and when the
@@ -66,34 +69,48 @@ static READ: LazyLock<Mutex<Read>> = LazyLock::new(Default::default);
 /// Each conversation's mark and latest time, by its world and id (`READ`).
 type Read = HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>)>;
 
-/// Every conversation's mark in `world`, by its id, in three reads for all
-/// of them; none where its database is not open or cannot be read, and then
-/// every conversation's records are read.
-fn marks(world: &WorldDir) -> Option<HashMap<String, Mark>> {
+/// Every conversation's mark in `world`, by its id, in four reads for all
+/// of them, and the mark of one none of them names; none where its database
+/// is not open or cannot be read, and then every conversation's records are
+/// read.
+fn marks(world: &WorldDir) -> Option<(HashMap<String, Mark>, Mark)> {
     let database = crate::record_database::opened(world)?;
     database
         .read_background_now(|connection| {
+            let mut imported: HashMap<String, u64> = HashMap::new();
+            let mut query = connection.prepare_cached(
+                "SELECT conversation, count(*) FROM conversation_record_imports GROUP BY conversation",
+            )?;
+            for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+                let (conversation, families) = row?;
+                imported.insert(conversation, families as u64);
+            }
+            // The node's own families brought over bear on every conversation.
+            let unnamed = Mark { imported: (0, imported.get("@node").copied().unwrap_or(0)), ..Mark::default() };
             let mut marks: HashMap<String, Mark> = HashMap::new();
+            for (conversation, families) in &imported {
+                marks.entry(conversation.clone()).or_insert_with(|| unnamed.clone()).imported.0 = *families;
+            }
             let mut query = connection.prepare_cached(
                 "SELECT conversation, sum(version) FROM conversation_record_versions GROUP BY conversation",
             )?;
             for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
                 let (conversation, written) = row?;
-                marks.entry(conversation).or_default().written = written as u64;
+                marks.entry(conversation).or_insert_with(|| unnamed.clone()).written = written as u64;
             }
             let mut query = connection.prepare_cached("SELECT conversation, latest FROM session_heads")?;
             for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))? {
                 let (conversation, latest) = row?;
-                marks.entry(conversation).or_default().events = Some(latest);
+                marks.entry(conversation).or_insert_with(|| unnamed.clone()).events = Some(latest);
             }
             let mut query = connection.prepare_cached(
                 "SELECT conversation, max(modified_millis) FROM handover_heads GROUP BY conversation",
             )?;
             for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
                 let (conversation, modified) = row?;
-                marks.entry(conversation).or_default().handovers = Some(modified);
+                marks.entry(conversation).or_insert_with(|| unnamed.clone()).handovers = Some(modified);
             }
-            Ok(marks)
+            Ok((marks, unnamed))
         })
         .ok()
 }
@@ -188,7 +205,9 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
         files.places = Some(places);
         // Its records quiet since they last told nothing after `since`
         // are not read again.
-        let mark = marks.as_ref().map(|marks| marks.get(about.id.as_str()).cloned().unwrap_or_default());
+        let mark = marks
+            .as_ref()
+            .map(|(marks, unnamed)| marks.get(about.id.as_str()).cloned().unwrap_or_else(|| unnamed.clone()));
         let quiet = mark.as_ref().is_some_and(|mark| {
             READ.lock()
                 .expect("never poisoned")
@@ -199,24 +218,37 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
             continue;
         }
         let first = scan.events.len();
+        let (issues, undated) = (scan.issues.len(), scan.undated.len());
         scan.resident(&about, directory, files);
-        files.read = Some((mark, first..scan.events.len()));
+        // What is kept of a reading is when the latest of what it told
+        // happened: one that had trouble, or told something of no time, is
+        // read again the next time.
+        let whole = scan.issues.len() == issues && scan.undated.len() == undated;
+        files.read = Some((mark.filter(|_| whole), first..scan.events.len()));
     }
     for (id, files) in &residents {
+        let (issues, undated) = (scan.issues.len(), scan.undated.len());
         scan.finish_resident(id, files);
-        // When the latest of what its records told happened, kept with
-        // their mark.
-        if let Some((Some(mark), told)) = &files.read {
-            let latest = files
-                .turns
-                .values()
-                .map(|turn| turn.at)
-                .chain(files.uncertain.values().filter_map(|uncertain| uncertain.at))
-                .chain(scan.events[told.clone()].iter().map(|event| event.at))
-                .max();
-            READ.lock()
-                .expect("never poisoned")
-                .insert((world.path().to_path_buf(), id.clone()), (mark.clone(), latest));
+        let whole = scan.issues.len() == issues && scan.undated.len() == undated;
+        let at = (world.path().to_path_buf(), id.clone());
+        match &files.read {
+            // When the latest of what its records told happened, kept with
+            // their mark.
+            Some((Some(mark), told)) if whole => {
+                let latest = files
+                    .turns
+                    .values()
+                    .map(|turn| turn.at)
+                    .chain(files.uncertain.values().filter_map(|uncertain| uncertain.at))
+                    .chain(scan.events[told.clone()].iter().map(|event| event.at))
+                    .max();
+                READ.lock().expect("never poisoned").insert(at, (mark.clone(), latest));
+            }
+            // Read, though not whole: read again the next time.
+            Some(_) => {
+                READ.lock().expect("never poisoned").remove(&at);
+            }
+            None => {}
         }
     }
     // What is kept of conversations gone from here goes with them.

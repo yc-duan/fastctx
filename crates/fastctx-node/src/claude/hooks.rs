@@ -25,6 +25,9 @@ static TOLD: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 static READING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 /// What the latest session that told said, where its hooks were skipped.
 static SKIPPED: LazyLock<Mutex<Option<HooksSkipped>>> = LazyLock::new(Default::default);
+/// When the latest session here that ran them began: one that skipped them,
+/// begun before it and told after it, says nothing of now.
+static RAN: LazyLock<Mutex<Option<jiff::Timestamp>>> = LazyLock::new(Default::default);
 
 /// The World's hooks Claude Code skips here, as the latest session that
 /// told said; none while they run.
@@ -72,9 +75,15 @@ pub(crate) fn look(node: &Arc<Node>, session: &str, directory: &Path, home: Opti
         }
         let changed = {
             let mut skipped = SKIPPED.lock().expect("never poisoned");
+            let mut ran = RAN.lock().expect("never poisoned");
             let before = skipped.clone();
             if !seen.skipped.is_empty() {
-                if skipped.as_ref().is_none_or(|kept| kept.at <= began) {
+                let since_ran = match (*ran, began) {
+                    (Some(ran), Some(began)) => began > ran,
+                    (Some(_), None) => false,
+                    (None, _) => true,
+                };
+                if since_ran && skipped.as_ref().is_none_or(|kept| kept.at <= began) {
                     *skipped = Some(HooksSkipped {
                         by: seen.by.unwrap_or_else(|| "something that runs before them".to_string()),
                         hooks: seen.skipped,
@@ -83,9 +92,14 @@ pub(crate) fn look(node: &Arc<Node>, session: &str, directory: &Path, home: Opti
                         plugins: node.world.path().join("claude-plugins").to_string_lossy().replace('\\', "/"),
                     });
                 }
-            } else if skipped.as_ref().is_some_and(|kept| kept.at < began) {
-                // A session begun since ran them: what was missing is there now.
-                *skipped = None;
+            } else {
+                if let Some(began) = began {
+                    *ran = Some(ran.map_or(began, |ran| ran.max(began)));
+                }
+                if skipped.as_ref().is_some_and(|kept| kept.at < began) {
+                    // A session begun since ran them: what was missing is there now.
+                    *skipped = None;
+                }
             }
             (*skipped != before).then(|| skipped.clone())
         };

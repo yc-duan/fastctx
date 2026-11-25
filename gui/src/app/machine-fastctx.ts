@@ -140,7 +140,8 @@ export class FastctxBlock {
       return;
     }
     clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => void this.ask(), moving ? MOVING_MS : this.askedAt !== undefined ? QUIET_MS : EVERY_MS);
+    // One that did not answer is asked again soon, its number told or not.
+    this.timer = window.setTimeout(() => void this.ask(), moving ? MOVING_MS : this.askedAt !== undefined && this.problem === null ? QUIET_MS : EVERY_MS);
   }
 
   /** Whether the machine's Fastctx is of a release before it answers about

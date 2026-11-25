@@ -6,7 +6,7 @@ use fastctx_types::{
     access::{Acting, HubAccount},
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
@@ -15,7 +15,8 @@ use tokio::sync::Semaphore;
 pub(super) struct Worker {
     pub engine: OnceLock<Arc<Host>>,
     slots: Arc<Semaphore>,
-    active: Mutex<HashSet<(HubAccount, SentinelId)>>,
+    /// The sentinels being worked on, each with what it was told meanwhile.
+    active: Mutex<HashMap<(HubAccount, SentinelId), Again>>,
     errors: Mutex<HashMap<String, String>>,
 }
 impl Default for Worker {
@@ -23,8 +24,35 @@ impl Default for Worker {
         Self {
             engine: OnceLock::new(),
             slots: Arc::new(Semaphore::new(8)),
-            active: Mutex::new(HashSet::new()),
+            active: Mutex::new(HashMap::new()),
             errors: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// What a sentinel was told while it was worked on, taken up once that
+/// work ends: a change of its records or its account's settings, read anew;
+/// timers that fired, each fired in turn. None of it is lost to work
+/// already under way, which may have read its records before the change.
+#[derive(Default)]
+struct Again {
+    reconcile: bool,
+    fired: std::collections::VecDeque<Fired>,
+}
+
+impl Again {
+    fn tell(&mut self, fired: Option<Fired>) {
+        match fired {
+            Some(fired) => self.fired.push_back(fired),
+            None => self.reconcile = true,
+        }
+    }
+
+    /// What is to be done next, if anything: a timer fired, or a reading anew.
+    fn next(&mut self) -> Option<Option<Fired>> {
+        match self.fired.pop_front() {
+            Some(fired) => Some(Some(fired)),
+            None => std::mem::take(&mut self.reconcile).then_some(None),
         }
     }
 }
@@ -132,12 +160,16 @@ async fn watch_scope(node: Arc<Node>, scope: HubAccount) {
                     .map_err(|e| e.to_string())?;
             let mut ways = node.ways.subscribe();
             // Listed whole as the watch begins, when it lagged, when the ways
-            // change, and as a safety net; between those each change the
-            // watch tells is taken up alone, without listing every one.
+            // change, and as a safety net at most `LIST_QUIET` after the last
+            // listing, however much the watch tells meanwhile; between those
+            // each change the watch tells is taken up alone, without listing
+            // every one.
             let mut listed = BTreeSet::new();
             let mut relist = true;
+            let mut relist_at = tokio::time::Instant::now() + LIST_QUIET;
             loop {
                 if relist {
+                    relist_at = tokio::time::Instant::now() + LIST_QUIET;
                     let heads = tokio::time::timeout(Duration::from_secs(60), records.list(&scope, lifecycle::KIND))
                         .await
                         .map_err(|_| "listing sentinel assignments timed out")?
@@ -195,7 +227,7 @@ async fn watch_scope(node: Arc<Node>, scope: HubAccount) {
                         changed.map_err(|e| e.to_string())?;
                         relist = true;
                     }
-                    () = tokio::time::sleep(LIST_QUIET) => relist = true,
+                    () = tokio::time::sleep_until(relist_at) => relist = true,
                 }
             }
         }
@@ -238,46 +270,86 @@ fn start_timers(node: &Arc<Node>) {
         }
     });
 }
+/// Works on the sentinel `id` of `scope`, for the timer `fired` or to read
+/// it anew, in one of the worker's slots; one being worked on already is
+/// told, to take it up once that work ends (`Again`).
 async fn enqueue(node: &Arc<Node>, scope: HubAccount, id: SentinelId, fired: Option<Fired>) {
+    let key = (scope.clone(), id.clone());
+    let told = |fired: Option<Fired>| {
+        let mut active = node.sentinels.worker.active.lock().expect("never poisoned");
+        match active.get_mut(&key) {
+            Some(again) => {
+                again.tell(fired);
+                None
+            }
+            None => Some(fired),
+        }
+    };
+    let Some(fired) = told(fired) else { return };
     let Ok(slot) = node.sentinels.worker.slots.clone().acquire_owned().await else {
         return;
     };
-    let key = (scope.clone(), id.clone());
-    if !node.sentinels.worker.active.lock().expect("never poisoned").insert(key.clone()) {
-        return;
-    }
+    // Begun meanwhile by another telling: told to it.
+    let fired = {
+        let mut active = node.sentinels.worker.active.lock().expect("never poisoned");
+        match active.entry(key.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut begun) => {
+                begun.get_mut().tell(fired);
+                return;
+            }
+            std::collections::hash_map::Entry::Vacant(free) => {
+                free.insert(Again::default());
+                fired
+            }
+        }
+    };
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
         let _slot = slot;
-        let result = async {
-            let host = engine(&node)?;
-            delete_if_owner_deleted(&node, &host, &scope, &id).await?;
-            let registration = lifecycle::get(host.records.as_ref(), &scope, &id).await.map_err(|e| e.to_string())?;
-            let goal =
-                registration.as_ref().is_some_and(|(_, r)| r.definition.kind == fastctx_types::sentinel::Kind::Goal);
-            if !crate::account_features::sentinel(&node, &scope, goal).await.map_err(|e| e.message)? {
-                return Ok(());
+        let mut fired = fired;
+        loop {
+            let result = work(&node, &scope, &id, fired).await;
+            report(&node, &format!("{} {:?}", id, scope), result.err());
+            let next = {
+                let mut active = node.sentinels.worker.active.lock().expect("never poisoned");
+                let next = active.get_mut(&key).and_then(Again::next);
+                if next.is_none() {
+                    active.remove(&key);
+                }
+                next
+            };
+            match next {
+                Some(next) => fired = next,
+                None => break,
             }
-            if let Some(fired) = fired {
-                host.fire(&fired).await?;
-                tokio::time::timeout(
-                    Duration::from_secs(60),
-                    node.sentinels.timers.get().expect("engine has timers").acknowledge(&fired),
-                )
-                .await
-                .map_err(|_| "acknowledging sentinel timer timed out")??;
-            } else {
-                host.reconcile(&scope, &id).await?;
-            }
-            if crate::account_features::sentinel(&node, &scope, goal).await.map_err(|e| e.message)? {
-                super::delivery::pending(&node, &host, &scope, &id).await?;
-            }
-            Ok::<(), String>(())
         }
-        .await;
-        report(&node, &format!("{} {:?}", id, scope), result.err());
-        node.sentinels.worker.active.lock().expect("never poisoned").remove(&key);
     });
+}
+
+/// One piece of work on a sentinel: the timer `fired`, or reading it anew.
+async fn work(node: &Arc<Node>, scope: &HubAccount, id: &SentinelId, fired: Option<Fired>) -> Result<(), String> {
+    let host = engine(node)?;
+    delete_if_owner_deleted(node, &host, scope, id).await?;
+    let registration = lifecycle::get(host.records.as_ref(), scope, id).await.map_err(|e| e.to_string())?;
+    let goal = registration.as_ref().is_some_and(|(_, r)| r.definition.kind == fastctx_types::sentinel::Kind::Goal);
+    if !crate::account_features::sentinel(node, scope, goal).await.map_err(|e| e.message)? {
+        return Ok(());
+    }
+    if let Some(fired) = fired {
+        host.fire(&fired).await?;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            node.sentinels.timers.get().expect("engine has timers").acknowledge(&fired),
+        )
+        .await
+        .map_err(|_| "acknowledging sentinel timer timed out")??;
+    } else {
+        host.reconcile(scope, id).await?;
+    }
+    if crate::account_features::sentinel(node, scope, goal).await.map_err(|e| e.message)? {
+        super::delivery::pending(node, &host, scope, id).await?;
+    }
+    Ok(())
 }
 async fn delete_if_owner_deleted(node: &Node, host: &Host, scope: &HubAccount, id: &SentinelId) -> Result<(), String> {
     let Some((version, registration)) =

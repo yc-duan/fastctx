@@ -2447,11 +2447,13 @@ function liveTalk(address: Address): DeskTalk {
   // The sentinels it left, as rows beside its jobs; the goal's own sentinel
   // goes with the goal and is not withdrawn by hand.
   const sentinelRows = signal<PanelJob[]>([]);
-  // One question at a time: a reading still on its way is the one that
-  // answers.
+  // One question at a time: one asked for while a reading is on its way,
+  // which may have read before what moved it, is asked once that one
+  // answers, and the later answers both.
   let sentinelReading: Promise<boolean> | null = null;
-  const readSentinels = (): Promise<boolean> =>
-    (sentinelReading ??= (accountFeatures.talk(store.whole.peek(), address).sentinels
+  let sentinelAgain = false;
+  const readSentinelsOnce = (): Promise<boolean> =>
+    (accountFeatures.talk(store.whole.peek(), address).sentinels
       ? sentinelList(address, (() => { const account = featureAccount(store.whole.peek(), address); return account ? { hub: account.hubName, account: account.account } : undefined; })())
       : Promise.resolve([]))
       .then(
@@ -2461,10 +2463,25 @@ function liveTalk(address: Address): DeskTalk {
         },
         // A home that cannot be asked now keeps the rows last seen.
         () => false,
-      )
-      .finally(() => {
-        sentinelReading = null;
-      }));
+      );
+  const readSentinels = (): Promise<boolean> => {
+    if (sentinelReading) {
+      sentinelAgain = true;
+      return sentinelReading;
+    }
+    const reading = (async () => {
+      let read = false;
+      do {
+        sentinelAgain = false;
+        read = await readSentinelsOnce();
+      } while (sentinelAgain && !left);
+      return read;
+    })().finally(() => {
+      sentinelReading = null;
+    });
+    sentinelReading = reading;
+    return reading;
+  };
   // What it started that still runs, as the World last answered, and the
   // sentinels it left.
   const running = effect(() => {

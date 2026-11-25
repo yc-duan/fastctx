@@ -26,11 +26,11 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<
     futures_util::future::join_all(ids.into_iter().map(|id| look_one(node, acting, works_here, id))).await
 }
 
-/// The machines that may hold `id` of those `acting` may look at: where the
-/// hubs tell what is afoot, those it is afoot on (a conversation, a job of
-/// its, a job running), and every machine a hub tells nothing of; all of
-/// them where no telling names it, as a job that ended or a conversation
-/// archived is told by none.
+/// The machines that may hold `id` of those `acting` may look at: where a
+/// hub tells a job of that id running on one, that machine, a job being on
+/// one machine alone, and every machine a hub tells nothing of; all of them
+/// otherwise: a conversation's jobs may run on any machine, one just begun
+/// told by none yet, and a job that ended is told by none.
 fn holders(node: &Node, acting: &Acting, id: &str) -> Vec<crate::around::Reachable> {
     let machines = crate::around::reachable_each(node, acting, Purpose::Look);
     let mut afoots = std::collections::HashMap::new();
@@ -52,14 +52,7 @@ fn holders(node: &Node, acting: &Acting, id: &str) -> Vec<crate::around::Reachab
         drop(view);
         match afoot {
             Some(afoot) => {
-                let holds = afoot.seen.residents.keys().any(|resident| resident.as_str() == id)
-                    || afoot.seen.jobs.keys().any(|job| job.as_str() == id)
-                    || afoot
-                        .seen
-                        .jobs
-                        .values()
-                        .any(|job| job.owner.resident().is_some_and(|owner| owner.resident.as_str() == id));
-                if holds {
+                if afoot.seen.jobs.keys().any(|job| job.as_str() == id) {
                     named = true;
                     chosen.push(machine);
                 }

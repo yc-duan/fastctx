@@ -51,6 +51,7 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     let mut deeds: BTreeMap<String, Deed> = BTreeMap::new();
     let mut legacy: Vec<Hour> = Vec::new();
     let mut found = false;
+    let mut waiting = false;
     for scope in library.held_scopes().ok()? {
         if !crate::timeline::copy::records_here(node, &scope) {
             continue;
@@ -61,8 +62,10 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         // (§29 2.5, `net-shared-machine-visibility` 2026-11-10). Only a
         // member holds them here (`records_here`).
         for (_, stream) in streams.iter().filter(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str())) {
-            // Taken only once read: asked for now where it is not here.
+            // Taken only once read: asked for now where it is not here, and
+            // no whole answer till it is.
             if !crate::assets::lazy::held(node, &scope, stream) {
+                waiting = true;
                 continue;
             }
             let mut after = None;
@@ -90,7 +93,7 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
             }
         }
     }
-    if !found {
+    if !found || waiting {
         return None;
     }
     Some(match query {

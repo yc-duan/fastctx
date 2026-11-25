@@ -25,6 +25,10 @@ pub enum Heard {
     Answered(RemoteReply),
     Offline(Option<Timestamp>),
     NoAnswer(String),
+    /// It was not answered within the round's time, or its call's: told as
+    /// no answer, though what is known of it otherwise may stand for it,
+    /// where a refusal may not.
+    Late(String),
 }
 
 /// A machine to ask, through one hub and for one account. `written` is
@@ -179,7 +183,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                         let turn = match deadline {
                             Some(deadline) => match tokio::time::timeout_at(deadline, asking.acquire()).await {
                                 Ok(turn) => turn,
-                                Err(_) => return Heard::NoAnswer("it was not asked in time: too many were asked before it".to_string()),
+                                Err(_) => return Heard::Late("it was not asked in time: too many were asked before it".to_string()),
                             },
                             None => asking.acquire().await,
                         };
@@ -196,7 +200,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                             Some(within) => {
                                 match fastctx_platform::doing::outside(format!("{name}'s answer"), within, work).await {
                                     Ok(answer) => answer,
-                                    Err(late) => return Heard::NoAnswer(late.to_string()),
+                                    Err(late) => return Heard::Late(late.to_string()),
                                 }
                             }
                             None => work.await,

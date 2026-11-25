@@ -146,13 +146,15 @@ pub(crate) fn watch(node: &Arc<Node>) {
                 // Where the residents stand as the check begins: one born or
                 // bound since is looked at by the next.
                 let seen = node.residents.changed_since(u64::MAX).at;
-                let known: std::collections::HashMap<ResidentId, bool> = node
+                // Each one's host session: one bound, or bound to another
+                // (a continuation, a new registration), is looked at anew.
+                let known: std::collections::HashMap<ResidentId, Option<_>> = node
                     .residents
                     .ids()
                     .into_iter()
                     .map(|id| {
-                        let bound = node.residents.about(&id).is_some_and(|(about, _)| about.session.is_some());
-                        (id, bound)
+                        let session = node.residents.about(&id).and_then(|(about, _)| about.session);
+                        (id, session)
                     })
                     .collect();
                 let until = fastctx_platform::task::blocking(move || refresh(&node, None)).await;
@@ -185,10 +187,11 @@ pub(crate) fn watch(node: &Arc<Node>) {
                         }
                         let mut anew = false;
                         for id in changed.residents {
-                            let bound = node.residents.about(&id).is_some_and(|(about, _)| about.session.is_some());
-                            match known.insert(id, bound) {
+                            let session = node.residents.about(&id).and_then(|(about, _)| about.session);
+                            let bound = session.is_some();
+                            match known.insert(id, session.clone()) {
                                 None => anew = true,
-                                Some(was) => anew |= bound && !was,
+                                Some(was) => anew |= bound && was != session,
                             }
                         }
                         if anew {

@@ -27,13 +27,18 @@ const INSPECTED_AT_MOST: usize = 4096;
 
 impl Transport {
     /// The number the sentinels of `registration`'s home stand at, as its
-    /// hub last told it, where it tells it and is online; none for this
-    /// computer, which is asked at no cost.
+    /// hub last told it, where it tells it, is online, and the sentinel's
+    /// account may use it still (as `send_to` asks); none for this
+    /// computer, which is asked at no cost, and none for a conversation's
+    /// sharer, whom the home judges itself.
     fn standing(&self, registration: &Registration) -> Option<u64> {
+        if crate::record_access::current().is_some() {
+            return None;
+        }
         let link = self.0.link_of(&registration.scope.hub)?;
         let view = link.view();
         let home = &registration.definition.home;
-        if view.is_me(home) {
+        if view.is_me(home) || !view.call_rights(&view.me, &registration.scope.account, home).hands {
             return None;
         }
         view.member(home).filter(|member| member.online).and_then(|member| member.numbers?.sentinels)

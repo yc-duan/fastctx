@@ -117,6 +117,9 @@ async fn serve(database: Database, registered: Arc<Registered>) {
 fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked> {
     let kind = registered.kind.name;
     let at = now();
+    // A kind that paces its jobs looks further: one it keeps waiting is not
+    // taken, and must not hide one behind it that may begin.
+    let limit = if registered.kind.ready.is_some() { LOOKED_AT } else { (most * 8).min(LOOKED_AT) };
     let due: Vec<(i64, String, String, Vec<u8>, u32, i64)> = db
         .prepare_cached(
             "SELECT id, key, unit, payload, tries, due FROM jobs AS job \
@@ -125,18 +128,11 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
                  AND earlier.state = ?2 AND earlier.id < job.id) \
              ORDER BY due, id LIMIT ?4",
         )?
-        // A kind that paces its jobs looks further: one it keeps waiting is
-        // not taken, and must not hide one behind it that may begin.
-        .query_map(
-            params![
-                kind,
-                WAITING,
-                at,
-                if registered.kind.ready.is_some() { LOOKED_AT } else { (most * 8).min(LOOKED_AT) } as i64
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-        )?
+        .query_map(params![kind, WAITING, at, limit as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+    let looked = due.len();
     let mut taken = Vec::new();
     // The earliest a job due now that the kind keeps waiting may begin.
     let mut resting: Option<i64> = None;
@@ -168,6 +164,11 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
     }
     if !taken.is_empty() {
         return Ok((taken, None));
+    }
+    // Every one looked at kept waiting, and more may be due behind them:
+    // looked at again at once, those kept waiting due later now.
+    if resting.is_some() && looked == limit {
+        return Ok((taken, Some(at)));
     }
     // Looked at as of the same time as the jobs due, so one falling due
     // between the two is not missed (codex-955b2bcb).

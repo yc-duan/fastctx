@@ -9,8 +9,9 @@
 //! hubs asked again first: the views follow their hubs' changes on their own.
 //! Each round is answered within its bound (`WAITED_ON`, `SEARCHED`); a
 //! machine that does not answer by then is told as not answering. What a
-//! machine says of its agents and logins is kept, and asked again only once
-//! its logins number moved (`Kept`).
+//! machine says of its agents and logins, whole, is kept, and asked again
+//! once its logins number moved, or who asks it or what they may do there
+//! changed, or the device is not connected to its hub (`Kept`).
 
 use fastctx_types::access::Written;
 
@@ -35,34 +36,77 @@ const WAITED_ON: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long a search for one thing by its id waits for each machine.
 const SEARCHED: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// What each machine last answered of one kind, by hub and machine key: how
-/// it is written, its logins number when it answered, and the answer.
-pub(super) type Kept<T> = std::sync::Mutex<std::collections::HashMap<(String, String), (Written, u64, T)>>;
+/// What each machine last answered whole of one kind, by hub and machine
+/// key: how it is written, what the answer stood on, and the answer.
+pub(super) type Kept<T> = std::sync::Mutex<std::collections::HashMap<(String, String), (Written, Standing, T)>>;
 
-/// The logins number `machine`'s hub tells of it now, where it tells one.
-fn logins_number(machine: &Reachable) -> Option<u64> {
-    machine.link.view().machines().find(|member| member.key == machine.key).and_then(|member| member.numbers?.logins)
+/// What a machine's answer stands on: its logins number, and the accounts
+/// of this device that ask it with what each may do there, as its hub tells
+/// them. Another account asking, or one that may do less there, is
+/// answered anew: the machine answers each only what that account may see.
+#[derive(Clone, PartialEq)]
+pub(super) struct Standing {
+    number: u64,
+    askers: Vec<(AccountName, fastctx_types::access::Rights)>,
 }
 
-/// The answers of `kept` still standing for the machines of `asked`, their
-/// numbers not moved since; and the machines to ask.
-fn kept_or_asked<T: Clone>(kept: &Kept<T>, asked: Vec<Reachable>) -> (Vec<(Written, T)>, Vec<Reachable>) {
-    let kept = kept.lock().expect("never poisoned");
-    let mut standing: Vec<(Written, T)> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut ask = Vec::new();
+/// What an answer of the machine of `asked`, one machine asked for each of
+/// its accounts, stands on now, as its hub tells while this device is
+/// connected to it and it tells a logins number; none otherwise.
+fn standing(asked: &[Reachable]) -> Option<Standing> {
+    let first = asked.first()?;
+    if !matches!(first.link.status(), fastctx_net::link::Status::Online { .. }) {
+        return None;
+    }
+    let view = first.link.view();
+    let member = view.machines().find(|member| member.key == first.key)?;
+    let number = member.numbers?.logins?;
+    let mut askers: Vec<_> =
+        asked.iter().map(|one| (one.account.clone(), view.rights(&one.account, &member.name))).collect();
+    askers.sort_by(|a, b| a.0.cmp(&b.0));
+    askers.dedup();
+    Some(Standing { number, askers })
+}
+
+/// `asked` by machine: each hub and machine key with the questions of it,
+/// one for each account, and what an answer of it stands on now.
+type ByMachine = Vec<((String, String), Vec<Reachable>, Option<Standing>)>;
+
+fn by_machine(asked: Vec<Reachable>) -> ByMachine {
+    let mut machines: ByMachine = Vec::new();
     for machine in asked {
         let at = (machine.link.membership().id.to_string(), machine.key.to_string());
-        match (logins_number(&machine), kept.get(&at)) {
-            (Some(number), Some((written, was, answer))) if *was == number => {
-                if seen.insert(at) {
-                    standing.push((written.clone(), answer.clone()));
-                }
+        match machines.iter_mut().find(|(was, _, _)| *was == at) {
+            Some((_, questions, _)) => questions.push(machine),
+            None => machines.push((at, vec![machine], None)),
+        }
+    }
+    for (_, questions, standing_now) in &mut machines {
+        *standing_now = standing(questions);
+    }
+    machines
+}
+
+/// The answers of `kept` still standing for the machines of `asked`; and
+/// the machines to ask, with what an answer of each will stand on.
+fn kept_or_asked<T: Clone>(kept: &Kept<T>, asked: Vec<Reachable>) -> (Vec<(Written, T)>, ByMachine) {
+    let kept = kept.lock().expect("never poisoned");
+    let mut standing: Vec<(Written, T)> = Vec::new();
+    let mut ask = Vec::new();
+    for (at, questions, now) in by_machine(asked) {
+        match (&now, kept.get(&at)) {
+            (Some(now), Some((written, then, answer))) if then == now => {
+                standing.push((written.clone(), answer.clone()))
             }
-            _ => ask.push(machine),
+            _ => ask.push((at, questions, now)),
         }
     }
     (standing, ask)
+}
+
+/// Whether an answer was given for every account it was asked for.
+fn whole(observation: Option<&fastctx_types::observation::Observation>) -> bool {
+    observation.is_none_or(|observation| observation.unanswered.is_empty())
 }
 
 impl Device {
@@ -268,21 +312,25 @@ impl Device {
             None => reachable,
         };
         let (mut machines, asked) = kept_or_asked(&self.agents_kept, asked);
-        let numbers: Vec<(String, String, Option<u64>)> = asked
-            .iter()
-            .map(|machine| (machine.link.membership().id.to_string(), machine.key.to_string(), logins_number(machine)))
-            .collect();
-        let heard = around::ask_known(asked, |_| RemoteCall::Agents, WAITED_ON).await;
+        let mut standings = std::collections::HashMap::new();
+        let mut questions = Vec::new();
+        for (at, asked, standing) in asked {
+            standings.insert(at, standing);
+            questions.extend(asked);
+        }
+        let heard = around::ask_known(questions, |_| RemoteCall::Agents, WAITED_ON).await;
         for answers in around::answers::collect(heard) {
-            let (hub, key, written) =
-                (answers.source.hub.to_string(), answers.source.key.clone(), answers.source.written.clone());
+            let (at, written) =
+                ((answers.source.hub.to_string(), answers.source.key.clone()), answers.source.written.clone());
             let answer = answers.agents();
-            let number = numbers.iter().find(|(at, of, _)| *at == hub && *of == key).and_then(|(_, _, number)| *number);
-            if let (Some(number), fastctx_types::agents::MachineAgents::Answered { .. }) = (number, &answer) {
+            if let (Some(Some(standing)), fastctx_types::agents::MachineAgents::Answered { observation, .. }) =
+                (standings.remove(&at), &answer)
+                && whole(observation.as_ref())
+            {
                 self.agents_kept
                     .lock()
                     .expect("never poisoned")
-                    .insert((hub, key), (written.clone(), number, answer.clone()));
+                    .insert(at, (written.clone(), standing, answer.clone()));
             }
             machines.push((written, answer));
         }
@@ -310,21 +358,25 @@ impl Device {
             None => reachable,
         };
         let (mut machines, asked) = kept_or_asked(&self.logins_kept, asked);
-        let numbers: Vec<(String, String, Option<u64>)> = asked
-            .iter()
-            .map(|machine| (machine.link.membership().id.to_string(), machine.key.to_string(), logins_number(machine)))
-            .collect();
-        let heard = around::ask_known(asked, |_| RemoteCall::AgentLogins, WAITED_ON).await;
+        let mut standings = std::collections::HashMap::new();
+        let mut questions = Vec::new();
+        for (at, asked, standing) in asked {
+            standings.insert(at, standing);
+            questions.extend(asked);
+        }
+        let heard = around::ask_known(questions, |_| RemoteCall::AgentLogins, WAITED_ON).await;
         for answers in around::answers::collect(heard) {
-            let (hub, key, written) =
-                (answers.source.hub.to_string(), answers.source.key.clone(), answers.source.written.clone());
+            let (at, written) =
+                ((answers.source.hub.to_string(), answers.source.key.clone()), answers.source.written.clone());
             let answer = answers.logins();
-            let number = numbers.iter().find(|(at, of, _)| *at == hub && *of == key).and_then(|(_, _, number)| *number);
-            if let (Some(number), fastctx_types::logins::MachineLoginsHeard::Answered { .. }) = (number, &answer) {
+            if let (Some(Some(standing)), fastctx_types::logins::MachineLoginsHeard::Answered { observation, .. }) =
+                (standings.remove(&at), &answer)
+                && whole(observation.as_ref())
+            {
                 self.logins_kept
                     .lock()
                     .expect("never poisoned")
-                    .insert((hub, key), (written.clone(), number, answer.clone()));
+                    .insert(at, (written.clone(), standing, answer.clone()));
             }
             machines.push((written, answer));
         }
@@ -379,7 +431,7 @@ impl Device {
                             // With the hub not asked, none of its machines
                             // was: what each said of itself when it last
                             // connected.
-                            Heard::NoAnswer(reason) => match seen.filter(|_| !online_known) {
+                            Heard::NoAnswer(reason) | Heard::Late(reason) => match seen.filter(|_| !online_known) {
                                 Some(seen) => self.kept_facts(&link, seen),
                                 None => Err(reason),
                             },

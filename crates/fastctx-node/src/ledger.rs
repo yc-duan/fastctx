@@ -234,6 +234,8 @@ fn check_size(entry: &Entry) -> Result<(), String> {
 /// Takes the ledgers available to this machine's accounts, regardless of
 /// the projects' work locations. One sync runs at a time.
 pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result<(), String> {
+    // What a pass takes, or lets go of, is no longer known whole.
+    query::unknown(Some(hub), None);
     let Some(link) = node.link_of(hub) else { return Ok(()) };
     // A managed machine keeps no project's records: it acts for no one, and
     // the hub gives it none (`world-network.md`, 受管机器).

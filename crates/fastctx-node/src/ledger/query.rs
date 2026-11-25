@@ -24,6 +24,16 @@ static WHOLE: LazyLock<Mutex<Whole>> = LazyLock::new(Default::default);
 /// changes told by then (`WHOLE`).
 type Whole = HashMap<(HubId, TownName), (jiff::Timestamp, u64)>;
 
+/// Forgets that the copies of `town`, or of every project, from `hub`, or
+/// from every hub, are known whole: one let go of, or taken by a pass the
+/// hub's telling did not start (`super::sync`).
+pub(crate) fn unknown(hub: Option<&HubId>, town: Option<&TownName>) {
+    WHOLE
+        .lock()
+        .expect("never poisoned")
+        .retain(|(from, name), _| !(hub.is_none_or(|hub| hub == from) && town.is_none_or(|town| town == name)));
+}
+
 /// Whether `town`'s copy here is known whole for `link`'s hub (`WHOLE`).
 fn whole(node: &Node, link: &fastctx_net::link::Link, town: &TownName) -> bool {
     let fastctx_net::link::Status::Online { since, .. } = link.status() else { return false };

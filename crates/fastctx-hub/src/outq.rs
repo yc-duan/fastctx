@@ -406,11 +406,12 @@ impl Outq {
         changed
     }
 
-    /// Whether the view the member was last given shows any of `accounts`
-    /// or `machines`: one that changed in a way that alters what no one may
-    /// see changes the views of those that showed it, and of no others
-    /// (`Hub::configuration_changed_for`). None given yet shows nothing: the
-    /// member asks for its view whole as it begins.
+    /// Whether the view the member was last given, or the one it is to be
+    /// told of next, shows any of `accounts` or `machines`: one that changed
+    /// in a way that alters what no one may see changes the views of those
+    /// that showed it, and of no others (`Hub::configuration_changed_for`).
+    /// None given yet shows nothing: the member asks for its view whole as
+    /// it begins.
     pub(crate) fn view_shows(
         &self,
         accounts: &std::collections::BTreeSet<fastctx_types::AccountName>,
@@ -418,8 +419,11 @@ impl Outq {
     ) -> bool {
         let state = self.0.state.lock().expect("never poisoned");
         let Some((given, _)) = &state.view_given else { return false };
-        given.directory.accounts.iter().any(|account| accounts.contains(&account.name))
-            || given.directory.members.iter().any(|member| machines.contains(&member.name))
+        let shows = |view: &View| {
+            view.directory.accounts.iter().any(|account| accounts.contains(&account.name))
+                || view.directory.members.iter().any(|member| machines.contains(&member.name))
+        };
+        shows(given) || state.view_target.as_ref().is_some_and(|(target, _)| shows(target))
     }
 
     /// Initial producers are finished; the writer acknowledges after draining their frames.

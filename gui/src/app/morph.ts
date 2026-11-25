@@ -17,6 +17,16 @@ function keyOf(node: Node): string | null {
   return node.getAttribute("data-key") ?? (node.id || null);
 }
 
+/** Whether two elements stand for the same thing, by what names it: their
+ *  data attributes, where they link, their name and id (as `app/focus.ts`
+ *  finds a control again). */
+function sameIdentity(a: Element, b: Element): boolean {
+  const naming = (name: string) => (name.startsWith("data-") && !name.startsWith("data-world-")) || name === "href" || name === "name" || name === "id";
+  const names = new Set([...a.getAttributeNames(), ...b.getAttributeNames()].filter(naming));
+  for (const name of names) if (a.getAttribute(name) !== b.getAttribute(name)) return false;
+  return true;
+}
+
 function sameKind(a: Node, b: Node): boolean {
   return a.nodeType === b.nodeType && (!(a instanceof Element) || a.tagName === (b as Element).tagName);
 }
@@ -62,6 +72,14 @@ function node(old: ChildNode, next: ChildNode): void {
   }
   // What the person is typing into is theirs until they leave it.
   if (old === document.activeElement && (old instanceof HTMLInputElement || old instanceof HTMLTextAreaElement || old instanceof HTMLSelectElement)) return;
+  // What holds focus, or holds what does, now drawn as another thing is
+  // not made into it: focus would stay on the other, and a key pressed act
+  // on it. It is put in its place whole, and focus found again where the
+  // thing it was on went (`app/focus.ts`).
+  if (old.contains(document.activeElement) && !sameIdentity(old, next)) {
+    old.replaceWith(next);
+    return;
+  }
   for (const { name } of Array.from(old.attributes)) if (!next.hasAttribute(name)) old.removeAttribute(name);
   for (const { name, value } of Array.from(next.attributes)) if (old.getAttribute(name) !== value) old.setAttribute(name, value);
   if (old instanceof HTMLInputElement && next instanceof HTMLInputElement) {

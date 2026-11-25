@@ -111,7 +111,10 @@ impl Wanted {
 /// Whether the stream `stream` of the held scope `scope` is here to be
 /// read: always for one not taken only once read, and for one this machine
 /// took before; else once it was taken whole. One not here is asked for,
-/// taken at the scope's next pass, and the reader reads as if it had none.
+/// taken at the scope's next pass, and the reader reads as if it had none;
+/// each reading of it until then looks at the scope again, so a pass under
+/// way that began before it was asked for, and passed it over, does not
+/// leave it waiting.
 pub(crate) fn held(node: &Node, scope: &fastctx_content::v2::HeldScope, stream: &str) -> bool {
     if !lazy(&scope.key, stream) {
         return true;
@@ -133,15 +136,15 @@ pub(crate) fn held(node: &Node, scope: &fastctx_content::v2::HeldScope, stream: 
     }
     if assets.lazy.want(&scope.key, stream) {
         node.log.line(format_args!("taking {stream} of {} here: it was read", scope.key));
-        assets.relook.lock().expect("relook").insert(scope.key.clone());
-        // Its hub's driver comes round for it; none runs while the hub is
-        // away, and it is taken once one does.
-        if let Some(link) =
-            node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())
-            && let Some(wake) = assets.drivers.lock().expect("drivers").get(&link.membership().id)
-        {
-            wake.notify_one();
-        }
+    }
+    assets.relook.lock().expect("relook").insert(scope.key.clone());
+    // Its hub's driver comes round for it; none runs while the hub is away,
+    // and it is taken once one does.
+    if let Some(link) =
+        node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())
+        && let Some(wake) = assets.drivers.lock().expect("drivers").get(&link.membership().id)
+    {
+        wake.notify_one();
     }
     false
 }

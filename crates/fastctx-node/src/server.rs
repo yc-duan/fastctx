@@ -2486,17 +2486,18 @@ pub async fn who_here(
 const DETAILS_WITHIN: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// What each machine of `reachable` is to `fastctx w`. Where its hub tells
-/// what is afoot on it, whole and for every account here that `acting` works
-/// for (`afoot_of`), that is taken at once, and only a machine where
-/// something is under way is asked, for its details; with `every` (history,
-/// or a project's former residents, asked for), every such machine is
-/// asked, for what it alone holds. Those are waited for `DETAILS_WITHIN`;
-/// one that does not answer by then is shown as its hub told. A machine its
-/// hub tells nothing of is asked and waited for as before (`WAITED_ON`).
+/// what is afoot on it for the account it is asked as (`afoot_of`), that is
+/// taken at once, and only a machine with something the hub cannot tell is
+/// asked; with `every` (history, or a project's former residents, asked
+/// for), every such machine is asked, for what it alone holds. Those are
+/// waited for `DETAILS_WITHIN`; one that does not answer by then is shown as
+/// its hub told, one that refuses is not. A machine its hub tells nothing of
+/// is asked and waited for as before (`WAITED_ON`).
 async fn told_or_asked(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
     reachable: Vec<crate::around::Reachable>,
+    all: bool,
     town: Option<&TownName>,
     every: bool,
     call: impl Fn(&MachineName) -> RemoteCall + Clone,
@@ -2510,18 +2511,13 @@ async fn told_or_asked(
     let mut untold = Vec::new();
     let mut afoots = std::collections::HashMap::new();
     for machine in reachable {
-        match afoot_of(node, acting, &machine, town, &mut afoots) {
-            Some(reply) => {
-                let under_way =
-                    reply.residents.iter().any(fastctx_types::town::ResidentNow::in_progress) || !reply.jobs.is_empty();
-                if every || under_way {
-                    let asked = asked_of(&machine);
-                    told.insert((asked.source.hub.to_string(), asked.source.key.clone(), asked.account), reply);
-                    detailed.push(machine);
-                } else {
-                    heard.push((asked_of(&machine), Heard::Answered(RemoteReply::Who(reply))));
-                }
+        match afoot_of(node, acting, &machine, all, town, &mut afoots) {
+            Some((reply, ask)) if every || ask => {
+                let asked = asked_of(&machine);
+                told.insert((asked.source.hub.to_string(), asked.source.key.clone(), asked.account), reply);
+                detailed.push(machine);
             }
+            Some((reply, _)) => heard.push((asked_of(&machine), Heard::Answered(RemoteReply::Who(reply)))),
             None => untold.push(machine),
         }
     }
@@ -2531,7 +2527,9 @@ async fn told_or_asked(
     );
     for (asked, answer) in details {
         match answer {
-            Heard::NoAnswer(reason) => {
+            // Only one not answered in time is shown as its hub told: one
+            // that refused, or could not be asked, is not.
+            Heard::Late(reason) => {
                 let key = (asked.source.hub.to_string(), asked.source.key.clone(), asked.account.clone());
                 match told.remove(&key) {
                     Some(reply) => {
@@ -2545,7 +2543,7 @@ async fn told_or_asked(
                             )),
                         ));
                     }
-                    None => heard.push((asked, Heard::NoAnswer(reason))),
+                    None => heard.push((asked, Heard::Late(reason))),
                 }
             }
             answer => heard.push((asked, answer)),
@@ -2568,23 +2566,33 @@ fn asked_of(machine: &crate::around::Reachable) -> fastctx_net::around::Asked {
     }
 }
 
-/// What `machine`'s hub last told is afoot on it, as its own answer to `w`
-/// would be at the grain of turns (in `town`, where one is asked of): where
-/// the line to the hub is up, the hub passes on what is afoot, has told it
-/// whole since the line came up, the machine is online and told it, and
-/// `acting` works for every account this computer is logged in to there,
-/// for which alone the hub tells it. None otherwise. `afoots` keeps each
-/// hub's telling, read once.
+/// What `machine`'s hub last told is afoot on it, as the machine's own
+/// answer to `w` would be for the account it is asked as, at the grain of
+/// turns (in `town`, where one is asked of; without `all`, of those busy
+/// here alone), and whether the machine is still to be asked for what its
+/// hub cannot tell: the details of what is under way there; the
+/// conversations shared with an account here, of which the machine alone
+/// says which account sees which; and, to an account that may work there,
+/// what runs there for accounts not logged in here. The hub tells what
+/// works for the accounts this computer is logged in to there, as they were
+/// when it told: what of it stands is judged by the accounts as they are
+/// now. None where the line to the hub is down, the hub does not pass on
+/// what is afoot or has not told it whole since the line came up, the
+/// machine is offline or told nothing, or `acting` does not work here for
+/// the account, logged in here. `afoots` keeps each hub's telling, read
+/// once.
 fn afoot_of(
     node: &Node,
     acting: &fastctx_types::access::Acting,
     machine: &crate::around::Reachable,
+    all: bool,
     town: Option<&TownName>,
     afoots: &mut std::collections::HashMap<
         fastctx_types::access::HubId,
         std::collections::BTreeMap<MachineName, fastctx_net::link::Elsewhere>,
     >,
-) -> Option<WhoReply> {
+) -> Option<(WhoReply, bool)> {
+    use fastctx_types::access::Acting;
     let link = &machine.link;
     if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) || !link.afoot_ready() {
         return None;
@@ -2593,28 +2601,74 @@ fn afoot_of(
     if !view.afoot {
         return None;
     }
-    let logins: std::collections::BTreeSet<_> = view.me()?.logins.iter().cloned().collect();
-    let accounts: std::collections::BTreeSet<_> = node.accounts_on(link, acting).into_iter().collect();
-    if accounts != logins {
+    let account = &machine.account;
+    let logins = &view.me()?.logins;
+    if !logins.contains(account) || !node.accounts_on(link, acting).contains(account) {
         return None;
     }
     let member = view.machines().find(|member| member.key == machine.key)?;
     if !member.online {
         return None;
     }
-    let told = afoots.entry(link.membership().id.clone()).or_insert_with(|| link.afoot()).get(&member.name)?;
-    let mut reply = WhoReply {
-        machine: member.name.clone(),
-        residents: told.seen.residents.values().cloned().collect(),
-        jobs: told.seen.jobs.values().cloned().collect(),
-        history: None,
-        busy: told.busy,
+    let hub = link.membership().id.clone();
+    let told = afoots.entry(hub.clone()).or_insert_with(|| link.afoot()).get(&member.name)?;
+    let works_for = |worked: &fastctx_types::access::HubAccount| worked.hub == hub && worked.account == *account;
+    // A conversation working for the account; one shared with it is not
+    // judged here.
+    let seen_as = |resident: &fastctx_types::town::ResidentNow| {
+        resident.opened_by.is_none()
+            && match &resident.about.acting {
+                Acting::Accounts { accounts } => accounts.iter().any(works_for),
+                Acting::Here => member.logins.contains(account),
+            }
     };
-    if let Some(town) = town {
-        reply.residents.retain(|resident| resident.town.as_ref() == Some(town));
-        reply.jobs.retain(|job| job.town.as_ref() == Some(town));
-    }
-    Some(reply)
+    // As the machine lists them: in the town asked of; without `all`, those
+    // busy here alone (`who::who`).
+    let listed = |resident: &&fastctx_types::town::ResidentNow| {
+        town.is_none_or(|town| resident.town.as_ref() == Some(town))
+            && (all || (resident.here && resident.now.as_ref().is_none_or(|now| now.activity == Activity::Busy)))
+    };
+    let residents: Vec<_> =
+        told.seen.residents.values().filter(listed).filter(|resident| seen_as(resident)).cloned().collect();
+    let shared = told.seen.residents.values().filter(listed).any(|resident| resident.opened_by.is_some());
+    // One that may work there sees every job running there (`admission::seen`).
+    let hands = view.rights(account, &member.name).hands;
+    let jobs: Vec<_> = told
+        .seen
+        .jobs
+        .values()
+        .filter(|job| town.is_none_or(|town| job.town.as_ref() == Some(town)))
+        .filter(|job| {
+            hands
+                || match (&job.account, job.owner.resident()) {
+                    (Some(worked), _) => works_for(worked),
+                    (None, Some(owner)) => {
+                        owner.machine == member.name && told.seen.residents.get(&owner.resident).is_some_and(seen_as)
+                    }
+                    (None, None) => false,
+                }
+        })
+        .cloned()
+        .collect();
+    let foreign = |other: &fastctx_types::AccountName| !logins.contains(other);
+    let others = hands
+        && (member.logins.iter().any(foreign)
+            || view.directory.shares.iter().any(|share| share.machine == member.name && foreign(&share.account))
+            || view.directory.assists.iter().any(|assist| assist.machine == member.name && foreign(&assist.account)));
+    let ask = residents.iter().any(fastctx_types::town::ResidentNow::in_progress)
+        || !jobs.is_empty()
+        || told.busy.is_some_and(|busy| busy > 0)
+        || shared
+        || others;
+    let reply = WhoReply {
+        machine: member.name.clone(),
+        residents,
+        jobs,
+        history: None,
+        // How many are at work there is told to its owner.
+        busy: told.busy.filter(|_| member.home.as_ref() == Some(account)),
+    };
+    Some((reply, ask))
 }
 
 /// `fastctx w` in `town`, asking each machine its record names, or across
@@ -2655,7 +2709,7 @@ async fn who(
     }
     let reachable = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look);
     let every = since.is_some() || town.is_some();
-    let heard = told_or_asked(node, acting, reachable, town.as_ref(), every, |_| RemoteCall::Who {
+    let heard = told_or_asked(node, acting, reachable, all, town.as_ref(), every, |_| RemoteCall::Who {
         all,
         town: town.clone(),
         since,

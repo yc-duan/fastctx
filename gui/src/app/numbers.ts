@@ -30,8 +30,9 @@ export function numbersOf(world: WorldNow | null, kind: NumberKind): Map<string,
 }
 
 /** Calls `moved` with the machines, as written, whose number of `kind`
- *  moved as `world` changed, or that began to tell one; what stood when it
- *  began is taken as read. Returns what stops it. */
+ *  moved as `world` changed, that began to tell one, or that tell none any
+ *  more (gone offline, or away); what stood when it began is taken as read.
+ *  Returns what stops it. */
 export function followNumbers(world: Signal<WorldNow | null>, kind: NumberKind, moved: (machines: string[]) => void): () => void {
   let known: Map<string, number> | null = null;
   return effect(() => {
@@ -42,9 +43,30 @@ export function followNumbers(world: Signal<WorldNow | null>, kind: NumberKind, 
     known = now;
     if (!was) return;
     const changed = [...now].filter(([machine, number]) => was.get(machine) !== number).map(([machine]) => machine);
+    for (const machine of was.keys()) if (!now.has(machine)) changed.push(machine);
     // Called apart from the effect, so that what it reads is not followed.
     if (changed.length) queueMicrotask(() => moved(changed));
   });
+}
+
+/** Reads with `read`, `begun` as it begins; one that fails calls `failed`,
+ *  so the next tick of the clock reads again rather than taking the move as
+ *  read, and fails as it did. */
+function readMarked(read: () => void | Promise<unknown>, begun: () => void, failed: () => void): void | Promise<unknown> {
+  begun();
+  let result: void | Promise<unknown>;
+  try {
+    result = read();
+  } catch (error) {
+    failed();
+    throw error;
+  }
+  return result instanceof Promise
+    ? result.catch((error: unknown) => {
+        failed();
+        throw error;
+      })
+    : result;
 }
 
 /** Calls `read` whenever `machine`'s answers of `kind` may have changed:
@@ -56,15 +78,16 @@ export function followMachine(world: Signal<WorldNow | null>, kind: NumberKind, 
   let last = Date.now();
   let missed = false;
   let first = true;
-  const now = () => {
+  const now = () => readMarked(read, () => {
     missed = false;
     last = Date.now();
-    return read();
-  };
+  }, () => {
+    missed = true;
+  });
   const stopNumbers = followNumbers(world, kind, (machines) => {
     if (!machines.includes(machine)) return;
     if (document.hidden) missed = true;
-    else void now();
+    else void Promise.resolve(now()).catch(() => {});
   });
   const timer = followState(null, () => {
     if (first) {
@@ -90,11 +113,12 @@ export function followAll(world: Signal<WorldNow | null>, kind: NumberKind, topi
   let last = Date.now();
   let missed = false;
   let first = true;
-  const now = () => {
+  const now = () => readMarked(read, () => {
     missed = false;
     last = Date.now();
-    return read();
-  };
+  }, () => {
+    missed = true;
+  });
   const untold = () => machinesOf(world.peek()).some((machine) => !machine.here && machine.online === true && machine.numbers?.[kind] === undefined);
   const here = followState(topic, now, every);
   const stopNumbers = followNumbers(world, kind, () => {

@@ -74,7 +74,7 @@ pub async fn stop(
         match heard {
             Heard::Answered(RemoteReply::JobStopped { record: Some(record) }) => stopped.push((name, record)),
             Heard::Answered(_) | Heard::Offline(_) => {}
-            Heard::NoAnswer(reason) => failed.push(format!("{name}: {reason}")),
+            Heard::NoAnswer(reason) | Heard::Late(reason) => failed.push(format!("{name}: {reason}")),
         }
     }
     match stopped.len() {

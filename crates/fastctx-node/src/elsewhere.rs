@@ -281,7 +281,7 @@ fn standing(kept: &Kept, number: Option<u64>, now: Instant) -> bool {
         return false;
     }
     match (&kept.heard, kept.number, number) {
-        (Heard::NoAnswer(_), _, _) => age < FAILED,
+        (Heard::NoAnswer(_) | Heard::Late(_), _, _) => age < FAILED,
         (_, Some(then), Some(number)) => then == number && age < TRUSTED,
         _ => age < FRESH,
     }
@@ -333,7 +333,7 @@ fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: 
         let Some(node) = weak.upgrade() else { return };
         node.elsewhere.asking.lock().expect("never poisoned").remove(&key);
         let again = match &heard {
-            Heard::NoAnswer(_) => Some(FAILED),
+            Heard::NoAnswer(_) | Heard::Late(_) => Some(FAILED),
             Heard::Answered(_) if number.is_none() => Some(FRESH),
             _ => None,
         };
@@ -392,7 +392,7 @@ fn told(heard: &Heard) -> Vec<u8> {
     match heard {
         Heard::Answered(reply) => serde_json::to_vec(reply).unwrap_or_default(),
         Heard::Offline(since) => format!("offline {since:?}").into_bytes(),
-        Heard::NoAnswer(reason) => format!("no answer {reason}").into_bytes(),
+        Heard::NoAnswer(reason) | Heard::Late(reason) => format!("no answer {reason}").into_bytes(),
     }
 }
 

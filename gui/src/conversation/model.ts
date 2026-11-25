@@ -945,9 +945,10 @@ export class Fold {
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
+          if (shown.prose === "message") this.lastWordsTaken(event.turn, shown.text);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
-          this.lastWordsTaken(event.turn);
+          this.lastWordsTaken(event.turn, event.text);
           this.overtaken(event.turn);
           this.add({
             kind: "prose",
@@ -1188,8 +1189,9 @@ export class Fold {
   /** A turn that ended telling its last words, where no message of it after
    *  its last tool shows them — its machine told the end first, and the
    *  record of the words is on its way (codex-d0397b85) — shows them from
-   *  its end until that message comes and takes their place (`item`). The
-   *  host may have told a summary of the message: the message replaces it. */
+   *  its end until that message comes and takes their place (`item`). A
+   *  message of other words before them, as one telling how the work goes,
+   *  is not they (`sameWords`). */
   private lastWords(turn: string, end: TurnEnd): void {
     const words = end.last_message?.trim();
     if (!words) return;
@@ -1198,21 +1200,22 @@ export class Fold {
     entries.forEach((entry, at) => {
       if (entry.kind === "tool") tool = at;
     });
-    if (entries.some((entry, at) => at > tool && entry.kind === "prose" && entry.prose === "message" && entry.text.trim() !== "")) return;
+    if (entries.some((entry, at) => at > tool && entry.kind === "prose" && entry.prose === "message" && sameWords(entry.text, words))) return;
     this.add({ kind: "prose", key: lastWordsKey(turn), stamp: 0, at: 0, item: LAST_WORDS, turn, prose: "message", text: words, writing: false, version: 0 });
   }
 
-  /** A message of `turn` came: the last words shown from its end, if any,
-   *  give it their place. */
-  private lastWordsTaken(turn: string): void {
+  /** A message of `turn` came, saying `text` so far: the last words shown
+   *  from its end, where they are its words, give it their place. */
+  private lastWordsTaken(turn: string, text: string): void {
     const key = lastWordsKey(turn);
-    if (this.byKey.has(key)) this.remove((entry) => entry.key === key);
+    const shown = this.byKey.get(key);
+    if (shown?.kind === "prose" && sameWords(text, shown.text)) this.remove((entry) => entry.key === key);
   }
 
   /** An item began or finished: shown where it first appeared, as it now
    *  stands. */
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
-    if (native.kind === "message") this.lastWordsTaken(turn);
+    if (native.kind === "message") this.lastWordsTaken(turn, native.text);
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
@@ -2253,6 +2256,15 @@ function askedText(words: string, questions: Asked[]): string {
 /** What was asked without stopping, as words said to the user. */
 function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
   return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: null, text: entry.text, status: "info", attachments: [] };
+}
+
+/** Whether a message saying `message` says the words a turn's end told it
+ *  ended with: the same, or the one begun by the other — a message still
+ *  coming in, or the end's words cut short. One saying nothing yet is not. */
+function sameWords(message: string, told: string): boolean {
+  const said = message.trim();
+  const words = told.trim();
+  return said !== "" && words !== "" && (said === words || said.startsWith(words) || words.startsWith(said));
 }
 
 /** The item a turn's last words shown from its end stand as (`Fold.lastWords`). */

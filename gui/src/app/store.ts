@@ -106,9 +106,11 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
   document.addEventListener("visibilitychange", follow);
   follow();
 
+  // The watch answering stops the count of how long it has not, unless it
+  // broke again since: in the same batch, after what it answered.
   const came = (now: WorldNow) => {
     read(now);
-    waiting = null;
+    if (broken === null) waiting = null;
     moveOn();
   };
   // Why the watch broke, while it has not come back; why reading the World

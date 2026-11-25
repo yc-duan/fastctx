@@ -198,6 +198,11 @@ export class Conversation {
   /** What its machine last told it holds now (`now`), told again to a
    *  latest part folded anew, which has only its records to go by. */
   private nowTold: { busy: boolean; turn: string | null; kept: KeptWords[]; halted: string | null } | null = null;
+  /** What was seen live broke off since its machine last said what holds
+   *  now: that no turn ran then is not laid over what is read anew, which
+   *  may hold a turn begun since (`toldNow`); the machine says again as the
+   *  watch comes back. */
+  private nowBroken = false;
   /** Events opened whole, by the object each is kept as. */
   private expanded = new Map<string, SessionEvent>();
   private source: PartSource | null = null;
@@ -393,7 +398,7 @@ export class Conversation {
     for (const event of this.aheadEvents) tail.late(event);
     // What its machine last said holds now goes on holding over the part
     // read anew, which has only its records to go by (codex-fb2e1cc5).
-    const told = this.nowTold;
+    const told = this.toldNow();
     if (told) tail.now(told.busy, told.turn, told.kept, told.halted);
     const held = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold: tail }, span);
     this.spans = new Map([[held, span]]);
@@ -562,7 +567,7 @@ export class Conversation {
     this.relate(part);
     // Folded anew from its records alone, the latest part is told again
     // what its machine holds of it now.
-    const now = this.nowTold;
+    const now = this.toldNow();
     if (part === this.tail && now) part.fold.now(now.busy, now.turn, now.kept, now.halted);
     // Folded anew from its records, the latest part is shown again what came
     // ahead of them, whatever folded it.
@@ -600,7 +605,7 @@ export class Conversation {
     if (!this.replica || !span) return;
     const events_now = this.shown(span);
     this.tail.fold = this.tail.fold.revised(events_now, span.keys, events_now, span.keys, this.asks);
-    const told = this.nowTold;
+    const told = this.toldNow();
     if (told) this.tail.fold.now(told.busy, told.turn, told.kept, told.halted);
     this.reahead();
     this.parts = [...this.parts];
@@ -1442,6 +1447,15 @@ export class Conversation {
   /** What was seen live broke off: no agent seen so far is whole. */
   broke(): void {
     for (const part of this.parts) part.fold.agents.broke();
+    this.nowBroken = true;
+  }
+
+  /** What its machine last said holds now, to lay over what is read anew:
+   *  that a turn runs, always; that none does, only where nothing broke off
+   *  since (`nowBroken`). */
+  private toldNow(): { busy: boolean; turn: string | null; kept: KeptWords[]; halted: string | null } | null {
+    const told = this.nowTold;
+    return told && (told.busy || !this.nowBroken) ? told : null;
   }
 
   lastMessageOf(turn: string): string | null {
@@ -1604,6 +1618,7 @@ export class Conversation {
   /** What its machine holds of it now (`Fold.now`). */
   now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
     this.nowTold = { busy, turn, kept, halted };
+    this.nowBroken = false;
     this.live.now(busy, turn, kept, halted);
   }
   unsend(key: string): void {

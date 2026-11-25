@@ -102,14 +102,23 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
         (false, [account]) => Some(HubAccount { hub: hub.clone(), account: account.clone() }),
         (false, _) => return None,
     };
+    let mut waiting = false;
     let scopes: Vec<_> = library
         .held_scopes()
         .ok()?
         .into_iter()
         .filter(|scope| crate::timeline::copy::records_here(node, scope) && scope.hub.as_deref() == Some(hub.as_str()))
-        // Taken only once read: asked for now where it is not here.
-        .filter(|scope| crate::assets::lazy::held(node, scope, &stream))
+        // Taken only once read: asked for now where it is not here, and no
+        // whole answer till it is.
+        .filter(|scope| {
+            let held = crate::assets::lazy::held(node, scope, &stream);
+            waiting |= !held;
+            held
+        })
         .collect();
+    if waiting {
+        return None;
+    }
     // Reached, it is read from here only when every account asking has its
     // records pulled whole here: none of their lines is missing.
     if !away && !of_account.keys().all(|key| scopes.iter().any(|scope| scope.key == *key)) {
