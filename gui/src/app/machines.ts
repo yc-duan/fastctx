@@ -303,6 +303,7 @@ export class MachinesPage implements Page {
           updates: updating,
           access: options.access,
           world: () => options.store.world.peek(),
+          worlds: options.store.world,
           shown: () => this.view === "updates" && !this.left,
           draw: () => {
             if (!this.left) this.draw(options.store.world.peek(), options.store.clock.peek());

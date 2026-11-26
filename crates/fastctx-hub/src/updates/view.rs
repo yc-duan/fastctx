@@ -5,8 +5,8 @@ use fastctx_net::directory::{Directory, Member};
 use fastctx_net::wire::{Change, Told};
 use fastctx_types::AccountName;
 use fastctx_types::update::{
-    ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Permission, Problem, Scheduled,
-    Stage, View, ViewCall, ViewReply, release,
+    ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Manifest, Permission, Problem,
+    Scheduled, Stage, View, ViewCall, ViewReply, release,
 };
 use std::sync::Arc;
 
@@ -117,10 +117,19 @@ pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &Accou
         let running = app.as_ref().map(|a| a.version.as_str()).or(kernel.as_deref());
         let channel = Channel::of(running.unwrap_or_default());
         let target = app.as_ref().map(|a| a.target.clone()).or_else(|| report.and_then(|r| r.target.clone()));
+        // Which release is offered, by its version: a hundred machines each
+        // told the whole manifest, every package with its signature, made the
+        // view megabytes, and its readers ask for it again as it changes.
         let offer = running
             .zip(target.as_deref())
             .and_then(|(running, target)| fastctx_update::state::latest_for(releases.iter(), running, target, None))
-            .cloned();
+            .map(|manifest| Manifest {
+                version: manifest.version.clone(),
+                notes: None,
+                pub_date: manifest.pub_date.clone(),
+                platforms: Default::default(),
+                fastctx: Default::default(),
+            });
         let kind = if phone {
             Kind::Phone
         } else if member.managed {

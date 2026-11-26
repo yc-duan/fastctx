@@ -31,6 +31,7 @@ pub(crate) use versions::Snapshot as VersionSnapshot;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use fastctx_net::directory::View;
 use fastctx_net::wire::{Down, Refusal};
@@ -53,6 +54,13 @@ const NOTICES: usize = 16384;
 /// How many frames of the first lane go in a row while letters or notices
 /// wait.
 const BURST: usize = 32;
+/// How long an answer of the asset service waits untaken before it goes
+/// unsent: its asker waits a minute for it from before it was queued, every
+/// release alike (`fastctx_net::link::within`), and then asks again. Written
+/// later, it only held up what the member still waited for; on a line too
+/// slow for what is asked of it, answers so kept made it ask again and again
+/// until its lane overflowed, it was let go, and came back to ask once more.
+const ANSWER_KEPT: Duration = Duration::from_secs(60);
 
 /// What the first lanes of every member together may hold: an eighth of the
 /// machine's memory, from 128 MiB to 2 GiB. Each member's lane is bound on
@@ -150,10 +158,13 @@ struct State {
     shut: bool,
     welcome: Option<Down>,
     /// The first lane's frames that are whole on their own.
-    prompt: VecDeque<(Out, usize)>,
+    prompt: VecDeque<Queued>,
     /// The first lane's parts of large answers, and its end.
-    urgent: VecDeque<(Out, usize)>,
+    urgent: VecDeque<Queued>,
     urgent_bytes: usize,
+    /// The frames and bytes of answers that went unsent since the writer
+    /// last looked, their askers no longer waiting (`ANSWER_KEPT`).
+    expired: (u64, u64),
     /// `urgent_bytes`, as taken of every member's pool.
     charged: Charge,
     letters: VecDeque<Down>,
@@ -188,6 +199,14 @@ struct State {
     view_target: Option<(View, (u64, u64))>,
     /// Whether `Notice::View` waits among the notices.
     view_queued: bool,
+}
+
+/// A frame of the first lane: its encoded size, and for an answer its asker
+/// stops waiting for, when it is no use any more.
+struct Queued {
+    out: Out,
+    bytes: usize,
+    stale_at: Option<Instant>,
 }
 
 /// What a notice is of: a newer one of the same replaces it, or merges with
@@ -253,6 +272,7 @@ impl Outq {
         if !whole && let Some((id, kind)) = told {
             self.0.state.lock().expect("never poisoned").part_kinds.insert(id, kind);
         }
+        let stale_at = told.filter(|(_, kind)| kind.starts_with("told/assets/")).map(|_| Instant::now() + ANSWER_KEPT);
         let frames: Vec<_> = frames
             .into_iter()
             .map(|out| {
@@ -275,9 +295,9 @@ impl Outq {
                 }
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame),
-                    None => state.urge(Out::Frame(frame), bytes, whole),
+                    None => state.urge(Out::Frame(frame), bytes, whole, stale_at),
                 },
-                end @ Out::End(_) => state.urge(end, bytes, false),
+                end @ Out::End(_) => state.urge(end, bytes, false, None),
             });
             (queued, state.overflowed.clone())
         };
@@ -464,6 +484,12 @@ impl Outq {
         self.0.ready.notify_waiters();
     }
 
+    /// The frames and bytes of answers that went unsent since the last look,
+    /// their askers having stopped waiting for them.
+    pub(crate) fn expired(&self) -> (u64, u64) {
+        std::mem::take(&mut self.0.state.lock().expect("never poisoned").expired)
+    }
+
     /// What the answer `id`, queued in parts, is; forgotten with its last
     /// part.
     pub(crate) fn part_kind(&self, id: u64, last: bool) -> &'static str {
@@ -516,9 +542,19 @@ impl Outq {
 const PROMPT_RUN: usize = 16;
 
 impl State {
-    /// The first lane's next frame: whole ones first, a part after every
-    /// `PROMPT_RUN` of them.
-    fn first_lane(&mut self) -> Option<(Out, usize)> {
+    /// The first lane's next frame that is still of use: whole ones first, a
+    /// part after every `PROMPT_RUN` of them.
+    fn first_lane(&mut self) -> Option<Queued> {
+        loop {
+            let next = self.first_queued()?;
+            if next.stale_at.is_none_or(|at| Instant::now() < at) {
+                return Some(next);
+            }
+            self.expire(next);
+        }
+    }
+
+    fn first_queued(&mut self) -> Option<Queued> {
         if self.prompt_run >= PROMPT_RUN
             && let Some(part) = self.urgent.pop_front()
         {
@@ -533,12 +569,40 @@ impl State {
         self.urgent.pop_front()
     }
 
+    /// An answer its asker stopped waiting for goes unsent, and the rest of
+    /// its parts with it: they are no use without it.
+    fn expire(&mut self, gone: Queued) {
+        self.release(gone.bytes);
+        self.expired.0 += 1;
+        self.expired.1 += gone.bytes as u64;
+        let Out::Frame(Down::Part { id, .. }) = gone.out else { return };
+        let mut kept = VecDeque::with_capacity(self.urgent.len());
+        for queued in std::mem::take(&mut self.urgent) {
+            if matches!(&queued.out, Out::Frame(Down::Part { id: of, .. }) if *of == id) {
+                self.release(queued.bytes);
+                self.expired.0 += 1;
+                self.expired.1 += queued.bytes as u64;
+            } else {
+                kept.push_back(queued);
+            }
+        }
+        self.urgent = kept;
+        self.part_kinds.remove(&id);
+    }
+
+    /// `bytes` of the first lane left it.
+    fn release(&mut self, bytes: usize) {
+        self.urgent_bytes -= bytes;
+        self.charged.0 -= bytes;
+        pool().give(bytes);
+    }
+
     fn overflow(&mut self, why: String) -> Result<(), ()> {
         self.overflowed = Some(why);
         Err(())
     }
 
-    fn urge(&mut self, out: Out, bytes: usize, whole: bool) -> Result<(), ()> {
+    fn urge(&mut self, out: Out, bytes: usize, whole: bool, stale_at: Option<Instant>) -> Result<(), ()> {
         let waiting = self.prompt.len() + self.urgent.len();
         if waiting >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
             let why = format!(
@@ -556,11 +620,8 @@ impl State {
         }
         self.charged.0 += bytes;
         self.urgent_bytes += bytes;
-        if whole {
-            self.prompt.push_back((out, bytes))
-        } else {
-            self.urgent.push_back((out, bytes))
-        }
+        let queued = Queued { out, bytes, stale_at };
+        if whole { self.prompt.push_back(queued) } else { self.urgent.push_back(queued) }
         Ok(())
     }
 
@@ -597,11 +658,9 @@ impl State {
         }
         let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
-            && let Some((out, bytes)) = self.first_lane()
+            && let Some(Queued { out, bytes, .. }) = self.first_lane()
         {
-            self.urgent_bytes -= bytes;
-            self.charged.0 -= bytes;
-            pool().give(bytes);
+            self.release(bytes);
             self.in_a_row += 1;
             return Some(match out {
                 Out::Frame(frame) => Next::Frames(vec![frame]),
