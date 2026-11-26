@@ -29,10 +29,18 @@ impl Live {
         self.finished.clear();
     }
 
+    /// What a watcher joining now is told, in the order it happened: the
+    /// messages that ended lately among what still runs, so a reader shows
+    /// none of them after what began later, nor ends thinking with them.
     pub fn snapshots(&self) -> impl Iterator<Item = &SessionEvent> {
-        self.items
+        let mut told: Vec<&SessionEvent> = self
+            .items
             .iter()
             .chain(self.finished.iter().filter(|(at, _)| at.elapsed() < FINISHED_KEPT).map(|(_, event)| event))
+            .collect();
+        // Stable: those alike in time stay as they came.
+        told.sort_by_key(|event| event.at);
+        told.into_iter()
     }
 
     pub fn observe(&mut self, event: &SessionEvent) -> bool {

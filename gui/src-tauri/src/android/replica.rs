@@ -1,8 +1,9 @@
 //! A conversation page on Android reads its timeline as a desktop page does
 //! (`crate::replica`). What differs is the phone's: an opening that failed
 //! while the connection was being replaced, as on a foreground resume, is
-//! tried again on the new one; and a hidden page lets its live watch go,
-//! and shown again reads anew from what the timeline is then.
+//! tried again on the new one; and a page hidden for longer than a picker
+//! opened from it takes lets its live watch go, and shown again reads anew
+//! from what the timeline is then.
 
 use std::time::Duration;
 
@@ -55,19 +56,39 @@ pub(crate) async fn open(
     }
 }
 
+/// How long a hidden page keeps its live watch: a picker opened from it, as
+/// for a picture to attach, hides it as much as leaving it does.
+const HIDDEN_KEPT: Duration = Duration::from_secs(60);
+
 /// A page that cannot be live now, hidden.
 fn paused() -> Piece {
     Piece::Interrupted { error: None, since: crate::epoch_ms(std::time::SystemTime::now()) }
 }
 
-/// Until the page is hidden; never, once nothing tells.
+/// Until the page has been hidden for `HIDDEN_KEPT`; never, once nothing
+/// tells. Shown again before then, it goes on as it was.
 async fn hidden(visible: &mut watch::Receiver<bool>) {
     loop {
         if visible.changed().await.is_err() {
             return std::future::pending().await;
         }
-        if !*visible.borrow_and_update() {
-            return;
+        if *visible.borrow_and_update() {
+            continue;
+        }
+        let shown = async {
+            loop {
+                if visible.changed().await.is_err() {
+                    return false;
+                }
+                if *visible.borrow_and_update() {
+                    return true;
+                }
+            }
+        };
+        match tokio::time::timeout(HIDDEN_KEPT, shown).await {
+            Ok(true) => {}
+            Ok(false) => return std::future::pending().await,
+            Err(_) => return,
         }
     }
 }

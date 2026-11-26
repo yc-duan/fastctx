@@ -565,13 +565,13 @@ export class Conversation {
     part.fold = part.fold.revised(previous.events, previous.keys, this.shown(span), span.keys, part === this.tail ? this.asks : []);
     this.placed(part, span);
     this.relate(part);
-    // Folded anew from its records alone, the latest part is told again
-    // what its machine holds of it now.
+    // Folded anew from its records, the latest part is shown again what came
+    // ahead of them, whatever folded it, and then told what its machine holds
+    // of it now, which ends what that shows still under way while no turn
+    // runs (as a watch opened anew reads it, `openReplica`).
+    if (part === this.tail) this.reahead();
     const now = this.toldNow();
     if (part === this.tail && now) part.fold.now(now.busy, now.turn, now.kept, now.halted);
-    // Folded anew from its records, the latest part is shown again what came
-    // ahead of them, whatever folded it.
-    if (part === this.tail) this.reahead();
   }
 
   /** Tells `part` what the parts after it hold of its runs and agents: a
@@ -605,9 +605,9 @@ export class Conversation {
     if (!this.replica || !span) return;
     const events_now = this.shown(span);
     this.tail.fold = this.tail.fold.revised(events_now, span.keys, events_now, span.keys, this.asks);
+    this.reahead();
     const told = this.toldNow();
     if (told) this.tail.fold.now(told.busy, told.turn, told.kept, told.halted);
-    this.reahead();
     this.parts = [...this.parts];
     this.structure += 1;
   }
@@ -619,7 +619,35 @@ export class Conversation {
   ahead(event: SessionEvent): void {
     if (!this.replica) return;
     const item = itemOf(event);
-    if (!item || this.recordedItems.has(item) || this.endedTurns.has(turnOf(event) ?? "")) return;
+    if (!item) return;
+    const ended = this.endedTurns.has(turnOf(event) ?? "");
+    // A reply its host stored under a name of its own, naming the draft it
+    // streamed as: the draft ends with it here, whichever of it and the
+    // record comes first. Nothing told ahead of the draft stays, so a part
+    // folded anew does not draw the draft again, still being written, after
+    // all the turn did since (the record names no draft, Claude's being read
+    // from its file); nothing told of the draft later, as a watch opened anew
+    // retells what ended lately, is shown; and the draft drawn now becomes
+    // the item where it stands, or gives way to the record of it already
+    // shown (`Fold.renamed`).
+    if (event.event === "finished" && event.item.draft) {
+      const draft = `${event.turn}/${event.item.draft}`;
+      this.aheadEvents = this.aheadEvents.filter((held) => itemOf(held) !== draft);
+      this.settled(draft);
+      if (ended || this.recordedItems.has(item)) {
+        this.live.claimed(event.turn, event.item.draft, event.item.id, this.recordedItems.has(item));
+        return;
+      }
+      this.live.late(event);
+      // Kept as the item it became, with how long it thought as seen here
+      // until its record says: a part folded anew meanwhile shows it so.
+      const native = event.item;
+      const took = native.kind === "thinking" && native.duration_ms === undefined ? this.live.tookOf(event.turn, native.id) : undefined;
+      this.aheadEvents.push(native.kind === "thinking" && took !== undefined ? { ...event, item: { ...native, duration_ms: took } } : event);
+      if (this.aheadEvents.length > AHEAD_MOST) this.aheadEvents.splice(0, this.aheadEvents.length - AHEAD_MOST);
+      return;
+    }
+    if (this.recordedItems.has(item) || ended) return;
     this.live.late(event);
     // Kept as one growth for each item's part, so a long answer is shown
     // again whole however many pieces it came in, others between them or
@@ -664,8 +692,14 @@ export class Conversation {
    *  ahead of the record goes, the record standing for it. */
   private recorded(event: SessionEvent): void {
     if (event.event !== "finished") return;
-    this.recordedItems.add(`${event.turn}/${event.item.id}`);
-    if (event.item.draft) this.recordedItems.add(`${event.turn}/${event.item.draft}`);
+    this.settled(`${event.turn}/${event.item.id}`);
+    if (event.item.draft) this.settled(`${event.turn}/${event.item.draft}`);
+  }
+
+  /** What comes of `item`, by turn and id, as it happens from now on is
+   *  late, and not shown. */
+  private settled(item: string): void {
+    this.recordedItems.add(item);
     if (this.recordedItems.size > RECORDED_MOST) {
       for (const old of [...this.recordedItems].slice(0, this.recordedItems.size - RECORDED_MOST)) this.recordedItems.delete(old);
     }

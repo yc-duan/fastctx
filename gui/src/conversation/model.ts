@@ -422,10 +422,20 @@ export class Fold {
     if ("item" in entry && "turn" in entry && typeof entry.turn === "string") entry.key = this.preferredKeys?.get(itemKey(entry.turn, entry.item)) ?? entry.key;
     if (entry.kind === "heard") entry.key = (entry.delivery ? this.preferredKeys?.get(`heard:d:${entry.delivery}`) : undefined)
       ?? (entry.messageId ? this.preferredKeys?.get(`heard:m:${entry.messageId}`) : undefined) ?? entry.key;
+    // Each thing shown has a place of its own: a key another entry holds,
+    // as one a draft handed on to the item it became, is made its own here.
+    if (this.byKey.has(entry.key)) entry.key = this.freeKey(entry.key);
     entry.stamp = ++this.clock;
     entry.at = this.current;
     this.entries.push(entry);
     this.index(entry);
+  }
+
+  /** `key`, made one no entry holds. */
+  private freeKey(key: string): string {
+    let next = 2;
+    while (this.byKey.has(`${key}~${next}`)) next += 1;
+    return `${key}~${next}`;
   }
 
   private index(entry: Entry): void {
@@ -679,6 +689,9 @@ export class Fold {
           }
           if (held) next.replace(held, restored);
           else next.add(restored);
+          // A message read before its turn's end, as the end's last words
+          // stood for it, takes their place as it would read anew.
+          if (restored.kind === "prose" && restored.prose === "message" && restored.item !== LAST_WORDS) next.lastWordsTaken(restored.turn, restored.text, restored.writing);
           owned.add(restored.key);
         }
         next.placedEntries.set(place, owned);
@@ -690,7 +703,8 @@ export class Fold {
     next.ignoreHistoricalRequests = false;
     next.extend([...pending]);
     next.replaying = false;
-    next.preferredKeys = null;
+    // Kept on: what is told after the records (what came ahead of them, as
+    // it is shown again) is drawn where it was before, under the same key.
     next.stale = false;
     next.endings = this.endings; next.lastEnding = this.lastEnding;
     // Words on their way stay until the record of them is there: the one
@@ -953,7 +967,7 @@ export class Fold {
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
           this.lastWordsTaken(event.turn, event.text, true);
-          this.overtaken(event.turn);
+          this.overtaken(event.turn, at);
           this.add({
             kind: "prose",
             key: itemEntryKey(event.turn, event.item),
@@ -1228,7 +1242,7 @@ export class Fold {
     if (id && !finished && this.over.has(key)) return;
     if (id && finished) this.over.add(key);
     const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
-    if (said && !(id && this.find(turn, id))) this.overtaken(turn);
+    if (said && !(id && this.find(turn, id))) this.overtaken(turn, startedAt);
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions && native.kind === "message") {
@@ -1324,9 +1338,13 @@ export class Fold {
       }
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
+      const ending = shown.writing && !fresh.writing;
       // What has stopped being written does not start again.
       shown.writing = shown.writing && fresh.writing;
       if (fresh.took !== undefined) shown.took = fresh.took;
+      // Thinking seen here to its end took as long as it was seen to, until
+      // its host says how long (Claude Code's says once its record is read).
+      else if (ending && shown.prose === "thinking" && shown.took === undefined && shown.began !== undefined) shown.took = Math.max(0, at - shown.began);
       if (shown.began === undefined && fresh.began !== undefined) shown.began = fresh.began;
       this.touch(shown);
       return;
@@ -1345,10 +1363,15 @@ export class Fold {
    *  when the next thing it says begins is over, whatever word of its end
    *  is still to come. Agents' comings and goings are told beside the
    *  model's words and end nothing of them. */
-  private overtaken(turn: string): void {
+  private overtaken(turn: string, at?: number): void {
     for (const entry of this.byTurn.get(turn) ?? []) {
       if (entry.kind !== "prose" || entry.prose !== "thinking" || !entry.writing) continue;
+      // What began before it ends no thinking that began after it: a message
+      // told late, as a watch opened anew retells one that ended lately.
+      if (at !== undefined && entry.began !== undefined && entry.began > at) continue;
       entry.writing = false;
+      // It thought until the next thing began, as far as is seen here.
+      if (at !== undefined && entry.took === undefined && entry.began !== undefined) entry.took = Math.max(0, at - entry.began);
       this.touch(entry);
     }
   }
@@ -1498,6 +1521,29 @@ export class Fold {
 
   private find(turn: string, id: string): Keyed | undefined {
     return this.byItem.get(itemKey(turn, id));
+  }
+
+  /** A draft its host stored as `id`, whose record is shown already
+   *  (`recorded`, here or in another part of the page) or never will be: the
+   *  draft gives way to the item recorded, or ends as it. What is recorded
+   *  stays as it is. */
+  claimed(turn: string, draft: string, id: string, recorded: boolean): void {
+    const shown = this.find(turn, draft);
+    if (!shown) return;
+    if (recorded || this.find(turn, id)) {
+      this.remove((entry) => entry === shown);
+      return;
+    }
+    shown.item = id;
+    if (shown.kind === "prose") shown.writing = false;
+    this.reindex();
+    this.touch(shown);
+  }
+
+  /** How long thinking shown as `id` took, where known. */
+  tookOf(turn: string, id: string): number | undefined {
+    const shown = this.find(turn, id);
+    return shown?.kind === "prose" ? shown.took : undefined;
   }
 
   /** An item its host kept under a name of its own after it streamed as
