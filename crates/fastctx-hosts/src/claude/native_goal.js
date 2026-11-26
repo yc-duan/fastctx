@@ -2,6 +2,9 @@
 // Stop hook. session.start is held by the host, so cleanup starts after that
 // callback returns and is retried after a turn. The host may evaluate an old
 // restored goal before it first becomes idle; no public goal state API exists.
+// Claude Code restores a goal only from a goal_status record, so a transcript
+// the node reads whole without one is left alone: the command's rows would
+// reach the model at the next turn as a /goal clear the person typed.
 const NATIVE_GOAL_DISABLED = __FASTCTX_NATIVE_GOAL_REFUSAL__
 const nativeGoalContexts = new Map()
 
@@ -23,6 +26,10 @@ async function clearNativeGoal($, context) {
 async function clearNativeGoalOnce($, context) {
   if (await removed($) || await $.session.id() !== context.sessionId) return
   const before = await nativeGoalProgress($, context)
+  if (before.goal === false) {
+    context.nativeGoalCleared = true
+    return
+  }
   const result = await $.command.run({ command: 'goal', args: 'clear' })
   if (result.exitCode !== undefined && result.exitCode !== 0) throw new Error(result.text || 'Native goal cleanup failed')
   // command.run resolves before its local-command rows are persisted. Those
