@@ -25,9 +25,13 @@ fn agent(name: String) -> Result<fastctx_types::AgentName, String> {
 pub(crate) async fn agent_logins(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
+    at_once: Option<bool>,
 ) -> Result<WorldLogins, String> {
     let machine = machine_name.map(machine).transpose()?;
-    shell.world().agent_logins(machine).await.map_err(|error| error.to_string())
+    // As `agents`: at once for a page that follows the logins topic.
+    let world = shell.world();
+    if at_once.unwrap_or(false) { world.agent_logins_at_once(machine).await } else { world.agent_logins(machine).await }
+        .map_err(|error| error.to_string())
 }
 
 /// Scans a machine for its agents, answered once the usual places are done

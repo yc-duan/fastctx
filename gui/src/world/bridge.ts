@@ -83,6 +83,9 @@ export type Piece =
   | { kind: "waiting"; events: SessionEvent[] }
   /** A request that waits for the user, or the end of one. */
   | { kind: "asked"; event: SessionEvent }
+  /** What the turn does as it happens, ahead of the timeline's record of
+   *  it: an item begun, changed or ended, its words as they are written. */
+  | { kind: "live"; event: SessionEvent }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
@@ -121,8 +124,12 @@ export type WorldPiece =
 /** Follows the World: first as it is, then after each change, nothing
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
-export function watchWorld(onPiece: (piece: WorldPiece) => void, known: string[] = []): Promise<number> {
-  return observe<WorldPiece, number>("world_watch", { known }, onPiece);
+export function watchWorld(
+  onPiece: (piece: WorldPiece) => void,
+  known: string[] = [],
+  onClosed?: () => void,
+): Promise<number> {
+  return observe<WorldPiece, number>("world_watch", { known }, onPiece, onClosed);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it
@@ -266,6 +273,12 @@ export function retryNow(): Promise<void> {
   return invoke("reconnect");
 }
 
+/** Asks this computer's node service to start the node anew, as its user may
+ *  with no administrator; resolves once asked. */
+export function restartLocalService(): Promise<void> {
+  return invoke("restart_local_service");
+}
+
 /** An upload as the shell takes it: where the file goes, when it goes to a
  *  machine of an assisted user's, as `place` says. */
 function sentTarget(machine: MachineName, target: UploadTarget, place: FilePlace | null): SentUploadTarget {
@@ -339,8 +352,10 @@ export function since(at: Date, town: string | null): Promise<WorldSince> {
 
 /** The agents each machine can start, as their own programs say; one
  *  machine, or all of them. */
-export function agents(machine: MachineName | null): Promise<WorldAgents> {
-  return invoke("agents", { machineName: machine });
+/** `atOnce`: what is known of each machine at once, one not heard from
+ *  lately told as being asked; the logins topic moves once it answered. */
+export function agents(machine: MachineName | null, atOnce = false): Promise<WorldAgents> {
+  return invoke("agents", { machineName: machine, atOnce });
 }
 
 /** Stops the turn the user saw running (`turn`), and no turn begun since.
@@ -413,8 +428,9 @@ export function agentHomes(machine: MachineName, change: HomeChange): Promise<vo
 
 /** What one machine, or every machine the user may look at, keeps of its
  *  agents' logins; nothing is started to read it. */
-export function agentLogins(machine: MachineName | null): Promise<WorldLogins> {
-  return invoke("agent_logins", { machineName: machine });
+/** `atOnce`, as `agents` takes it. */
+export function agentLogins(machine: MachineName | null, atOnce = false): Promise<WorldLogins> {
+  return invoke("agent_logins", { machineName: machine, atOnce });
 }
 
 /** Scans a machine for its agents, answered once the usual places are

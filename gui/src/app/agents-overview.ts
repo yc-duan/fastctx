@@ -30,6 +30,7 @@ import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import { keepRecord, keptRecord, readerNow } from "./usage/kept";
 import { waiting } from "./waiting";
+import { morph } from "./morph";
 
 /** The most lines a card holds: past it, the last says how many more. */
 const SHOWN = 3;
@@ -208,7 +209,7 @@ export class AgentsOverview implements Page {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
         this.problem = null;
-      } else if (heard) {
+      } else if (heard && heard.kind !== "asking") {
         this.record = null;
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
@@ -248,7 +249,7 @@ export class AgentsOverview implements Page {
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.body, () => {
-      this.body.innerHTML = html;
+      morph(this.body, html);
     });
   }
 

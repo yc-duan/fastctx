@@ -112,6 +112,14 @@ struct Text {
     entry: u64,
 }
 
+impl Shelved {
+    /// The version the document was last deleted for good at: what came
+    /// before is read no more.
+    fn since(&self) -> u64 {
+        self.versions.iter().rev().find(|revision| revision.deleted).map_or(0, |revision| revision.version)
+    }
+}
+
 /// A local copy as written: the version it shows, and how it stood after.
 struct Copy {
     version: u64,
@@ -295,24 +303,40 @@ impl Shelf {
         shelved.latest = shelved.versions.last().expect("a version was put").clone();
     }
 
-    /// How many documents the scope holds, retired ones included.
+    /// How many documents the scope holds, retired ones included, not those
+    /// deleted for good.
     pub(crate) fn count(&self) -> usize {
-        self.documents.len()
+        self.documents.values().filter(|kept| !kept.latest.deleted).count()
     }
 
+    /// The document `name`, deleted for good or not.
     pub(crate) fn document(&self, name: &str) -> Option<&Shelved> {
         self.documents.get(name)
     }
 
     pub(crate) fn catalog(&self) -> Catalog {
-        let mut catalog = Catalog { documents: self.documents.values().map(|kept| kept.latest.clone()).collect() };
+        let mut catalog = Catalog::default();
+        for kept in self.documents.values() {
+            if kept.latest.deleted {
+                catalog.deleted.insert(kept.latest.name.clone(), kept.latest.version);
+            } else {
+                catalog.documents.push(kept.latest.clone());
+            }
+        }
         catalog.sort();
         catalog
     }
 
-    /// The version `version` of the document `name`, read from disk.
+    /// The version `version` of the document `name`, read from disk; none of
+    /// one deleted for good, nor from before its last deletion.
     pub(crate) fn stored(&self, place: &Place, name: &str, version: u64) -> Result<Stored, String> {
         let shelved = self.documents.get(name).ok_or("the history revision does not exist")?;
+        if shelved.latest.deleted {
+            return Err(fastctx_types::history::gone(name));
+        }
+        if version <= shelved.since() {
+            return Err("the history revision does not exist".into());
+        }
         let text = shelved.texts.get(&version).ok_or("the history revision does not exist")?;
         let revision = shelved
             .versions
@@ -344,14 +368,24 @@ impl Shelf {
     pub(crate) fn whole(&self, place: &Place, name: &str) -> Result<Option<Document>, String> {
         let Some(shelved) = self.documents.get(name) else { return Ok(None) };
         let stored = self.stored(place, name, shelved.latest.version)?;
-        Ok(Some(Document { revision: stored.revision, text: stored.text, versions: shelved.versions.clone() }))
+        let since = shelved.since();
+        let versions = shelved.versions.iter().filter(|revision| revision.version > since).cloned().collect();
+        Ok(Some(Document { revision: stored.revision, text: stored.text, versions }))
     }
 
-    /// The text of the newest version of `name` whose digest is `sha256`.
+    /// The text of the newest version of `name` whose digest is `sha256`,
+    /// since its last deletion.
     pub(crate) fn seen(&self, place: &Place, name: &str, sha256: &str) -> Result<Option<String>, String> {
-        let Some(shelved) = self.documents.get(name) else { return Ok(None) };
-        let found =
-            shelved.texts.iter().rev().find(|(_, text)| hex(&text.digest) == sha256).map(|(version, _)| *version);
+        let Some(shelved) = self.documents.get(name).filter(|shelved| !shelved.latest.deleted) else {
+            return Ok(None);
+        };
+        let since = shelved.since();
+        let found = shelved
+            .texts
+            .range(since + 1..)
+            .rev()
+            .find(|(_, text)| hex(&text.digest) == sha256)
+            .map(|(version, _)| *version);
         found.map(|version| self.stored(place, name, version).map(|stored| stored.text)).transpose()
     }
 

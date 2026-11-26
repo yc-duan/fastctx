@@ -6,17 +6,41 @@ use fastctx_sentinel::records::{Change, Error, Head, Record, Records, ResultFutu
 use fastctx_types::access::HubAccount;
 use fastctx_types::account_records::{Request, Response, Watched};
 use serde_json::Value;
-use std::sync::{Arc, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::broadcast;
 
 fn unexpected() -> Error {
     Error::Unavailable("the hub answered another account-records reply".into())
 }
 
-pub(crate) struct AccountRecords(pub Weak<Node>);
+/// The records of an account, with the last read of each that a listing
+/// named (`get_listed`): read again only once a listing names another
+/// version of it.
+pub(crate) struct AccountRecords {
+    node: Weak<Node>,
+    kept: Mutex<HashMap<(HubAccount, String, String), Record>>,
+}
 impl AccountRecords {
+    pub(crate) fn new(node: Weak<Node>) -> Self {
+        Self { node, kept: Mutex::default() }
+    }
+
+    fn keep(&self, scope: &HubAccount, kind: &str, key: &str, record: Option<&Record>) {
+        let mut kept = self.kept.lock().expect("never poisoned");
+        let at = (scope.clone(), kind.to_string(), key.to_string());
+        match record {
+            Some(record) => {
+                kept.insert(at, record.clone());
+            }
+            None => {
+                kept.remove(&at);
+            }
+        }
+    }
+
     fn link(&self, scope: &HubAccount) -> Result<Arc<Link>, Error> {
-        let node = self.0.upgrade().ok_or_else(|| Error::Unavailable("the sentinel node has stopped".into()))?;
+        let node = self.node.upgrade().ok_or_else(|| Error::Unavailable("the sentinel node has stopped".into()))?;
         node.link_of(&scope.hub).ok_or_else(|| Error::Unavailable("the account's network is not connected".into()))
     }
     async fn ask(&self, scope: &HubAccount, request: Request) -> Result<Response, Error> {
@@ -36,11 +60,37 @@ impl Records for AccountRecords {
             }
         })
     }
+    fn get_listed<'a>(
+        &'a self,
+        scope: &'a HubAccount,
+        kind: &'a str,
+        head: &'a Head,
+    ) -> ResultFuture<'a, Option<Record>> {
+        Box::pin(async move {
+            let at = (scope.clone(), kind.to_string(), head.key.clone());
+            let kept =
+                self.kept.lock().expect("never poisoned").get(&at).filter(|kept| kept.version == head.version).cloned();
+            if let Some(record) = kept {
+                return Ok(Some(record));
+            }
+            let record = self.get(scope, kind, &head.key).await?;
+            self.keep(scope, kind, &head.key, record.as_ref());
+            Ok(record)
+        })
+    }
     fn list<'a>(&'a self, scope: &'a HubAccount, kind: &'a str) -> ResultFuture<'a, Vec<Head>> {
         Box::pin(async move {
             match self.ask(scope, Request::List { kind: kind.into() }).await? {
                 Response::Listed { entries } => {
-                    Ok(entries.into_iter().map(|entry| Head { key: entry.key, version: entry.version }).collect())
+                    let heads: Vec<Head> =
+                        entries.into_iter().map(|entry| Head { key: entry.key, version: entry.version }).collect();
+                    // What the listing no longer names is not kept.
+                    let named: std::collections::HashSet<&str> = heads.iter().map(|head| head.key.as_str()).collect();
+                    self.kept
+                        .lock()
+                        .expect("never poisoned")
+                        .retain(|(at, of, key), _| at != scope || of != kind || named.contains(key.as_str()));
+                    Ok(heads)
                 }
                 _ => Err(unexpected()),
             }
@@ -64,10 +114,12 @@ impl Records for AccountRecords {
                 };
                 match self.ask(scope, request).await? {
                     Response::Written { metadata } => {
-                        if let Some(node) = self.0.upgrade() {
+                        if let Some(node) = self.node.upgrade() {
                             node.topics.changed(fastctx_types::topics::SENTINELS);
                         }
-                        return Ok(value.map(|value| Record { version: metadata.version, value }));
+                        let record = value.map(|value| Record { version: metadata.version, value });
+                        self.keep(scope, kind, key, record.as_ref());
+                        return Ok(record);
                     }
                     // Writing over what was deleted names the version the hub kept.
                     Response::Conflict { current: Some(current) }
@@ -93,7 +145,7 @@ impl Records for AccountRecords {
                 .watch_account_records(scope.account.clone(), kind.into())
                 .map_err(Error::Unavailable)?;
             let (sender, receiver) = broadcast::channel(64);
-            let node = self.0.clone();
+            let node = self.node.clone();
             // Ending closes the receiver, and the sentinel subscribes and lists again.
             fastctx_platform::task::spawn(async move {
                 loop {

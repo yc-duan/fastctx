@@ -66,6 +66,12 @@ export interface ShellWords {
   unreachable: string;
   /** The World has been asked and has not answered for this many seconds. */
   unanswered(seconds: number): string;
+  /** Asks the local service again now. */
+  reconnect: string;
+  /** Starts the local service's node anew, needing no administrator. */
+  restartService: string;
+  restartingService: string;
+  restartServiceFailed(why: string): string;
   thisOne: string;
   phone: string;
   /** The way to log in, on a computer logged in nowhere. */
@@ -1675,6 +1681,10 @@ export const zhShell: ShellWords = {
   nobodyHere: "暂无对话",
   unreachable: "本机服务未连接",
   unanswered: (seconds) => `本机服务 ${seconds} 秒未响应`,
+  reconnect: "重新连接",
+  restartService: "重启本机服务",
+  restartingService: "正在重启本机服务…",
+  restartServiceFailed: (why) => `本机服务没能重启：${why}`,
   thisOne: "本机",
   phone: "手机",
   logIn: "加入网络",
@@ -1735,6 +1745,10 @@ export const enShell: ShellWords = {
   nobodyHere: "No conversations",
   unreachable: "Local service not connected",
   unanswered: (seconds) => `Local service not responding for ${seconds} s`,
+  reconnect: "Reconnect",
+  restartService: "Restart local service",
+  restartingService: "Restarting the local service…",
+  restartServiceFailed: (why) => `The local service did not restart: ${why}`,
   thisOne: "this computer",
   phone: "phone",
   logIn: "Join a network",

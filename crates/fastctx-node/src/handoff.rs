@@ -285,23 +285,63 @@ pub(crate) fn hand_over(node: Arc<Node>) {
     }
 }
 
+/// How long a node asked to yield waits for the calls it answers once no turn
+/// runs or starts: a call that never ends would otherwise hold the handover
+/// for good. Those cut short are asked again of the successor.
+const CALLS_WAIT_AT_MOST: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How often a node waiting to yield says what it waits for.
+const SAYS_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Waits until the node yields: asked to, with no Codex turn running or
-/// starting, all reported ends settled, and no call being answered. Then
-/// nothing more is taken on, the guardian is told, and the node exits; its
-/// successor takes the World.
+/// starting, all reported ends settled, and no call being answered, or only
+/// calls for longer than `CALLS_WAIT_AT_MOST`. Then nothing more is taken on,
+/// the guardian is told, and the node exits; its successor takes the World.
 async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
+    // Since when only calls being answered hold the node.
+    let mut only_calls: Option<std::time::Instant> = None;
+    let mut said = std::time::Instant::now();
     loop {
         let changed = node.handoff.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
         {
             let mut state = node.handoff.state.lock().expect("never poisoned");
-            if state.yielding && state.starting == 0 && state.calls == 0 && node.codex.settled() {
-                state.committed = true;
-                break;
+            if state.yielding {
+                let settled = node.codex.settled();
+                only_calls =
+                    (state.starting == 0 && settled).then(|| only_calls.unwrap_or_else(std::time::Instant::now));
+                let calls_waited = only_calls.is_some_and(|since| since.elapsed() >= CALLS_WAIT_AT_MOST);
+                if state.starting == 0 && settled && (state.calls == 0 || calls_waited) {
+                    if state.calls > 0 {
+                        node.log.line(format_args!(
+                            "handing the World on with {} calls still being answered, after {} minutes",
+                            state.calls,
+                            CALLS_WAIT_AT_MOST.as_secs() / 60
+                        ));
+                    }
+                    state.committed = true;
+                    break;
+                }
+                if said.elapsed() >= SAYS_EVERY {
+                    node.log.line(format_args!(
+                        "waiting to hand the World on: {} turns starting, {} calls being answered, Codex {}",
+                        state.starting,
+                        state.calls,
+                        if settled { "settled" } else { "not settled" }
+                    ));
+                    said = std::time::Instant::now();
+                }
+            } else {
+                only_calls = None;
+                said = std::time::Instant::now();
             }
         }
-        changed.await;
+        // Looked at again on each change, and at least as often as it says
+        // what it waits for.
+        tokio::select! {
+            () = changed => {}
+            () = tokio::time::sleep(SAYS_EVERY) => {}
+        }
     }
     node.log.line("idle: handing the World on to the successor");
     say(ServiceEvent::Yielded);

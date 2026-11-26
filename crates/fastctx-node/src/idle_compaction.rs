@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 
 use fastctx_types::ResidentId;
 use fastctx_types::residents::Activity;
-use fastctx_types::session::{Happened, SessionChange};
 use fastctx_types::session::control::Controlled;
+use fastctx_types::session::{Happened, SessionChange};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -140,8 +140,13 @@ async fn sweep(node: &Arc<Node>) {
     }
     // Those begun and through make room again: nothing of theirs under way
     // or waiting any more, or taken long enough ago not to be waited for.
-    let begun: Vec<ResidentId> =
-        UNDER_WAY_NOW.lock().expect("never poisoned").iter().filter(|(_, place)| place.begun).map(|(id, _)| id.clone()).collect();
+    let begun: Vec<ResidentId> = UNDER_WAY_NOW
+        .lock()
+        .expect("never poisoned")
+        .iter()
+        .filter(|(_, place)| place.begun)
+        .map(|(id, _)| id.clone())
+        .collect();
     for id in begun {
         let through = !crate::lifecycle::held(node, &id).await.unwrap_or(false);
         let mut under_way = UNDER_WAY_NOW.lock().expect("never poisoned");
@@ -180,7 +185,10 @@ async fn sweep(node: &Arc<Node>) {
             // just before is in it by then.
             let (looking, again, before) = (node.clone(), id.clone(), after.clone());
             let still = move || {
-                let now = looking.residents.on_record(&again).and_then(|record| idle(&looking, record, Timestamp::now(), any));
+                let now = looking
+                    .residents
+                    .on_record(&again)
+                    .and_then(|record| idle(&looking, record, Timestamp::now(), any));
                 if now.is_none_or(|now| now.after != before) {
                     return Err("it is no longer idle as it was".to_string());
                 }
@@ -245,12 +253,20 @@ fn idle(node: &Node, record: crate::residents::OnRecord, now: Timestamp, any: bo
         return None;
     }
     let after = live.last_turn.clone()?;
-    if node.goals.views.lock().expect("never poisoned").get(&id).is_some_and(|view| view.goal.as_ref().is_some_and(|goal| goal.active())) {
+    if node
+        .goals
+        .views
+        .lock()
+        .expect("never poisoned")
+        .get(&id)
+        .is_some_and(|view| view.goal.as_ref().is_some_and(|goal| goal.active()))
+    {
         return None;
     }
     let login = crate::usage::login_of(node, &id, &about)?;
     let accounts = crate::logins::idle::accounts_of(node, &about.acting);
-    let setting = about.idle_compaction.over(crate::logins::idle::of(node, &accounts, agent, &login).unwrap_or_default());
+    let setting =
+        about.idle_compaction.over(crate::logins::idle::of(node, &accounts, agent, &login).unwrap_or_default());
     if !setting.on {
         return None;
     }

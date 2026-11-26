@@ -285,7 +285,12 @@ fn changes(
     id: &ResidentId,
     is_me: impl Fn(&fastctx_types::MachineName) -> bool,
 ) -> Option<Vec<String>> {
-    before.filter(|before| before.scope == cursor.scope).map(|before| {
+    // A document gone from the list, deleted for good, is told with the list
+    // given whole.
+    let before = before.filter(|before| {
+        before.scope == cursor.scope && before.topics.keys().all(|name| cursor.topics.contains_key(name))
+    });
+    before.map(|before| {
         catalog.documents.iter().zip(names)
             .filter(|(_, name)| {
                 before.topics.get(*name) != cursor.topics.get(*name)

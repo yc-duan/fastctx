@@ -24,6 +24,23 @@ pub(super) fn candidates(directory: &Indexed<'_>, logins: &BTreeSet<AccountName>
     positions.into_iter().map(|at| directory.all.members[at].name.clone()).collect()
 }
 
+/// How many machines `candidates` looks at for `logins`, at most: every
+/// member for a super administrator.
+pub(super) fn reach(directory: &Indexed<'_>, logins: &BTreeSet<AccountName>) -> usize {
+    if logins.iter().any(|account| directory.is_super(account)) {
+        return directory.all.members.len();
+    }
+    logins
+        .iter()
+        .map(|account| {
+            directory.owned(account).len()
+                + directory.logged(account).len()
+                + directory.shares_by_account(account).len()
+                + directory.assists_by_account(account).len()
+        })
+        .sum()
+}
+
 /// Whether a member logged in to `logins` sees `machine` at all, as its
 /// view of the directory has it (`crate::views`).
 pub(super) fn sees(directory: &Indexed<'_>, logins: &BTreeSet<AccountName>, machine: &MachineName) -> bool {

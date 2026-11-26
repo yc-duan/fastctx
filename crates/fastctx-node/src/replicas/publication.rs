@@ -176,6 +176,10 @@ pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<Option<Option<Proje
     if !super::sync::enabled(node, &copy.account, &copy.head.document) {
         return Ok(None);
     }
+    // A copy of a conversation deleted here is not restored (issue #58).
+    if super::deleted::document(node, &copy.head.document) {
+        return Ok(None);
+    }
     if node.link_of(&copy.account.hub).is_some_and(|link| !link.view().shared_records) {
         return Ok(None);
     }

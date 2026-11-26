@@ -504,6 +504,6 @@ fn save(node: &Node, mut value: MachineLogins, agents: fastctx_types::agents::Ag
         held.value = Some(Arc::new(value));
         held.agents = Some(Arc::new(agents));
     }
-    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::logins::changed(node);
     Ok(())
 }

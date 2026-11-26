@@ -302,8 +302,11 @@ async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String>
                     return Err(reason);
                 }
                 let entries = listing(socket, &dir, part).await?;
-                frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed, sqlite: true, apart: true })
-                    .await?;
+                frames::send(
+                    socket,
+                    &ToOld::Holds { committed: standby.arriving().committed, sqlite: true, apart: true },
+                )
+                .await?;
                 frames::send_listing(socket, entries).await?;
             }
             ToNew::Put { path, bytes, packed } => receive(socket, &dir, &path, bytes, packed).await?,
@@ -380,7 +383,13 @@ async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String>
 /// goes; it replaces what is there only when its digest is the one the old
 /// hub says. A database takes its place with no log nor shared memory of an
 /// earlier one beside it: read with those, it would be another database.
-pub(super) async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64, packed: bool) -> Result<(), String> {
+pub(super) async fn receive(
+    socket: &mut Socket,
+    dir: &Path,
+    path: &str,
+    bytes: u64,
+    packed: bool,
+) -> Result<(), String> {
     use sha2::Digest as _;
     let place = files::place(dir, path)?;
     let (base, target) = (dir.to_path_buf(), place.clone());
@@ -462,7 +471,8 @@ async fn pieces(socket: &mut Socket, dir: &Path, path: &str, piece: u32) -> Resu
         }
         Ok(Some((bytes, digests)))
     });
-    let read = frames::working::<_, ToOld, _>(socket, read).await?.map_err(|error| format!("reading {path}: {error}"))?;
+    let read =
+        frames::working::<_, ToOld, _>(socket, read).await?.map_err(|error| format!("reading {path}: {error}"))?;
     let Some((bytes, digests)) = read else {
         return frames::send(socket, &ToOld::Pieces { bytes: None }).await;
     };

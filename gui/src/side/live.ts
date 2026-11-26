@@ -2,7 +2,8 @@
 // specimen. Its colleagues are the residents the World lists as asked by
 // it; its plan and goal come from the conversation's own records.
 
-import { followState } from "../world/topics";
+import { SENTINELS } from "../world/topics";
+import { followAll } from "../app/numbers";
 import { effect } from "../app/signals";
 import { bareName, jobsOf, residentsOf } from "../app/store";
 import { agentName, titleOf } from "../world/names";
@@ -277,24 +278,37 @@ export function liveSide(options: LiveSide): SideSeams {
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
-        let reading = false;
-        const ask = async () => {
-          if (reading) return;
-          reading = true;
-          await sentinelList(options.address, at() ?? undefined)
-            .then(
-              (listed) => {
+        // One question at a time: one asked for while a reading is on its
+        // way, which may have read before what moved it, is asked once that
+        // one answers, and the later answers both.
+        let reading: Promise<void> | null = null;
+        let again = false;
+        const ask = (): Promise<void> => {
+          if (reading) {
+            again = true;
+            return reading;
+          }
+          // Begun after it is kept, so even one that fails at once lets go.
+          reading = Promise.resolve().then(async () => {
+            try {
+              do {
+                again = false;
+                const listed = await sentinelList(options.address, at() ?? undefined);
                 const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
                 sentinels = listed;
                 if (alive && changed && shown && /\bs-[0-9a-z]{6,16}\b/.test(shown.source ?? "")) show(shown);
-              },
-              (error: unknown) => { throw error; },
-            )
-            .finally(() => {
-              reading = false;
-            });
+              } while (again && alive);
+            } finally {
+              // Let go as the last look at `again` is taken, so a question
+              // after it begins a reading of its own.
+              reading = null;
+            }
+          });
+          return reading;
         };
-        const stopAsking = followState(null, () => naming() ? ask() : undefined, () => naming() ? 30_000 : false);
+        // Their homes are asked as the plan names them, and again as they
+        // change (`app/numbers.ts`); a home that tells nothing, every half minute.
+        const stopAsking = followAll(options.store.world, "sentinels", SENTINELS, () => naming() ? ask() : undefined, () => naming() ? 30_000 : false);
         refresh();
         watchPlan(
           owner,

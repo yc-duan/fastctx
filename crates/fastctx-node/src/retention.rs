@@ -3,10 +3,11 @@
 //! (`expire`), once its output is kept for good where its conversation lives.
 
 use fastctx_platform::disk as fs;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use fastctx_hands::run::{program, record};
 use fastctx_types::run::JobDelivery;
@@ -77,8 +78,8 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
 async fn collect(node: &Arc<Node>, maintenance: bool) {
     let collecting = node.clone();
     match fastctx_platform::task::spawn_blocking(move || {
-        recover_book(&collecting);
-        let immediate = collect_immediate(&collecting);
+        recover_book(&collecting, maintenance);
+        let immediate = collect_immediate(&collecting, maintenance);
         let retained = if maintenance {
             let obligations = crate::obligations::collect(&collecting);
             let retained = collect_scratch(&collecting);
@@ -160,11 +161,27 @@ async fn maintain(node: &Arc<Node>) {
     }
 }
 
+/// When each due job found not ready yet is looked at again between the
+/// hourly passes, and how long it waited the last time: one waiting for its
+/// output to reach the hub is not read again at every other job's change
+/// (codex-f3c66db9). The hourly pass looks at every one.
+static NOT_READY: std::sync::LazyLock<Mutex<HashMap<PathBuf, (Instant, Duration)>>> =
+    std::sync::LazyLock::new(Default::default);
+/// The due jobs whose activity the book took already (`recover_book`).
+static CONSUMED: std::sync::LazyLock<Mutex<HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
+/// How long a job not ready is left at first, and at most.
+const READY_AGAIN: Duration = Duration::from_secs(30);
+const READY_AGAIN_MOST: Duration = Duration::from_secs(30 * 60);
+
 /// Recovery holds a job lease while replaying journals, without a shared lock.
 /// Failed jobs stay eligible for the next maintenance round; one does not stop others.
-fn recover_book(node: &Arc<Node>) {
+/// One whose activity the book took is not read again but by `maintenance`.
+fn recover_book(node: &Arc<Node>, maintenance: bool) {
     let paths: Vec<_> = node.job_files.due.lock().expect("never poisoned").iter().cloned().collect();
     for path in paths {
+        if !maintenance && CONSUMED.lock().expect("never poisoned").contains(&path) {
+            continue;
+        }
         let Some(lease) = crate::job_reader::hold(node, &path) else {
             continue;
         };
@@ -174,7 +191,9 @@ fn recover_book(node: &Arc<Node>) {
         };
         node.job_files.due.lock().expect("never poisoned").remove(&path);
         match crate::activity_book::consumed(node, &record) {
-            Ok(true) => {}
+            Ok(true) => {
+                CONSUMED.lock().expect("never poisoned").insert(path.clone());
+            }
             Ok(false) => {
                 if let Err(error) = crate::activity_book::observe(node, &path) {
                     node.log.line(format_args!("recovering activity for job {}: {error}", record.id));
@@ -187,13 +206,29 @@ fn recover_book(node: &Arc<Node>) {
     }
 }
 
-fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
+/// Collects each due job that is ready; one found not ready is looked at
+/// again after a while, longer each time, but by `maintenance`, which looks
+/// at every one.
+fn collect_immediate(node: &Arc<Node>, maintenance: bool) -> io::Result<()> {
     let paths: Vec<_> = node.job_files.due.lock().expect("never poisoned").drain().collect();
+    let now = Instant::now();
     let mut failures = Vec::new();
     for path in paths {
+        let resting = NOT_READY.lock().expect("never poisoned").get(&path).is_some_and(|(at, _)| *at > now);
+        if resting && !maintenance {
+            node.job_files.due.lock().expect("never poisoned").insert(path);
+            continue;
+        }
         match collect_due(node, &path) {
-            Ok(true) => {}
+            Ok(true) => {
+                NOT_READY.lock().expect("never poisoned").remove(&path);
+                CONSUMED.lock().expect("never poisoned").remove(&path);
+            }
             Ok(false) => {
+                let mut not_ready = NOT_READY.lock().expect("never poisoned");
+                let wait = not_ready.get(&path).map_or(READY_AGAIN, |(_, waited)| (*waited * 2).min(READY_AGAIN_MOST));
+                not_ready.insert(path.clone(), (now + wait, wait));
+                drop(not_ready);
                 node.job_files.due.lock().expect("never poisoned").insert(path);
             }
             Err(error) => {
@@ -201,6 +236,12 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
                 node.job_files.due.lock().expect("never poisoned").insert(path);
             }
         }
+    }
+    // What is no longer due is not kept for it.
+    {
+        let due = node.job_files.due.lock().expect("never poisoned");
+        NOT_READY.lock().expect("never poisoned").retain(|path, _| due.contains(path));
+        CONSUMED.lock().expect("never poisoned").retain(|path| due.contains(path));
     }
     if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("\n"))) }
 }

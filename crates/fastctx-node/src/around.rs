@@ -3,12 +3,21 @@
 //! each asked for the accounts it works for, the online ones at once.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-pub(crate) use fastctx_net::around::{Heard, Reachable, ask_each};
+pub(crate) use fastctx_net::around::{Heard, Reachable, ask_known};
 use fastctx_net::link::{Link, Status};
 use fastctx_types::access::{Acting, Purpose};
 
 use crate::Node;
+
+/// How long what someone waits on (`fastctx w`, the conversations of late)
+/// waits for each machine: one that answers later is told as not answering,
+/// the others not held for it.
+pub(crate) const WAITED_ON: Duration = Duration::from_secs(5);
+/// How long a search for one thing by its id (a job, a colleague) waits for
+/// each machine.
+pub(crate) const SEARCHED: Duration = Duration::from_secs(10);
 
 /// The other machines `acting` may ask `purpose` of, on every hub. A
 /// computer on several of them is asked once, through the first hub where

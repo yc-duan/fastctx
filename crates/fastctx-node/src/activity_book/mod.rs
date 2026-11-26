@@ -3,9 +3,9 @@
 //! it touched. Full deeds and existing hourly counts survive until explicit
 //! deletion. Its independent database keeps maintenance off the state writer.
 
+mod changes;
 mod copied;
 mod incremental;
-mod changes;
 mod legacy;
 mod migrate;
 #[cfg(feature = "storage-drill")]
@@ -97,7 +97,8 @@ const SHARING: &str = "ALTER TABLE book_deeds ADD COLUMN sharing TEXT;";
 /// The deeds of conversations deleted here, as their rows go
 /// (`sealing::purge`), by number: what the copy of the book lets go of in
 /// the records scopes it wrote them into (releases before beta.26).
-const FORGOTTEN: &str = "CREATE TABLE IF NOT EXISTS book_forgotten (id INTEGER PRIMARY KEY AUTOINCREMENT, deed TEXT NOT NULL);";
+const FORGOTTEN: &str =
+    "CREATE TABLE IF NOT EXISTS book_forgotten (id INTEGER PRIMARY KEY AUTOINCREMENT, deed TEXT NOT NULL);";
 
 /// One deed as a job's record stands now.
 struct Row {

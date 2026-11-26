@@ -38,7 +38,11 @@ pub fn backup(dir: &Path, to: &Path) -> anyhow::Result<Marker> {
     let marker = Marker { made: jiff::Timestamp::now().as_millisecond(), hub: store.hub.id.to_string(), seq };
     // On the disk, with its place in the copy, before the backup is done: a
     // hub started from the copy opens sealed.
-    fastctx_platform::publish(&to.join(BACKUP_MARKER), &serde_json::to_vec_pretty(&marker)?, fastctx_platform::Permissions::Private)?;
+    fastctx_platform::publish(
+        &to.join(BACKUP_MARKER),
+        &serde_json::to_vec_pretty(&marker)?,
+        fastctx_platform::Permissions::Private,
+    )?;
     keys::sync_directory(to)?;
     Ok(marker)
 }
@@ -77,7 +81,11 @@ pub fn rotate_finish(dir: &Path) -> anyhow::Result<(String, String)> {
             .map_err(|_| anyhow::anyhow!("no rotation is prepared: run it with --export first"))?;
         let current = fastctx_net::sign::SecretKey::load(&keyring.join("current.key"))?;
         let pair = (witness::hex(current.public().as_bytes()), witness::hex(next.public().as_bytes()));
-        fastctx_platform::publish(&marker, format!("{} {}", pair.0, pair.1).as_bytes(), fastctx_platform::Permissions::Private)?;
+        fastctx_platform::publish(
+            &marker,
+            format!("{} {}", pair.0, pair.1).as_bytes(),
+            fastctx_platform::Permissions::Private,
+        )?;
         pair
     };
     if fastctx_platform::disk::exists(keyring.join("next.key"))? {
@@ -251,26 +259,36 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reope
         }
         let owner_key = key.clone();
         let epochs: Vec<(String, String, i64, Vec<u8>)> = control.read_now(move |c| {
-            let mut statement = c.prepare_cached("SELECT scope, stream, epoch, digest FROM hub_epoch_facts WHERE owner = ?1")?;
-            let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+            let mut statement =
+                c.prepare_cached("SELECT scope, stream, epoch, digest FROM hub_epoch_facts WHERE owner = ?1")?;
+            let rows =
+                statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })?;
         for (scope, stream, epoch, digest) in epochs {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
-            if !library.holds_epoch(&scope, &stream, epoch as u64, &digest).map_err(|error| anyhow::anyhow!("{error}"))? {
+            if !library
+                .holds_epoch(&scope, &stream, epoch as u64, &digest)
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+            {
                 forgotten_epochs.push((key.clone(), scope, stream, epoch));
             }
         }
         let owner_key = key.clone();
         let gaps: Vec<(String, String, i64, i64, Vec<u8>)> = control.read_now(move |c| {
-            let mut statement =
-                c.prepare_cached("SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1")?;
-            let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+            let mut statement = c.prepare_cached(
+                "SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1",
+            )?;
+            let rows = statement
+                .query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })?;
         for (scope, stream, epoch, from, digest) in gaps {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
-            if !library.holds_gap(&scope, &stream, epoch as u64, from as u64, &digest).map_err(|error| anyhow::anyhow!("{error}"))? {
+            if !library
+                .holds_gap(&scope, &stream, epoch as u64, from as u64, &digest)
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+            {
                 forgotten_gaps.push((key.clone(), scope, stream, epoch, from));
             }
         }
@@ -283,7 +301,8 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reope
         let batch = batch.to_vec();
         control.write_now(256 + batch.len() * 128, move |c| {
             for (owner, scope) in &batch {
-                c.prepare_cached("DELETE FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?.execute(params![owner, scope])?;
+                c.prepare_cached("DELETE FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?
+                    .execute(params![owner, scope])?;
             }
             Ok(())
         })?;
@@ -292,8 +311,10 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reope
         let batch = batch.to_vec();
         control.write_now(256 + batch.len() * 160, move |c| {
             for (owner, scope, stream, epoch) in &batch {
-                c.prepare_cached("DELETE FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch >= ?4")?
-                    .execute(params![owner, scope, stream, epoch])?;
+                c.prepare_cached(
+                    "DELETE FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch >= ?4",
+                )?
+                .execute(params![owner, scope, stream, epoch])?;
             }
             Ok(())
         })?;
@@ -322,9 +343,11 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reope
     let witnessed = assets.witness.recoveries();
     let (seq, head, recoveries) = control.write_now(4096, move |c| {
         if old_seq > 0 {
-            c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) VALUES (?1, ?2)")?.execute(params![old_seq as i64, &old_head[..]])?;
+            c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) VALUES (?1, ?2)")?
+                .execute(params![old_seq as i64, &old_head[..]])?;
         }
-        c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) SELECT seq, head FROM recovery_heads")?.execute([])?;
+        c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) SELECT seq, head FROM recovery_heads")?
+            .execute([])?;
         c.prepare_cached(
             "INSERT OR IGNORE INTO closed_receipts (scope, change, prefix, parked, accumulated)
              SELECT scope, change, prefix, parked, accumulated FROM recovery_receipts",

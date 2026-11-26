@@ -11,11 +11,13 @@ mod host;
 mod owner;
 mod policy;
 mod renewal;
+pub(crate) mod restart;
 mod runtime;
 mod scm;
 mod security;
 mod system_cache;
 mod task;
+mod token_access;
 
 pub(super) fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<super::Registration>> {
     let mut found = Vec::new();

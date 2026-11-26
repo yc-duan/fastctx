@@ -19,8 +19,8 @@ mod repair;
 mod repair_batch;
 mod rollout;
 pub(crate) use rollout::watch as watch_rollouts;
-mod view;
 pub(crate) mod submission;
+mod view;
 pub(crate) use view::request as view_request;
 mod attempt;
 mod cleanup;
@@ -405,6 +405,7 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut rep
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }
     if planning_changed {
+        hub.directory_moved_all();
         hub.directory_changed.notify_one();
         settle(hub, name, &kernel, app.as_deref(), asked);
     }
@@ -468,6 +469,7 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
     match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
         Ok(()) => {
             hub.machine_log_changed.notify_one();
+            hub.directory_moved_all();
             hub.directory_changed.notify_one();
         }
         Err(error) => hub.log.line(format_args!("{error}")),

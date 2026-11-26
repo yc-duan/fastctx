@@ -34,7 +34,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
     if node.logins.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
         return super::here(node).await;
     }
-    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::logins::changed(node);
     let scanning = node.clone();
     let scanned = fastctx_platform::task::spawn(async move {
         let node = scanning;
@@ -43,7 +43,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
         super::refresh::all(&node).await;
         super::snapshot::refresh(&node).await;
         node.logins.scanning.store(false, Ordering::Release);
-        node.topics.changed(fastctx_types::topics::LOGINS);
+        crate::logins::changed(&node);
         scanned
     })
     .await

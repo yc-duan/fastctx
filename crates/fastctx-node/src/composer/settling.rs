@@ -80,7 +80,11 @@ pub(super) fn release(node: &crate::Node, id: &ResidentId, operation: &str) {
 }
 
 /// Takes out of `operations` those of `id` no barrier has yet.
-pub(super) fn shown(node: &crate::Node, id: &ResidentId, operations: &mut Vec<fastctx_types::composer::sync::Operation>) {
+pub(super) fn shown(
+    node: &crate::Node,
+    id: &ResidentId,
+    operations: &mut Vec<fastctx_types::composer::sync::Operation>,
+) {
     let state = node.composers.settling.state.lock().expect("composer settling");
     if let Some(withheld) = state.withheld.get(id) {
         operations.retain(|operation| !withheld.contains_key(&operation.operation));
@@ -107,7 +111,10 @@ pub(super) async fn begun(node: &Arc<crate::Node>) -> Result<(), fastctx_types::
 /// on the disk, the send `withheld` among it shown from then on; an error
 /// the device takes as "ask again" when the disk does not confirm it in
 /// time.
-pub(super) async fn durable(node: &Arc<crate::Node>, withheld: Option<(&ResidentId, &str)>) -> Result<(), fastctx_types::ipc::Failure> {
+pub(super) async fn durable(
+    node: &Arc<crate::Node>,
+    withheld: Option<(&ResidentId, &str)>,
+) -> Result<(), fastctx_types::ipc::Failure> {
     let settling = node.composers.settling.clone();
     let mine = {
         let mut state = settling.state.lock().expect("composer settling");

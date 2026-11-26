@@ -37,6 +37,7 @@ mod control;
 mod data;
 mod direct;
 pub mod dissolve;
+mod egress;
 mod expiry;
 mod forget;
 mod health;
@@ -81,6 +82,7 @@ mod strain;
 #[cfg(feature = "submission-drill")]
 mod submission_drill;
 mod submitted;
+mod telling;
 pub mod third;
 mod troubles;
 mod updates;
@@ -274,10 +276,6 @@ pub(crate) struct Hub {
     /// The pin of the hub's certificate, written into tokens.
     pin: CertPin,
     sessions: Mutex<HashMap<MachineName, Session>>,
-    /// The view last given each session that reads what changes in it,
-    /// which the next change is made against. Taken after `store` and
-    /// `sessions` when held with them, and nothing taken while it is.
-    given: Mutex<HashMap<MachineName, Given>>,
     /// The checks of machines' direct addresses under way (`direct`).
     trials: Mutex<direct::Trials>,
     calls: Mutex<control::InFlight>,
@@ -302,16 +300,24 @@ pub(crate) struct Hub {
     /// told so (`dissolve`).
     dissolution: tokio::sync::Notify,
     /// Told when every member is to look at the directory again
-    /// (`tell_directory`).
+    /// (`telling`).
     directory_changed: Arc<tokio::sync::Notify>,
+    /// What the directory changes since `telling` last told touched
+    /// (`telling::Scope`); set before `directory_changed` is told.
+    directory_scope: std::sync::Mutex<Option<telling::Scope>>,
+    /// Set with `directory_changed` when what members may do changed: every
+    /// session is told at once, none spaced out (`telling`).
+    directory_authority: Arc<std::sync::atomic::AtomicBool>,
     /// Told when who is online changed, for the members whose sessions do
-    /// not read that as it changes (`tell_directory`).
+    /// not read that as it changes (`telling`).
     presence_changed: Arc<tokio::sync::Notify>,
     /// How many times who is online changed (`Hub::present`).
     presence: AtomicU64,
     /// Held while a change in who is online is counted, looked at and
     /// queued, so that of two at once the later counted is queued later.
-    pending_presence: Mutex<HashMap<MachineName, u64>>,
+    /// The machines whose presence changed and is to be told, at the latest
+    /// count, and whether what changed is any but their numbers (`present`).
+    pending_presence: Mutex<HashMap<MachineName, (u64, bool)>>,
     presence_pending: Arc<tokio::sync::Notify>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
@@ -324,24 +330,17 @@ pub(crate) struct Hub {
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
+    /// The number each machine's agents and logins stand at, as its session
+    /// (by generation) last told (`workbench::numbers_heard`).
+    logins: Mutex<HashMap<MachineName, (u64, fastctx_types::numbers::Numbers)>>,
 }
 
 /// Full views built at once when many sessions are told of a change.
 const VIEWS_AT_ONCE: usize = 256;
 
-/// The view a session that reads what changes in its view was last given
-/// (`fastctx_net::view_delta`), numbered among those it was given.
-#[derive(Clone)]
-pub(crate) struct Given {
-    generation: u64,
-    view: Arc<View>,
-    /// When it read the directory (`store::Store::view_reads`).
-    read: (u64, u64),
-}
-
 /// The most bytes a change to a view takes in one frame; a larger one is
 /// told as `Down::DirectoryChanged`, and the member asks for the view whole.
-const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
+pub(crate) const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 
 /// A member's open control connection.
 pub(crate) struct Session {
@@ -490,25 +489,16 @@ impl Hub {
     /// One read before what the session was last given is given that
     /// instead: a view made earlier is never numbered past a later one.
     fn give(&self, name: &MachineName, generation: u64, view: &mut View, read: (u64, u64)) {
-        let mut copy = view.clone();
-        let sessions = self.sessions();
-        if !sessions.get(name).is_some_and(|session| session.view_deltas && session.generation == generation) {
-            return;
+        let out = self
+            .sessions()
+            .get(name)
+            .filter(|session| session.view_deltas && session.generation == generation)
+            .map(|session| session.out.clone());
+        // Kept by the session's own queue, which every change to the view
+        // passes through (`Outq::view_given`); it ends with the session.
+        if let Some(out) = out {
+            out.view_given(view, read);
         }
-        let mut given = self.given.lock().expect("never poisoned");
-        let before = given.get(name).filter(|given| given.generation == generation);
-        if let Some(later) = before.filter(|given| given.read > read).map(|given| given.view.clone()) {
-            drop(given);
-            drop(sessions);
-            *view = View::clone(&later);
-            return;
-        }
-        view.revision = before.map_or(1, |given| given.view.revision + 1);
-        copy.revision = view.revision;
-        let before = given.insert(name.clone(), Given { generation, view: Arc::new(copy), read });
-        drop(given);
-        drop(sessions);
-        drop(before);
     }
 
     /// What `machines` see in their views changed, nothing else did: each of
@@ -529,15 +519,6 @@ impl Hub {
         if !changes.is_empty() {
             self.push_views(changes);
         }
-    }
-
-    /// `name`'s session `generation` ended: what it was given goes with it.
-    pub(crate) fn forget_view(&self, name: &MachineName, generation: u64) {
-        let mut given = self.given.lock().expect("never poisoned");
-        let before =
-            if given.get(name).is_some_and(|given| given.generation == generation) { given.remove(name) } else { None };
-        drop(given);
-        drop(before);
     }
 
     /// The directory changed: each session that reads what changes in its
@@ -573,8 +554,8 @@ impl Hub {
                 .collect();
             (views, read)
         };
-        for ((name, _, generation, out), view) in sessions.into_iter().zip(views) {
-            let mut view = match view {
+        for ((name, _, _generation, out), view) in sessions.into_iter().zip(views) {
+            let view = match view {
                 Ok(view) => view,
                 Err(error) => {
                     self.log.line(format_args!("reading {name}'s machine notices: {error}"));
@@ -582,61 +563,15 @@ impl Hub {
                     continue;
                 }
             };
-            let before = self
-                .given
-                .lock()
-                .expect("never poisoned")
-                .get(&name)
-                .filter(|given| given.generation == generation)
-                .cloned();
-            let Some(before) = before else {
+            // Into the session's own queue, which keeps one view to tell the
+            // change to and makes the change as its writer comes to it, from
+            // what the member was last given (`Outq::view_changed`): a member
+            // that reads slowly is told one change to the newest view, and no
+            // pusher numbers one past another's. One never given a view whole
+            // is told to ask for it.
+            if out.view_changed(view, read) == Ok(false) {
                 let _ = out.send(Out::Frame(Down::DirectoryChanged));
-                continue;
-            };
-            // What it was given since was read after this: it holds this.
-            if before.read > read {
-                continue;
             }
-            // A change counts no change of who is online (`view_delta`'s
-            // `PRESENCE`): those are told apart, and one told before it
-            // may reach the member after it, so it holds them only as far
-            // as the view it starts from did.
-            view.presence = before.view.presence;
-            let base = before.view.revision;
-            view.revision = base + 1;
-            let delta = fastctx_net::view_delta::between(&before.view, &view, base, base + 1);
-            let frame = match delta {
-                Ok(None) => {
-                    let mut given = self.given.lock().expect("never poisoned");
-                    if let Some(current) = given
-                        .get_mut(&name)
-                        .filter(|current| current.generation == generation && current.read == before.read)
-                    {
-                        current.read = read;
-                    }
-                    continue;
-                }
-                Ok(Some(delta)) => Down::View { delta: Box::new(delta) },
-                Err(error) => {
-                    self.log.line(format_args!("making what changed in {name}'s view: {error}"));
-                    let _ = out.send(Out::Frame(Down::DirectoryChanged));
-                    continue;
-                }
-            };
-            if serde_json::to_vec(&frame).map_or(true, |bytes| bytes.len() > VIEW_CHANGE_AT_MOST) {
-                let _ = out.send(Out::Frame(Down::DirectoryChanged));
-                continue;
-            }
-            {
-                let mut given = self.given.lock().expect("never poisoned");
-                if !given.get(&name).is_some_and(|current| {
-                    current.generation == generation && current.read == before.read && current.view.revision == base
-                }) {
-                    continue;
-                }
-                given.insert(name, Given { generation, view: Arc::new(view), read });
-            }
-            let _ = out.send(Out::Frame(frame));
         }
     }
 
@@ -658,18 +593,32 @@ impl Hub {
     /// no call or transfer is cut; a session just come is told what is
     /// afoot.
     fn present(&self, name: &MachineName) {
+        self.present_as(name, true);
+    }
+
+    /// The numbers `name`'s answers stand at moved, nothing else of how it
+    /// is connected (`workbench::numbers_heard`): told to the members whose
+    /// sessions read presence, who alone read numbers. A member that reads
+    /// neither is not told to look at its whole directory again for them,
+    /// as it is for a machine coming or going: on a busy machine they move
+    /// every heartbeat or so.
+    pub(crate) fn present_numbers(&self, name: &MachineName) {
+        self.present_as(name, false);
+    }
+
+    fn present_as(&self, name: &MachineName, more_than_numbers: bool) {
         let _timing = self.health.presence_queue.time();
         let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_presence
             .lock()
             .expect("presence changes")
             .entry(name.clone())
-            .and_modify(|pending| *pending = (*pending).max(rev))
-            .or_insert(rev);
+            .and_modify(|pending| *pending = (pending.0.max(rev), pending.1 || more_than_numbers))
+            .or_insert((rev, more_than_numbers));
         self.presence_pending.notify_one();
     }
 
-    fn publish_presence(&self, name: &MachineName, rev: u64) {
+    fn publish_presence(&self, name: &MachineName, rev: u64, more_than_numbers: bool) {
         let _timing = self.health.presence.time();
         let store = self.store();
         let indexed = store.indexed();
@@ -685,7 +634,9 @@ impl Hub {
                 .map(|session| (session.out.clone(), session.presence));
             let Some((out, reads)) = session else { continue };
             if !reads {
-                self.presence_changed.notify_one();
+                if more_than_numbers {
+                    self.presence_changed.notify_one();
+                }
                 continue;
             }
             if let Some(presence) = views::presence_for(&store, &indexed, self, &reader, name) {
@@ -696,19 +647,51 @@ impl Hub {
 
     /// Publishes configuration and audit changes that do not alter authority.
     fn configuration_changed(&self) {
+        self.directory_moved_all();
         afoot::directory_changed(self);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
         self.directory_changed.notify_one();
     }
 
+    /// A change to the settings of `accounts` or the fields of `machines`
+    /// alone, altering what no one may see or do: only the views that show
+    /// one of them are made again (`telling::Scope`).
+    fn configuration_changed_for(&self, accounts: Vec<AccountName>, machines: Vec<MachineName>) {
+        {
+            let mut scope = self.directory_scope.lock().expect("never poisoned");
+            let scope = scope.get_or_insert_with(Default::default);
+            scope.accounts.extend(accounts);
+            scope.machines.extend(machines);
+        }
+        // What is afoot is shown by who may see which machine, which this
+        // leaves as it was: nothing of it is worked out again for all.
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
+    }
+
+    /// A change that may touch every member's view is to be told.
+    pub(crate) fn directory_moved_all(&self) {
+        self.directory_scope.lock().expect("never poisoned").get_or_insert_with(Default::default).all = true;
+    }
+
+    /// What the directory changes since the last call touched; none when
+    /// none was recorded.
+    pub(crate) fn take_directory_scope(&self) -> Option<telling::Scope> {
+        self.directory_scope.lock().expect("never poisoned").take()
+    }
+
     /// A relation changed (`manage_edit::relation`): every member is told to
     /// look again and what lost the standing it was allowed under ends; the
     /// passes that follow only accounts and machines are not run.
     fn relations_changed(&self) {
+        self.directory_moved_all();
         afoot::directory_changed(self);
+        crate::assets::ledger_views::directory_moved();
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
+        self.directory_authority.store(true, Ordering::SeqCst);
         self.directory_changed.notify_one();
         control::cut_calls(self);
         data::cut_streams(self);
@@ -717,61 +700,20 @@ impl Hub {
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
+        self.directory_moved_all();
         afoot::directory_changed(self);
+        crate::assets::ledger_views::directory_moved();
         self.account_records.settle(&self.store().book.directory);
         updates::directory_changed(self);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
+        self.directory_authority.store(true, Ordering::SeqCst);
         self.directory_changed.notify_one();
         control::cut_calls(self);
         data::cut_streams(self);
         moving::follow::settle(self);
         forget::prune(self);
         afoot::settle(self);
-    }
-}
-
-/// How long the hub waits after telling every member the directory changed
-/// before it tells them again.
-const DIRECTORY_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// Tells every member to look at the directory again whenever it changed,
-/// and the members whose sessions do not read who is online as it changes
-/// whenever that did, at most once each `DIRECTORY_SPACING`: a machine that
-/// keeps coming and going does not have every member read it all again each
-/// time (`specs/world-concurrency.md`, 机器之间). What lost its standing is cut
-/// at once, by `Hub::changed` itself.
-async fn tell_directory(
-    hub: std::sync::Weak<Hub>,
-    changed: Arc<tokio::sync::Notify>,
-    present: Arc<tokio::sync::Notify>,
-) {
-    loop {
-        let every = tokio::select! {
-            () = changed.notified() => true,
-            () = present.notified() => false,
-        };
-        let Some(hub) = hub.upgrade() else { return };
-        hub.blocking(move |hub| {
-            let mut outs: Vec<outq::Outq> = Vec::new();
-            let mut changes = Vec::new();
-            for (name, session) in hub.sessions().iter() {
-                if every && session.view_deltas {
-                    changes.push((name.clone(), session.key, session.generation, session.out.clone()));
-                } else if every || !session.presence {
-                    outs.push(session.out.clone());
-                }
-            }
-            for out in outs {
-                let _ = out.send(Out::Frame(Down::DirectoryChanged));
-            }
-            if !changes.is_empty() {
-                hub.push_views(changes);
-            }
-        })
-        .await;
-        drop(hub);
-        tokio::time::sleep(DIRECTORY_SPACING).await;
     }
 }
 
@@ -1028,7 +970,6 @@ async fn serving(
         secrets,
         pin,
         sessions: Mutex::new("hub sessions", Rank::HUB_SESSIONS, HashMap::new()),
-        given: Mutex::new("hub given", Rank::HUB_GIVEN, HashMap::new()),
         trials: Mutex::new("hub trials", Rank::HUB_TRIALS, direct::Trials::default()),
         calls: Mutex::new("hub calls", Rank::HUB_CALLS, control::InFlight::default()),
         data: Mutex::new("hub data", Rank::HUB_DATA, data::Pairing::default()),
@@ -1044,6 +985,8 @@ async fn serving(
         updates: Mutex::new("hub updates", Rank::HUB_UPDATES, updates),
         dissolution: tokio::sync::Notify::new(),
         directory_changed: Arc::new(tokio::sync::Notify::new()),
+        directory_scope: std::sync::Mutex::new(None),
+        directory_authority: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
         pending_presence: Mutex::new("hub presence", Rank::HUB_PRESENCE, Default::default()),
@@ -1054,6 +997,7 @@ async fn serving(
         assets,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
+        logins: Mutex::new("hub logins told", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     // Sealed while it runs, every machine is sent a view that says so, what
@@ -1085,10 +1029,11 @@ async fn serving(
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
-    fastctx_platform::task::spawn(tell_directory(
+    fastctx_platform::task::spawn(telling::run(
         Arc::downgrade(&hub),
         hub.directory_changed.clone(),
         hub.presence_changed.clone(),
+        hub.directory_authority.clone(),
     ));
     updates::start(&hub);
     afoot::start(&hub);
@@ -1099,6 +1044,7 @@ async fn serving(
     // requests are heard. A queue that does not start is told and tried
     // again beside the hub, which serves meanwhile.
     manage::submission::register(&hub);
+    manage::submission::register_collab(&hub);
     forget::submission::register(&hub);
     direct::submission::register(&hub);
     updates::submission::register(&hub);

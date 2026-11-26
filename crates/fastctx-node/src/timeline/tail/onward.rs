@@ -102,7 +102,10 @@ fn keep(resident: &ResidentId, window: Window) {
     windows.remove(resident);
     let mut left: usize = windows.values().map(|held| held.left.len()).sum::<usize>() + window.left.len();
     while windows.len() >= WINDOWS_MOST || (left > LEFT_MOST_OF_ALL && !windows.is_empty()) {
-        let Some(oldest) = windows.iter().min_by_key(|(_, held)| held.judged).map(|(resident, _)| resident.clone()) else { break };
+        let Some(oldest) = windows.iter().min_by_key(|(_, held)| held.judged).map(|(resident, _)| resident.clone())
+        else {
+            break;
+        };
         left -= windows.remove(&oldest).map_or(0, |held| held.left.len());
     }
     windows.insert(resident.clone(), window);
@@ -194,7 +197,8 @@ impl Audit {
         latest == self.latest
             && runs == self.runs
             && self.record.as_ref().is_none_or(|(path, end, written)| {
-                fastctx_platform::disk::metadata(path).is_ok_and(|metadata| metadata.len() == *end && metadata.modified().ok() == *written)
+                fastctx_platform::disk::metadata(path)
+                    .is_ok_and(|metadata| metadata.len() == *end && metadata.modified().ok() == *written)
             })
     }
 
@@ -231,9 +235,13 @@ pub(super) enum Step {
 fn alone(event: &SessionEvent) -> bool {
     match &event.happened {
         Happened::Finished { item, .. } => item.draft.is_none(),
-        Happened::Changed { change, .. } => {
-            !matches!(change, SessionChange::HistoryChanged | SessionChange::HistoryCut { .. } | SessionChange::Request { .. } | SessionChange::Resolved { .. })
-        }
+        Happened::Changed { change, .. } => !matches!(
+            change,
+            SessionChange::HistoryChanged
+                | SessionChange::HistoryCut { .. }
+                | SessionChange::Request { .. }
+                | SessionChange::Resolved { .. }
+        ),
         Happened::Health { .. } => true,
         _ => false,
     }
@@ -247,13 +255,23 @@ fn alone(event: &SessionEvent) -> bool {
 /// a turn that ended stands before that turn's end, wherever that is.
 fn plain(event: &SessionEvent, turn: Option<&str>) -> bool {
     let placed_by_time = match &event.happened {
-        Happened::Changed { change, .. } => {
-            !matches!(change, SessionChange::HistoryChanged | SessionChange::HistoryCut { .. } | SessionChange::Request { .. } | SessionChange::Resolved { .. })
-        }
-        Happened::Health { .. } | Happened::Context { .. } | Happened::Steps { .. } | Happened::Titled { .. } | Happened::DeliveryUncertain { .. } => true,
+        Happened::Changed { change, .. } => !matches!(
+            change,
+            SessionChange::HistoryChanged
+                | SessionChange::HistoryCut { .. }
+                | SessionChange::Request { .. }
+                | SessionChange::Resolved { .. }
+        ),
+        Happened::Health { .. }
+        | Happened::Context { .. }
+        | Happened::Steps { .. }
+        | Happened::Titled { .. }
+        | Happened::DeliveryUncertain { .. } => true,
         _ => false,
     };
-    placed_by_time && event.happened.in_history() && crate::talk::turn_of(&event.happened).is_none_or(|of| Some(of) == turn)
+    placed_by_time
+        && event.happened.in_history()
+        && crate::talk::turn_of(&event.happened).is_none_or(|of| Some(of) == turn)
 }
 
 /// The history the events of the rows past a place make with what the
@@ -299,7 +317,9 @@ fn derive(
             return Ok(Err("an event placed by the World's record"));
         }
         let Some(event) = placement::finish(event, turn, &turns) else { continue };
-        for mut shown in crate::talk::shown(event, &fastctx_types::session::attachments::NoReceipts, "claude", &|_| false) {
+        for mut shown in
+            crate::talk::shown(event, &fastctx_types::session::attachments::NoReceipts, "claude", &|_| false)
+        {
             let key = merging::key(&shown, names);
             let named = |name: Option<u32>| name.is_some_and(|name| name != merging::ELSEWHERE);
             if matches!(key.kind, merging::Kind::Finished | merging::Kind::Updated) && named(key.item) {
@@ -347,7 +367,9 @@ fn world_stands(world: &[SessionEvent], turn: Option<&str>, after: Option<Timest
 
 /// Where the record ids before `resident`'s seam are kept, for a reading on.
 async fn seen_of(library: &Library, resident: &ResidentId) -> Result<Option<(Library, String, u64)>, Failure> {
-    Ok(prefix_generation(library, resident).await?.map(|generation| (library.clone(), prefix_name(resident), generation)))
+    Ok(prefix_generation(library, resident)
+        .await?
+        .map(|generation| (library.clone(), prefix_name(resident), generation)))
 }
 
 /// An item of a window: its identity, time and order key.
@@ -357,7 +379,11 @@ type Item = (Vec<u8>, Timestamp, u64);
 /// order — the same identities, order keys rising, the same records — with
 /// the order key of the item before them (naught where none is); none where
 /// they are not. Read from its end a few at a time.
-pub(super) fn last_items(library: &Library, scope: &str, made: &[SessionEvent]) -> Result<Option<(Vec<Item>, u64)>, Failure> {
+pub(super) fn last_items(
+    library: &Library,
+    scope: &str,
+    made: &[SessionEvent],
+) -> Result<Option<(Vec<Item>, u64)>, Failure> {
     use fastctx_content::{Anchor, Place};
     let identities = super::super::names::identities(made);
     let key_of = |order: &[u8]| <[u8; 8]>::try_from(order).ok().map(u64::from_be_bytes);
@@ -393,7 +419,8 @@ pub(super) fn last_items(library: &Library, scope: &str, made: &[SessionEvent]) 
         }
     };
     items.reverse();
-    let rising = items.first().is_none_or(|(_, _, key)| *key > floor) && items.windows(2).all(|pair| pair[0].2 < pair[1].2);
+    let rising =
+        items.first().is_none_or(|(_, _, key)| *key > floor) && items.windows(2).all(|pair| pair[0].2 < pair[1].2);
     Ok(rising.then_some((items, floor)))
 }
 
@@ -487,9 +514,23 @@ impl Window {
         if made.len() > ITEMS_MOST || left.len() > LEFT_MOST {
             return Ok(Err("a window too long to hold"));
         }
-        let Some((items, floor)) = last_items(library, scope, &made)? else { return Ok(Err("a timeline's end the rows past the place do not make")) };
-        let mut window =
-            Window { stood, session, read: place, left: Arc::new(left.into_iter().collect()), turn, names, title, floor, items, world, judged: Instant::now(), whole };
+        let Some((items, floor)) = last_items(library, scope, &made)? else {
+            return Ok(Err("a timeline's end the rows past the place do not make"));
+        };
+        let mut window = Window {
+            stood,
+            session,
+            read: place,
+            left: Arc::new(left.into_iter().collect()),
+            turn,
+            names,
+            title,
+            floor,
+            items,
+            world,
+            judged: Instant::now(),
+            whole,
+        };
         if let Some(next) = moved
             && !window.moved(next, passed)
         {
@@ -539,18 +580,24 @@ impl Window {
         // the timeline has an item of already is one of the same name
         // before it, told apart only over the whole window.
         let known: HashSet<&Vec<u8>> = self.items.iter().map(|(identity, ..)| identity).collect();
-        let fresh: Vec<Vec<u8>> = super::super::names::identities(&made).into_iter().filter(|identity| !known.contains(identity)).collect();
-        if !fresh.is_empty() && !library.had_items(&placed.scope, Timeline::STREAM, &fresh).map_err(failure)?.is_empty() {
+        let fresh: Vec<Vec<u8>> =
+            super::super::names::identities(&made).into_iter().filter(|identity| !known.contains(identity)).collect();
+        if !fresh.is_empty() && !library.had_items(&placed.scope, Timeline::STREAM, &fresh).map_err(failure)?.is_empty()
+        {
             return Ok(Err("an event named as an item before the place"));
         }
-        let before: Vec<(Vec<u8>, Timestamp)> = self.items.iter().map(|(identity, at, _)| (identity.clone(), *at)).collect();
+        let before: Vec<(Vec<u8>, Timestamp)> =
+            self.items.iter().map(|(identity, at, _)| (identity.clone(), *at)).collect();
         let span = Span::From { since: Timestamp::MIN, before: &before, floor: self.floor };
         let wrote = assets::write(library, signer, resident, placed, &made, span, &HashSet::new(), expected)?;
         // From here on the timeline is written.
-        let rising = wrote.items.first().is_none_or(|(_, _, key)| *key > self.floor) && wrote.items.windows(2).all(|pair| pair[0].2 < pair[1].2);
+        let rising = wrote.items.first().is_none_or(|(_, _, key)| *key > self.floor)
+            && wrote.items.windows(2).all(|pair| pair[0].2 < pair[1].2);
         let pair = |(_, at, key): &Item| (at.as_second(), at.subsec_nanosecond(), *key);
-        let (old, new): (HashSet<_>, HashSet<_>) = (self.items.iter().map(pair).collect(), wrote.items.iter().map(pair).collect());
-        let (gone, kept): (Vec<_>, Vec<_>) = (old.difference(&new).copied().collect(), new.difference(&old).copied().collect());
+        let (old, new): (HashSet<_>, HashSet<_>) =
+            (self.items.iter().map(pair).collect(), wrote.items.iter().map(pair).collect());
+        let (gone, kept): (Vec<_>, Vec<_>) =
+            (old.difference(&new).copied().collect(), new.difference(&old).copied().collect());
         if !gone.is_empty() || !kept.is_empty() {
             library.restage_held(name, generation, gone, kept).map_err(failure)?;
         }
@@ -569,12 +616,21 @@ impl Window {
     /// What the rows of the record at `path` from the place `judged` read
     /// it through show now (`history::read_on`), for `seeded`; `seen`
     /// where the record ids before the seam are kept.
-    pub(super) fn read_from(path: &std::path::Path, judged: &Judged, seen: Option<&(Library, String, u64)>) -> Result<Read, String> {
+    pub(super) fn read_from(
+        path: &std::path::Path,
+        judged: &Judged,
+        seen: Option<&(Library, String, u64)>,
+    ) -> Result<Read, String> {
         let held: HashSet<u64> = judged.left.iter().copied().collect();
         Self::read_past(path, &judged.read, &held, seen)
     }
 
-    fn read_past(path: &std::path::Path, place: &Seam, held: &HashSet<u64>, seen: Option<&(Library, String, u64)>) -> Result<Read, String> {
+    fn read_past(
+        path: &std::path::Path,
+        place: &Seam,
+        held: &HashSet<u64>,
+        seen: Option<&(Library, String, u64)>,
+    ) -> Result<Read, String> {
         let (tail, events, passed) = history::read_on(path, place, held, seen, &[], false, &mut |_| {})
             .map_err(|error| error.to_string())?
             .map_err(str::to_string)?
@@ -601,7 +657,9 @@ impl Window {
     ) -> Result<Written, String> {
         let mut read = Self::read_past(path, &self.read, &self.left, seen)?;
         read.world = world;
-        self.write_on(library, signer, resident, placed, None, name, generation, expected, read).map_err(|failure| failure.message)?.map_err(str::to_string)
+        self.write_on(library, signer, resident, placed, None, name, generation, expected, read)
+            .map_err(|failure| failure.message)?
+            .map_err(str::to_string)
     }
 }
 
@@ -643,10 +701,19 @@ pub(super) async fn seed(
         Err(_) => return not("a record not read"),
     };
     let history::Onward { events, next: moved, passed, title, .. } = onward;
-    let (library, scope, directory, stood) = (library.clone(), scope.to_string(), node.world.conversation(resident), digest(kept));
+    let (library, scope, directory, stood) =
+        (library.clone(), scope.to_string(), node.world.conversation(resident), digest(kept));
     let seeded = fastctx_platform::task::blocking(move || {
         let _held = producing;
-        Window::seeded(&library, &scope, Some(&directory), stood, session, judged, Read { events, moved, passed, title, world: Vec::new() })
+        Window::seeded(
+            &library,
+            &scope,
+            Some(&directory),
+            stood,
+            session,
+            judged,
+            Read { events, moved, passed, title, world: Vec::new() },
+        )
     })
     .await;
     match seeded {
@@ -662,22 +729,27 @@ pub(super) async fn seed(
 /// What the World recorded of the conversation in `directory` past the
 /// sequence `heard`, as far as its record goes now, with the sequence it is
 /// read through; none where it is more than a window takes (`WORLD_MOST`).
-pub(super) async fn recorded_since(directory: &fastctx_types::layout::ConversationDir, heard: u64) -> Result<(u64, Option<Vec<SessionEvent>>), Failure> {
+pub(super) async fn recorded_since(
+    directory: &fastctx_types::layout::ConversationDir,
+    heard: u64,
+) -> Result<(u64, Option<Vec<SessionEvent>>), Failure> {
     let directory = directory.clone();
     fastctx_platform::task::blocking(move || -> std::io::Result<(u64, Option<Vec<SessionEvent>>)> {
         let mut fresh = Some(Vec::new());
         let (mut from, mut through) = (heard, None);
         let latest = loop {
-            let (latest, next, count) = crate::session_record::page_each(&directory, from, through, 512, &mut |_, body| {
-                if let Some(events) = &mut fresh {
-                    if events.len() >= WORLD_MOST {
-                        fresh = None;
-                    } else {
-                        events.push(serde_json::from_slice::<SessionEvent>(body).map_err(|error| error.to_string())?);
+            let (latest, next, count) =
+                crate::session_record::page_each(&directory, from, through, 512, &mut |_, body| {
+                    if let Some(events) = &mut fresh {
+                        if events.len() >= WORLD_MOST {
+                            fresh = None;
+                        } else {
+                            events
+                                .push(serde_json::from_slice::<SessionEvent>(body).map_err(|error| error.to_string())?);
+                        }
                     }
-                }
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
             through = Some(latest);
             if count == 0 || next >= latest {
                 break latest;
@@ -720,7 +792,9 @@ pub(super) async fn advance(
         left_to_the_seam(why);
         Ok(Step::Seam)
     };
-    let (Some(generation), true) = (state.held, window.stood == stood && state.session.as_deref() == Some(window.session.as_str())) else {
+    let (Some(generation), true) =
+        (state.held, window.stood == stood && state.session.as_deref() == Some(window.session.as_str()))
+    else {
         return leave("a checkpoint kept otherwise");
     };
     let directory = node.world.conversation(resident);
@@ -733,11 +807,14 @@ pub(super) async fn advance(
         (_, None) => return leave("a window too long to hold"),
     };
     let seen = seen_of(library, resident).await?;
-    let onward = match history::onward(node, resident, &window.session, &state.earlier, &window.read, window.left.clone(), seen).await {
-        Ok(Ok(onward)) => onward,
-        Ok(Err(why)) => return leave(why),
-        Err(_) => return leave("a record not read"),
-    };
+    let onward =
+        match history::onward(node, resident, &window.session, &state.earlier, &window.read, window.left.clone(), seen)
+            .await
+        {
+            Ok(Ok(onward)) => onward,
+            Ok(Err(why)) => return leave(why),
+            Err(_) => return leave("a record not read"),
+        };
     let history::Onward { events, next: moved, passed, title, kept, kept_here, end, path, .. } = onward;
     // The last record its mod saw kept: among the rows read now, or those
     // between the seam and the place — a row of its record id, or a queued
@@ -756,15 +833,33 @@ pub(super) async fn advance(
     let unread = kept.is_some() && !kept_here && kept != state.kept;
     let Some(placed) = assets::placed(node, about)? else { return leave("no scope") };
     let (hub, scope) = (placed.hub.clone(), placed.scope.clone());
-    let signer = node.assets.as_ref().map(|kept| kept.signer()).ok_or_else(|| Failure::new("no asset library is kept here"))?;
+    let signer =
+        node.assets.as_ref().map(|kept| kept.signer()).ok_or_else(|| Failure::new("no asset library is kept here"))?;
     let (written, mut window) = {
-        let (library, whose, directory, held, signer, name, expected) =
-            (library.clone(), resident.clone(), directory.clone(), producing.clone(), signer.clone(), name.to_string(), state.holding);
+        let (library, whose, directory, held, signer, name, expected) = (
+            library.clone(),
+            resident.clone(),
+            directory.clone(),
+            producing.clone(),
+            signer.clone(),
+            name.to_string(),
+            state.holding,
+        );
         let mut window = window;
         fastctx_platform::task::blocking(move || -> Result<_, Failure> {
             let _held = held;
             let read = Read { events, moved, passed, title, world: fresh };
-            let written = window.write_on(&library, signer, &whose, &placed, Some(&directory), &name, generation, expected, read)?;
+            let written = window.write_on(
+                &library,
+                signer,
+                &whose,
+                &placed,
+                Some(&directory),
+                &name,
+                generation,
+                expected,
+                read,
+            )?;
             Ok((written, window))
         })
         .await?
@@ -777,8 +872,20 @@ pub(super) async fn advance(
     // the rows past the place were given as they were made; the items
     // before it are given theirs in place, as a reading from the seam gives
     // those before its window.
-    let (runs_version, refreshed) =
-        runs_brought(node, about, library, signer, resident, &directory, producing.clone(), state.runs_version, runs_now, window.floor, written.holding).await?;
+    let (runs_version, refreshed) = runs_brought(
+        node,
+        about,
+        library,
+        signer,
+        resident,
+        &directory,
+        producing.clone(),
+        state.runs_version,
+        runs_now,
+        window.floor,
+        written.holding,
+    )
+    .await?;
     let next = Following {
         version: version.to_string(),
         unread,
@@ -804,7 +911,17 @@ pub(super) async fn advance(
     // Read again after a while that grows as it goes on unwritten (a record
     // its mod saw may never reach the file under its UUID): as the job that
     // brought it says (`brought`), not a viewer.
-    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false, on: true };
+    let produced = Produced {
+        written,
+        gone,
+        unread,
+        long_changed,
+        verified: state.verified,
+        handing: false,
+        read: false,
+        on: true,
+        waits_listing: false,
+    };
     if !holds {
         left_to_the_seam("a window too long to hold");
         return Ok(Step::Done(produced));
@@ -812,7 +929,10 @@ pub(super) async fn advance(
     let due = window.judged.elapsed() >= if window.whole { JUDGED_EVERY_WHOLE } else { JUDGED_EVERY };
     keep(resident, window);
     if due {
-        let written = fastctx_platform::disk::metadata(&path).ok().filter(|metadata| metadata.len() == end).and_then(|metadata| metadata.modified().ok());
+        let written = fastctx_platform::disk::metadata(&path)
+            .ok()
+            .filter(|metadata| metadata.len() == end)
+            .and_then(|metadata| metadata.modified().ok());
         return Ok(Step::Judge(produced, Audit { record: Some((path, end, written)), latest, runs: runs_now }));
     }
     Ok(Step::Done(produced))
@@ -861,28 +981,51 @@ mod tests {
         /// does; read whole where the seam's tail cannot be read alone.
         /// What it leaves for a window written on, and whether the seam
         /// moved or the record was read whole.
-        fn judge(&mut self, spill: &std::path::Path, path: &std::path::Path, recorded: &[SessionEvent], resident: &ResidentId) -> (Option<Judged>, bool) {
+        fn judge(
+            &mut self,
+            spill: &std::path::Path,
+            path: &std::path::Path,
+            recorded: &[SessionEvent],
+            resident: &ResidentId,
+        ) -> (Option<Judged>, bool) {
             let signer: Arc<dyn fastctx_content::v2::Signer> = Arc::new(Device);
             let turns = history::turns(recorded);
-            let accept = |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
+            let accept =
+                |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
             let began = at(0);
             let before = self.seam.offset;
             loop {
                 let _ = crate::timeline::spill::clear(spill);
-                let mut reading = kept::Reading::new(crate::timeline::spill::Spill::new(spill.to_path_buf(), "claude-a0a0")).unwrap();
+                let mut reading =
+                    kept::Reading::new(crate::timeline::spill::Spill::new(spill.to_path_buf(), "claude-a0a0")).unwrap();
                 let seen_kept = seen_in(&self.library, resident);
                 let seen = |uuids: &[String]| -> std::io::Result<HashSet<String>> {
                     let Some((library, name, generation)) = &seen_kept else { return Ok(HashSet::new()) };
                     let digests: Vec<u64> = uuids.iter().map(|uuid| history::PrefixIds::digest(uuid)).collect();
                     let held = library.digests_among(name, *generation, &digests).map_err(std::io::Error::other)?;
-                    Ok(uuids.iter().zip(&digests).filter(|(_, digest)| held.contains(digest)).map(|(uuid, _)| uuid.clone()).collect())
+                    Ok(uuids
+                        .iter()
+                        .zip(&digests)
+                        .filter(|(_, digest)| held.contains(digest))
+                        .map(|(uuid, _)| uuid.clone())
+                        .collect())
                 };
                 let mut left = Vec::new();
                 let read = reading
-                    .tail(path, &self.seam, &accept, false, &seen, &[], &history::PrefixIds::digest, &mut |_| {}, &mut |key| {
-                        left.push(history::left_key(key));
-                        Ok(())
-                    })
+                    .tail(
+                        path,
+                        &self.seam,
+                        &accept,
+                        false,
+                        &seen,
+                        &[],
+                        &history::PrefixIds::digest,
+                        &mut |_| {},
+                        &mut |key| {
+                            left.push(history::left_key(key));
+                            Ok(())
+                        },
+                    )
                     .unwrap();
                 let tail = match read {
                     Ok(tail) => tail,
@@ -896,25 +1039,72 @@ mod tests {
                 let whole = self.seam.identity.is_none();
                 let since = if whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
                 let settled = tail.seam_at.unwrap_or(since);
-                let merged: Vec<SessionEvent> = recorded.iter().filter(|event| whole || event.at >= since).cloned().collect();
+                let merged: Vec<SessionEvent> =
+                    recorded.iter().filter(|event| whole || event.at >= since).cloned().collect();
                 reading.accept("session", began, &tail.transcript).unwrap();
                 let title = tail.transcript.title.clone();
-                let problem = history::problem_note("session", &tail.transcript.problems, tail.transcript.problems_omitted);
+                let problem =
+                    history::problem_note("session", &tail.transcript.problems, tail.transcript.problems_omitted);
                 let is_told = |event: &SessionEvent| match &event.happened {
                     Happened::Titled { title: told } => event.at == began && title.as_deref() == Some(told.as_str()),
-                    Happened::Health { health, .. } => event.at == began && problem.as_deref() == Some(health.text.as_str()),
+                    Happened::Health { health, .. } => {
+                        event.at == began && problem.as_deref() == Some(health.text.as_str())
+                    }
                     _ => false,
                 };
-                let placed = reading.place(kept::Placing::Held { recorded, merged: &merged }, &mut |_| Ok(()), &NoReceipts, None, &is_told).unwrap();
+                let placed = reading
+                    .place(
+                        kept::Placing::Held { recorded, merged: &merged },
+                        &mut |_| Ok(()),
+                        &NoReceipts,
+                        None,
+                        &is_told,
+                    )
+                    .unwrap();
                 let names = placed.names.clone();
-                let host_told: Vec<Value> = placed.told.iter().map(|event| serde_json::to_value(event).unwrap()).collect();
-                let told = |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
-                let finals = finals(None, Kept::Claude { placed, early: None }.into(), "claude", &told, crate::talk::Recorded::Held(merged), false).unwrap();
+                let host_told: Vec<Value> =
+                    placed.told.iter().map(|event| serde_json::to_value(event).unwrap()).collect();
+                let told =
+                    |event: &SessionEvent| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value));
+                let finals = finals(
+                    None,
+                    Kept::Claude { placed, early: None }.into(),
+                    "claude",
+                    &told,
+                    crate::talk::Recorded::Held(merged),
+                    false,
+                )
+                .unwrap();
                 let name = assets::checkpoint(resident);
                 let generation = self.held.map_or(1, |held| held.wrapping_add(1));
-                let stood = Stood { name: name.clone(), held: self.held, told: self.told.clone(), floor: self.floor, holding: self.holding, generation };
-                let placement = place_kept(&self.library, signer, resident, &self.placed, &stood, finals, whole, false, since, settled).unwrap();
-                let digests: Vec<u64> = placement.before_seam.as_deref().unwrap_or_default().chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap())).collect();
+                let stood = Stood {
+                    name: name.clone(),
+                    held: self.held,
+                    told: self.told.clone(),
+                    floor: self.floor,
+                    holding: self.holding,
+                    generation,
+                };
+                let placement = place_kept(
+                    &self.library,
+                    signer,
+                    resident,
+                    &self.placed,
+                    &stood,
+                    finals,
+                    whole,
+                    false,
+                    since,
+                    settled,
+                )
+                .unwrap();
+                let digests: Vec<u64> = placement
+                    .before_seam
+                    .as_deref()
+                    .unwrap_or_default()
+                    .chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect();
                 if whole || !digests.is_empty() {
                     let named = seen_in(&self.library, resident).map(|(_, _, generation)| generation);
                     stage_prefix(&self.library, &prefix_name(resident), named, whole, &digests).unwrap();
@@ -926,17 +1116,28 @@ mod tests {
                 self.library.sweep_held(&name, self.held).unwrap();
                 self.seam = tail.seam.clone().unwrap_or_else(|| self.seam.clone());
                 // As `World::running`: of the turns under way, the last begun.
-                let ended: HashSet<&str> = recorded.iter().filter_map(|event| if let Happened::TurnEnded { turn, .. } = &event.happened { Some(turn.as_str()) } else { None }).collect();
+                let ended: HashSet<&str> = recorded
+                    .iter()
+                    .filter_map(|event| {
+                        if let Happened::TurnEnded { turn, .. } = &event.happened { Some(turn.as_str()) } else { None }
+                    })
+                    .collect();
                 let turn = recorded
                     .iter()
                     .filter_map(|event| match &event.happened {
-                        Happened::TurnStarted { turn } if !ended.contains(turn.as_str()) => Some((event.at, turn.clone())),
+                        Happened::TurnStarted { turn } if !ended.contains(turn.as_str()) => {
+                            Some((event.at, turn.clone()))
+                        }
                         _ => None,
                     })
                     .max_by_key(|(at, _)| *at)
                     .map(|(_, turn)| turn);
                 let judged = tail.read.map(|read| {
-                    let world = recorded.iter().filter(|event| read.latest.is_none_or(|after| event.at > after)).cloned().collect();
+                    let world = recorded
+                        .iter()
+                        .filter(|event| read.latest.is_none_or(|after| event.at > after))
+                        .cloned()
+                        .collect();
                     Judged { read, left, turn, names, whole, world }
                 });
                 let _ = crate::timeline::spill::clear(spill);
@@ -971,9 +1172,15 @@ mod tests {
         fn told(&self, recorded: &mut Vec<SessionEvent>, asked: Timestamp, done: Timestamp) {
             let turn = format!("t{}", self.turn);
             let change = |at: Timestamp, change: Value| -> SessionEvent {
-                serde_json::from_value(json!({"at": at.to_string(), "event": "changed", "turn": turn, "change": change})).unwrap()
+                serde_json::from_value(
+                    json!({"at": at.to_string(), "event": "changed", "turn": turn, "change": change}),
+                )
+                .unwrap()
             };
-            recorded.push(change(asked, json!({"kind": "model_request", "step": self.round, "model": "x", "effort": "high"})));
+            recorded.push(change(
+                asked,
+                json!({"kind": "model_request", "step": self.round, "model": "x", "effort": "high"}),
+            ));
             recorded.push(change(done, json!({"kind": "model_response", "step": self.round, "usage": null})));
         }
 
@@ -1008,7 +1215,12 @@ mod tests {
             let calls: Vec<String> = (0..choices.pick(3)).map(|call| format!("wk{round}-{call}")).collect();
             for call in &calls {
                 let at = self.time(choices);
-                row(json!({"type": "tool_use", "id": call, "name": "Bash", "input": {"command": "ls"}}), at, lines, &mut part);
+                row(
+                    json!({"type": "tool_use", "id": call, "name": "Bash", "input": {"command": "ls"}}),
+                    at,
+                    lines,
+                    &mut part,
+                );
             }
             // Its answer done once its rows are written, before the tools run.
             let done = if choices.pick(2) == 0 { at(self.clock) } else { at(self.clock) + half };
@@ -1033,8 +1245,14 @@ mod tests {
         }
 
         /// What the record and the World's record grow by at one step.
-        fn step(&mut self, choices: &mut Choices, lines: &mut Vec<String>, recorded: &mut Vec<SessionEvent>) -> &'static str {
-            let end: fastctx_types::session::TurnEnd = serde_json::from_value(json!({"how": "completed", "reason": null, "duration_ms": null})).unwrap();
+        fn step(
+            &mut self,
+            choices: &mut Choices,
+            lines: &mut Vec<String>,
+            recorded: &mut Vec<SessionEvent>,
+        ) -> &'static str {
+            let end: fastctx_types::session::TurnEnd =
+                serde_json::from_value(json!({"how": "completed", "reason": null, "duration_ms": null})).unwrap();
             if let Some(call) = self.waiting.take() {
                 let at = self.time(choices);
                 lines.push(self.result(&call, at));
@@ -1047,8 +1265,19 @@ mod tests {
                 self.clock += 2;
                 let turn = format!("t{}", self.turn);
                 let text = format!("words {}", self.turn);
-                recorded.push(SessionEvent { at: at(self.clock), happened: Happened::TurnStarted { turn: turn.clone() } });
-                recorded.push(SessionEvent { at: at(self.clock), happened: Happened::Heard { delivery: None, turn: Some(turn), from: None, text: text.clone(), message: None, notice: None } });
+                recorded
+                    .push(SessionEvent { at: at(self.clock), happened: Happened::TurnStarted { turn: turn.clone() } });
+                recorded.push(SessionEvent {
+                    at: at(self.clock),
+                    happened: Happened::Heard {
+                        delivery: None,
+                        turn: Some(turn),
+                        from: None,
+                        text: text.clone(),
+                        message: None,
+                        notice: None,
+                    },
+                });
                 let at = self.time(choices);
                 lines.push(json!({"type": "user", "uuid": format!("wp{}", self.turn), "timestamp": at, "message": {"role": "user", "content": text}}).to_string());
                 return "a turn begun";
@@ -1056,7 +1285,10 @@ mod tests {
             match choices.pick(40) {
                 0 => {
                     self.clock += 1;
-                    recorded.push(SessionEvent { at: at(self.clock), happened: Happened::TurnEnded { turn: format!("t{}", self.turn), end } });
+                    recorded.push(SessionEvent {
+                        at: at(self.clock),
+                        happened: Happened::TurnEnded { turn: format!("t{}", self.turn), end },
+                    });
                     self.open = false;
                     "a turn ended"
                 }
@@ -1066,14 +1298,23 @@ mod tests {
                     let text = format!("more {}", self.clock);
                     recorded.push(SessionEvent {
                         at: at(self.clock),
-                        happened: Happened::Heard { delivery: None, turn: Some(format!("t{}", self.turn)), from: None, text: text.clone(), message: None, notice: None },
+                        happened: Happened::Heard {
+                            delivery: None,
+                            turn: Some(format!("t{}", self.turn)),
+                            from: None,
+                            text: text.clone(),
+                            message: None,
+                            notice: None,
+                        },
                     });
                     let at = self.time(choices);
                     lines.push(json!({"type": "user", "uuid": format!("wq{}", self.clock), "timestamp": at, "message": {"role": "user", "content": text}}).to_string());
                     "words heard"
                 }
                 3 => {
-                    lines.push(json!({"type": "custom-title", "customTitle": format!("title {}", self.clock)}).to_string());
+                    lines.push(
+                        json!({"type": "custom-title", "customTitle": format!("title {}", self.clock)}).to_string(),
+                    );
                     "a title"
                 }
                 4 if self.round > 2 => {
@@ -1177,11 +1418,31 @@ mod tests {
                 let mut written = false;
                 if let Some(held) = window.as_mut() {
                     let seen = seen_in(&fast.library, &resident);
-                    match history::read_on(&path, &held.read, &held.left, seen.as_ref(), &[], false, &mut |_| {}).unwrap() {
+                    match history::read_on(&path, &held.read, &held.left, seen.as_ref(), &[], false, &mut |_| {})
+                        .unwrap()
+                    {
                         Ok(Ok((tail, events, passed))) => {
                             // With what the World recorded since the look before.
-                            let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title, world: recorded[world..].to_vec() };
-                            let wrote = held.write_on(&fast.library, signer.clone(), &resident, &fast.placed, None, &name, fast.held.unwrap(), fast.holding, read).unwrap();
+                            let read = Read {
+                                events,
+                                moved: tail.seam,
+                                passed,
+                                title: tail.transcript.title,
+                                world: recorded[world..].to_vec(),
+                            };
+                            let wrote = held
+                                .write_on(
+                                    &fast.library,
+                                    signer.clone(),
+                                    &resident,
+                                    &fast.placed,
+                                    None,
+                                    &name,
+                                    fast.held.unwrap(),
+                                    fast.holding,
+                                    read,
+                                )
+                                .unwrap();
                             written = wrote.is_ok();
                             if let Err(why) = &wrote {
                                 *why_not.entry(format!("written: {why}")).or_default() += 1;
@@ -1211,10 +1472,28 @@ mod tests {
                         Some(judged) => {
                             let held: HashSet<u64> = judged.left.iter().copied().collect();
                             let seen = seen_in(&fast.library, &resident);
-                            match history::read_on(&path, &judged.read, &held, seen.as_ref(), &[], false, &mut |_| {}).unwrap() {
+                            match history::read_on(&path, &judged.read, &held, seen.as_ref(), &[], false, &mut |_| {})
+                                .unwrap()
+                            {
                                 Ok(Ok((tail, events, passed))) => {
-                                    let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title, world: Vec::new() };
-                                    match Window::seeded(&fast.library, &fast.placed.scope, None, [0; 32], "session".into(), judged, read).unwrap() {
+                                    let read = Read {
+                                        events,
+                                        moved: tail.seam,
+                                        passed,
+                                        title: tail.transcript.title,
+                                        world: Vec::new(),
+                                    };
+                                    match Window::seeded(
+                                        &fast.library,
+                                        &fast.placed.scope,
+                                        None,
+                                        [0; 32],
+                                        "session".into(),
+                                        judged,
+                                        read,
+                                    )
+                                    .unwrap()
+                                    {
                                         Ok(held) => {
                                             window = Some(held);
                                             seeded += 1;
@@ -1229,7 +1508,11 @@ mod tests {
                         None => *why_not.entry("seeded: no place read through".into()).or_default() += 1,
                     }
                 }
-                assert_eq!(all(&fast.library), all(&slow.library), "round {round}, step {step}: {grew}, written on: {written}");
+                assert_eq!(
+                    all(&fast.library),
+                    all(&slow.library),
+                    "round {round}, step {step}: {grew}, written on: {written}"
+                );
                 if fast.seam.offset == slow.seam.offset {
                     assert_eq!(
                         fast.library.held_items(&name, fast.held.unwrap()).unwrap(),
@@ -1241,7 +1524,10 @@ mod tests {
             let _ = fastctx_platform::disk::remove_dir_all(&dir);
         }
         let _ = fastctx_platform::disk::remove_dir_all(&base);
-        assert!(on >= 400 && seam >= 100 && seeded >= 60, "{on} written on, {seam} left to the seam, {seeded} windows held: {met:?}, {why_not:?}");
+        assert!(
+            on >= 400 && seam >= 100 && seeded >= 60,
+            "{on} written on, {seam} left to the seam, {seeded} windows held: {met:?}, {why_not:?}"
+        );
         assert!(met.get("answers").is_some_and(|(on, _)| *on >= 300), "{met:?}");
         assert!(met.get("a note of the World's").is_some_and(|(on, _)| *on >= 5), "{met:?}");
         // Told later than the place is, it is written on; told of a time

@@ -49,7 +49,6 @@ pub const MISSING_RECORD: &str = "the project record is missing";
 pub const INDEX_ACCESS_ENDED: &str = "project access ended while its index was read";
 pub const LEGACY: &str = "This journal interface was retired; use the history files listed in your context.";
 
-
 pub const HEADER_QUOTE: &str = "a quoted header field needs its closing quote";
 
 pub fn header_value(key: &str) -> String {

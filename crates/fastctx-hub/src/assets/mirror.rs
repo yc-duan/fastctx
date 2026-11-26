@@ -119,19 +119,20 @@ fn conversation_scope(
     opened: jiff::Timestamp,
     resident: &str,
 ) -> Result<Option<String>, String> {
-    let ending = format!("/{resident}");
+    let resident = resident.to_string();
     // Only the account's own, or a body's: another's that ends the same
     // holds none of these up (AS06).
     let owner = super::owners::Owner::Account(account.to_string(), opened.as_millisecond()).key();
     let keys: Vec<String> = assets
         .control
         .read_now(move |c| {
+            // By the last part of the key, which the index has.
             let mut statement = c.prepare_cached(
-                "SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 AND (owner = ?3 OR owner LIKE 'body:%') ORDER BY key",
+                "SELECT key FROM asset_scopes WHERE substr(key, length(rtrim(key, replace(key, '/', ''))) + 1) = ?1
+                 AND key != ?1 AND (owner = ?2 OR owner LIKE 'body:%') ORDER BY key",
             )?;
-            let rows = statement.query_map(fastctx_storage::rusqlite::params![ending, ending.len() as i64, owner], |row| {
-                row.get::<_, String>(0)
-            })?;
+            let rows = statement
+                .query_map(fastctx_storage::rusqlite::params![resident, owner], |row| row.get::<_, String>(0))?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .map_err(|error| error.to_string())?;
@@ -528,9 +529,13 @@ pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
         };
         write_all(&hub, account, opened, paths).await;
     }
-    // The projects' ledgers in their readers' records, looked at again: a
-    // reader's machines may have changed (§29, 2.4).
-    super::ledger_views::look(&hub);
+    // The projects' ledgers in their readers' records, looked at again when
+    // a look failed. A reader's machines that changed (§29, 2.4) are looked
+    // at as the directory changes (`ledger_views::directory_moved`), not
+    // every minute for nothing (codex-570f5b89).
+    if super::ledger_views::take_failed() {
+        super::ledger_views::look(&hub);
+    }
     super::told::again(&hub).await;
 }
 

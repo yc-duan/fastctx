@@ -60,7 +60,30 @@ pub(crate) fn current(node: &Node, resident: &fastctx_types::ResidentId) -> Resu
 }
 
 /// Checks access before fetching content, and again after the fetch.
+///
+/// What is here answers first: the directory as its hub last told it, which
+/// follows the hub's changes on its own, and the project's record as the
+/// ledger's sync last took it. Only a project this machine has no record of
+/// yet, or one its accounts may not use by the directory here, has the hub
+/// asked again: someone waiting to start a colleague, or a `w`, does not
+/// wait on the hub's directory and ledger first.
 pub(crate) async fn ready(node: &Arc<Node>, acting: &Acting, town: &TownName) -> Result<(), Failure> {
+    // Only while the project's hub is heard now: a machine cut off from it
+    // does not go on by what it last told, which may have been taken back
+    // meanwhile (codex-580b4d87).
+    let heard = crate::ledger::names::place(&node.world, town)
+        .ok()
+        .flatten()
+        .and_then(|place| node.link_of(&place.hub))
+        .is_some_and(|link| matches!(link.status(), fastctx_net::link::Status::Online { .. }) && link.view_current());
+    if heard
+        && check(node, acting, town).is_ok()
+        && crate::ledger::query::available(node, Some(town)).await.is_ok_and(|records| records.contains_key(town))
+        // Taken back while the record was looked for, it is not used.
+        && check(node, acting, town).is_ok()
+    {
+        return Ok(());
+    }
     let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
     let links = node.links();
     let known =

@@ -95,7 +95,11 @@ pub(crate) fn check(
     let (current, live, reads) = {
         let owners = hub.account_records.owners.lock().expect("never poisoned");
         let current = owners.of_record(owner, opened, fastctx_types::owned_records::KIND, resident).is_some();
-        (current, owners.live(directory, &identity), owners.reads(directory, &access.actor, &identity, &access.conversation))
+        (
+            current,
+            owners.live(directory, &identity),
+            owners.reads(directory, &access.actor, &identity, &access.conversation),
+        )
     };
     if !current {
         return Err("this conversation was deleted".into());
@@ -234,7 +238,8 @@ pub(crate) async fn ask(
         Request::Authorize { conversation, reader } => {
             let (access, opened) = resolve(hub, &account, &conversation)?;
             let store = hub.store();
-            let identity = (access.conversation.account.clone(), opened, access.conversation.address.resident.to_string());
+            let identity =
+                (access.conversation.account.clone(), opened, access.conversation.address.resident.to_string());
             let allowed = hub.account_records.owners.lock().expect("never poisoned").reads(
                 &store.book.directory,
                 &reader,
@@ -251,12 +256,8 @@ pub(crate) async fn ask(
         Request::List => {
             let store = hub.store();
             let directory = &store.book.directory;
-            let conversations = hub
-                .account_records
-                .owners
-                .lock()
-                .expect("never poisoned")
-                .readable(directory, &account);
+            let conversations =
+                hub.account_records.owners.lock().expect("never poisoned").readable(directory, &account);
             Response::Conversations { conversations }
         }
         Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
@@ -288,12 +289,18 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let mut catalog = fastctx_types::history::Catalog {
-                documents: records
-                    .history(access.conversation.address.resident.as_str())
-                    .filter_map(|entry| entry.history.clone())
-                    .collect(),
-            };
+            let mut catalog = fastctx_types::history::Catalog::default();
+            for entry in records.history(access.conversation.address.resident.as_str()) {
+                match &entry.history {
+                    Some(revision) => catalog.documents.push(revision.clone()),
+                    None if entry.metadata.deleted => {
+                        if let Some((_, name)) = entry.metadata.key.split_once('/') {
+                            catalog.deleted.insert(name.to_owned(), entry.metadata.version);
+                        }
+                    }
+                    None => {}
+                }
+            }
             catalog.sort();
             Response::Catalog { catalog }
         }
@@ -306,10 +313,13 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let current = records
-                .entries
-                .get(&(kind.clone(), record_key_name.clone()))
-                .is_some_and(|entry| entry.metadata.version == version);
+            let entry = records.entries.get(&(kind.clone(), record_key_name.clone()));
+            // A history document deleted for good has no version to read, even
+            // while what was archived of it is still being let go.
+            if kind == fastctx_types::history::RECORD_KIND && entry.is_none_or(|entry| entry.metadata.deleted) {
+                return Err("the history document or revision does not exist".into());
+            }
+            let current = entry.is_some_and(|entry| entry.metadata.version == version);
             let path = if current {
                 slot.path(&kind, &record_key_name)
             } else {
@@ -412,7 +422,8 @@ pub(crate) fn legacy_plan(
     if owners.of_record(account, opened, fastctx_types::plan::KIND, resident).is_some() {
         return Ok(());
     }
-    if owners.readable(directory, account).iter().any(|conversation| conversation.address.resident.as_str() == resident) {
+    if owners.readable(directory, account).iter().any(|conversation| conversation.address.resident.as_str() == resident)
+    {
         return Err("update this client to access a shared conversation's plan".into());
     }
     Ok(())

@@ -78,7 +78,7 @@ pub(crate) async fn remote(
         if hub.is_some_and(|hub| link.hub_name() != *hub) || account.is_some_and(|account| *account != scope.account) {
             continue;
         }
-        link.refresh().await.map_err(Failure::new)?;
+        link.refresh_unless_current().await.map_err(Failure::new)?;
         let view = link.view();
         if view.admits(&view.me, &scope.account, &address.machine, Purpose::Echo).is_ok() {
             choices.push(scope);

@@ -85,7 +85,10 @@ impl Outgoing {
         let (queued, receiving) = queue::bounded(QUEUED, QUEUED_BYTES, "link.outgoing");
         let (first, first_receiving) = mpsc::unbounded_channel();
         let (soon, soon_receiving) = queue::bounded(SOON, SOON_BYTES, "link.outgoing.soon");
-        (Self { queued, first, soon }, Writing { queued: receiving, first: first_receiving, soon: soon_receiving, soon_run: 0 })
+        (
+            Self { queued, first, soon },
+            Writing { queued: receiving, first: first_receiving, soon: soon_receiving, soon_run: 0 },
+        )
     }
 
     /// Sends what a person waits on ahead of letters and large answers; when

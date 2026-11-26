@@ -84,6 +84,9 @@ pub(super) fn check(
                 _ => {}
             }
         }
+        // An account's own model collaboration: who may write it is all, and
+        // the catalog edit checks it again.
+        Change::Collab { .. } => {}
         _ => return Err("this management change is not submitted work".into()),
     }
     Ok(())

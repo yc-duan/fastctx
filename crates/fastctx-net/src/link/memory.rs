@@ -17,7 +17,7 @@ impl Link {
         enabled: Option<bool>,
     ) -> Result<fastctx_types::memory::Settings, String> {
         self.memory_supported()?;
-        self.refresh().await?;
+        self.refresh_unless_current().await?;
         let mut profile = self.profile_read(account)?.profile;
         if let Some(enabled) = enabled {
             let answer = self

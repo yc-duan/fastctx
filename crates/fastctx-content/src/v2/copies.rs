@@ -231,6 +231,14 @@ impl Library {
     pub fn keys_ending(&self, tail: &str) -> Result<Vec<String>> {
         let tail = tail.to_string();
         Ok(self.database().read_now(move |db| {
+            if let Some(last) = last_part(&tail) {
+                let mut statement = db.prepare_cached(
+                    "SELECT key FROM scopes WHERE substr(key, length(rtrim(key, replace(key, '/', ''))) + 1) = ?1
+                     AND length(key) > length(?1) ORDER BY key",
+                )?;
+                let rows = statement.query_map(params![last], |row| row.get(0))?;
+                return Ok(rows.collect::<std::result::Result<_, _>>()?);
+            }
             let mut statement = db.prepare_cached(
                 "SELECT key FROM scopes
                  WHERE length(key) > length(?1) AND substr(key, length(key) - length(?1) + 1) = ?1
@@ -250,13 +258,25 @@ impl Library {
     pub fn scopes_ending(&self, tail: &str) -> Result<Vec<HeldScope>> {
         let tail = tail.to_string();
         Ok(self.database().read_now(move |db| {
-            let mut statement = db.prepare_cached(
-                "SELECT key, holding, pulled, allowed, hub, description, readers FROM scopes
-                 WHERE state = 'live' AND holding IS NOT NULL AND length(key) > length(?1)
-                   AND (?1 = '' OR substr(key, length(key) - length(?1) + 1) = ?1)
-                 ORDER BY key",
-            )?;
-            let rows = statement.query_map(params![tail], |row| {
+            // A tail of one part is looked up by its index.
+            let (sql, wanted) = match last_part(&tail) {
+                Some(last) => (
+                    "SELECT key, holding, pulled, allowed, hub, description, readers FROM scopes
+                     WHERE substr(key, length(rtrim(key, replace(key, '/', ''))) + 1) = ?1
+                       AND state = 'live' AND holding IS NOT NULL AND length(key) > length(?1)
+                     ORDER BY key",
+                    last.to_string(),
+                ),
+                None => (
+                    "SELECT key, holding, pulled, allowed, hub, description, readers FROM scopes
+                     WHERE state = 'live' AND holding IS NOT NULL AND length(key) > length(?1)
+                       AND (?1 = '' OR substr(key, length(key) - length(?1) + 1) = ?1)
+                     ORDER BY key",
+                    tail.clone(),
+                ),
+            };
+            let mut statement = db.prepare_cached(sql)?;
+            let rows = statement.query_map(params![wanted], |row| {
                 Ok(HeldScope {
                     key: row.get(0)?,
                     holding: row.get(1)?,
@@ -270,4 +290,11 @@ impl Library {
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })?)
     }
+}
+
+/// The last part of a key that `tail` asks for alone: `/<part>`, the part
+/// holding no `/` and not empty; none for any other tail.
+fn last_part(tail: &str) -> Option<&str> {
+    let part = tail.strip_prefix('/')?;
+    (!part.is_empty() && !part.contains('/')).then_some(part)
 }

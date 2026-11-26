@@ -58,6 +58,16 @@ pub(crate) async fn history_restore(
     saved(&shell, HistoryCall::Restore { scope, name, version }).await
 }
 
+#[fastctx_gui_command::command]
+pub(crate) async fn history_delete(
+    shell: tauri::State<'_, Shell>,
+    scope: Scope,
+    name: String,
+    expected: u64,
+) -> Result<HistoryRevision, String> {
+    saved(&shell, HistoryCall::Delete { scope, name, expected }).await
+}
+
 async fn saved(shell: &Shell, request: HistoryCall) -> Result<HistoryRevision, String> {
     match shell.world().history(request).await.map_err(|error| error.to_string())? {
         HistoryReply::Saved { revision } => Ok(*revision),

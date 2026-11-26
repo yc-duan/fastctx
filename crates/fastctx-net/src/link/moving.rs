@@ -15,7 +15,7 @@ impl Link {
         let changes = !matches!(request, HubMoveRequest::Targets | HubMoveRequest::Status);
         // An earlier hub reads the question as a broken frame and ends the
         // session; the view says whether it takes it.
-        self.inner.refresh().await?;
+        self.refresh_unless_current().await?;
         if !self.inner.view().moving {
             return Err("this hub runs a fastctx that cannot be moved; it moves once it runs this one".to_string());
         }

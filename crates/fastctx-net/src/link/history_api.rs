@@ -77,17 +77,46 @@ impl Link {
                 Ok(HistoryReply::Saved { revision: Box::new(revision) })
             }
             HistoryCall::Restore { name, version, .. } => {
-                let document = target.read(&name, Some(version)).await?;
+                // Only a document that stands is restored, over the version it
+                // stands at: one deleted for good meanwhile is not brought back
+                // by a version read before.
                 let expected = target
                     .catalog()
                     .await?
                     .documents
                     .into_iter()
                     .find(|revision| revision.name == name)
-                    .map(|revision| revision.version);
+                    .map(|revision| revision.version)
+                    .ok_or_else(|| fastctx_types::history::gone(&name))?;
+                let document = target.read(&name, Some(version)).await?;
                 let revision = target
-                    .save(&name, document.text, expected, false, author.ok_or("history writes require attribution")?)
+                    .save(
+                        &name,
+                        document.text,
+                        Some(expected),
+                        false,
+                        author.ok_or("history writes require attribution")?,
+                    )
                     .await?;
+                Ok(HistoryReply::Saved { revision: Box::new(revision) })
+            }
+            HistoryCall::Delete { name, expected, .. } => {
+                // A hub before deletion would keep it as taken down, its
+                // versions still read: it is not told as deleted.
+                if !self.view().history_deletion {
+                    return Err(fastctx_types::history::words::DELETION_UNSUPPORTED.into());
+                }
+                let current = target
+                    .catalog()
+                    .await?
+                    .documents
+                    .into_iter()
+                    .find(|revision| revision.name == name)
+                    .ok_or("there is no such history document to delete")?;
+                if current.version != expected {
+                    return Err(fastctx_types::history::conflict(Some(current.version)));
+                }
+                let revision = target.delete(&current, author.ok_or("history writes require attribution")?).await?;
                 Ok(HistoryReply::Saved { revision: Box::new(revision) })
             }
         }
@@ -95,6 +124,25 @@ impl Link {
 }
 
 impl Target<'_> {
+    /// Deletes for good the document `current` is the latest revision of: a
+    /// project's by a revision that deletes it, its ledger keeping what was
+    /// written before; a conversation's by deleting its record with every
+    /// version of it.
+    async fn delete(&self, current: &HistoryRevision, author: Author) -> Result<HistoryRevision, String> {
+        match &self.scope {
+            Source::Project(town) => {
+                let (revision, files) =
+                    crate::topic_history::deletion_files(&current.name, &current.description, current.version, author)?;
+                let entry = self.link.entry(town, None, files);
+                self.link.history_write(self.account, town, self.link.sign_entry(&entry)).await?;
+                Ok(revision)
+            }
+            Source::Conversation(address) => {
+                self.link.conversation_history_delete(self.account, address, current, author).await
+            }
+        }
+    }
+
     async fn catalog(&self) -> Result<Catalog, String> {
         match &self.scope {
             Source::Project(town) => {
@@ -127,6 +175,11 @@ impl Target<'_> {
     ) -> Result<HistoryRevision, String> {
         match &self.scope {
             Source::Project(town) => {
+                // A name deleted for good is written again from its deletion.
+                let expected = match expected {
+                    Some(version) => Some(version),
+                    None => self.catalog().await?.deleted.get(name).copied(),
+                };
                 let (revision, files) =
                     crate::topic_history::revision_files(name, &text, expected, retired, author, None)?;
                 let entry = self.link.entry(town, None, files);

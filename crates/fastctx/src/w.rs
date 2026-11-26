@@ -47,11 +47,12 @@ pub fn run(mut args: WArgs) -> anyhow::Result<()> {
         ResidentId::try_from(id).is_ok() || JobId::try_from(id).is_ok()
     };
     let sentinel_names: Vec<_> = args.names.iter().filter(|name| sentinels::named(name)).cloned().collect();
-    let overview = args.names.is_empty() || (args.names.len() == 1 && !is_id(&args.names[0]));
     if !sentinel_names.is_empty() && let Some(client) = &client {
         anyhow::ensure!(client.sentinels, "upgrade {} to inspect sentinels", client.machine);
     }
-    let (sentinel_rows, sentinel_errors) = if (overview || !sentinel_names.is_empty()) && let Some(client) = &mut client {
+    // Looked up by their ids, the sentinels are listed first; for the
+    // overview, beside the rest (below).
+    let (mut sentinel_rows, mut sentinel_errors) = if !sentinel_names.is_empty() && let Some(client) = &mut client {
         sentinels::list(&runtime, client)?
     } else { (Vec::new(), Vec::new()) };
     if !sentinel_names.is_empty() {
@@ -72,10 +73,33 @@ pub fn run(mut args: WArgs) -> anyhow::Result<()> {
         // Keep the owners of unattended jobs available to the renderer, while
         // the default presentation still contains only current work.
         let who = if let Some(client) = &mut client {
-            match runtime.block_on(client.call(Call::Who { all: true, town, since }))? {
+            // The sentinels are listed beside it, on a connection of their
+            // own: neither waits for the other.
+            let mut lister = if sentinel_names.is_empty() && client.sentinels {
+                runtime.block_on(Client::connect(world.dir(), fastctx_client::command_peer()?)).ok()
+            } else {
+                None
+            };
+            let (who, listed) = runtime.block_on(async {
+                let listing = async {
+                    match lister.as_mut() {
+                        Some(lister) => Some(sentinels::listed(lister).await),
+                        None => None,
+                    }
+                };
+                tokio::join!(client.call(Call::Who { all: true, town, since }), listing)
+            });
+            let who = match who? {
                 Reply::Who(reply) => reply,
                 other => anyhow::bail!("the node answered something other than activity: {other:?}"),
+            };
+            match listed {
+                Some(listed) => (sentinel_rows, sentinel_errors) = listed?,
+                // Without a second connection, after it.
+                None if sentinel_names.is_empty() => (sentinel_rows, sentinel_errors) = sentinels::list(&runtime, client)?,
+                None => {}
             }
+            who
         } else {
             fastctx_node::activity::who(world.dir(), town, true, since, you.clone())?
         };

@@ -73,7 +73,7 @@ pub(super) async fn keep(
     fastctx_types::profile::name_of(&name)?;
     super::process::validate(&server)?;
     let link = node.link_of(hub).ok_or("the account's hub is no longer joined")?;
-    link.refresh().await?;
+    link.refresh_unless_current().await?;
     let _one = node.mcp_keeping.lock().expect("never poisoned");
     let view = link.view();
     let profile =

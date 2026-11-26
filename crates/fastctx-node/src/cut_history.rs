@@ -90,7 +90,9 @@ impl Kept {
     /// The segment at `at` of the cut. Call on a thread that may block.
     fn segment(&self, at: usize) -> std::io::Result<Segment> {
         match &self.segments {
-            Segments::Held(segments) => segments.get(at).cloned().ok_or_else(|| std::io::Error::other("no such segment")),
+            Segments::Held(segments) => {
+                segments.get(at).cloned().ok_or_else(|| std::io::Error::other("no such segment"))
+            }
             Segments::Disk(file) => file.read(at),
         }
     }
@@ -201,7 +203,10 @@ impl Writing {
     /// its reading began in (`holding`): one of an earlier holding is not
     /// begun.
     pub fn create(world: &Path, epoch: u64) -> std::io::Result<Self> {
-        let name = format!("{:032x}.segments", u128::from_le_bytes(fastctx_net::sign::random::<16>().map_err(std::io::Error::other)?));
+        let name = format!(
+            "{:032x}.segments",
+            u128::from_le_bytes(fastctx_net::sign::random::<16>().map_err(std::io::Error::other)?)
+        );
         let dir = cuts_dir(world)?;
         let mut cuts = cuts();
         if cuts.epoch != epoch {
@@ -263,7 +268,13 @@ pub(crate) struct CutHistory {
 }
 
 impl CutHistory {
-    pub fn new(at: Mark, version: String, cut: Arc<Kept>, revision: Option<u64>, snapshots: Vec<Arc<crate::watch::Marked>>) -> Self {
+    pub fn new(
+        at: Mark,
+        version: String,
+        cut: Arc<Kept>,
+        revision: Option<u64>,
+        snapshots: Vec<Arc<crate::watch::Marked>>,
+    ) -> Self {
         let bytes = cut.outline.sizes.iter().sum::<usize>()
             + cut.outline.bytes()
             + snapshots.iter().map(|marked| fastctx_net::watch_queue::event_size(&marked.event).0).sum::<usize>();
@@ -273,7 +284,11 @@ impl CutHistory {
 
 /// What a viewer is sent of `cut` as `held` holds it, named `version`: each
 /// piece read as it is sent (`crate::talk::OpeningPiece`).
-pub(crate) fn pieces(cut: &Arc<Kept>, held: &fastctx_types::session::held::Held, version: String) -> Vec<crate::talk::OpeningPiece> {
+pub(crate) fn pieces(
+    cut: &Arc<Kept>,
+    held: &fastctx_types::session::held::Held,
+    version: String,
+) -> Vec<crate::talk::OpeningPiece> {
     fastctx_net::history::plan(&cut.outline, held, version)
         .into_iter()
         .map(|planned| match planned {
@@ -397,7 +412,14 @@ mod tests {
     fn words(at: i64, text: &str, turn: Option<&str>) -> SessionEvent {
         SessionEvent {
             at: jiff::Timestamp::from_second(1_800_000_000 + at).unwrap(),
-            happened: Happened::Heard { delivery: None, turn: turn.map(str::to_string), from: None, text: text.into(), message: None, notice: None },
+            happened: Happened::Heard {
+                delivery: None,
+                turn: turn.map(str::to_string),
+                from: None,
+                text: text.into(),
+                message: None,
+                notice: None,
+            },
         }
     }
 

@@ -61,7 +61,13 @@ fn live(directory: &Directory, machine: &MachineName) -> BTreeSet<String> {
     found
         .home
         .iter()
-        .chain(directory.shares.iter().filter(|share| share.machine == machine && share.active()).map(|share| &share.account))
+        .chain(
+            directory
+                .shares
+                .iter()
+                .filter(|share| share.machine == machine && share.active())
+                .map(|share| &share.account),
+        )
         .filter_map(|account| member(directory, account))
         .collect()
 }
@@ -108,7 +114,8 @@ impl Bodies {
         let rows: Vec<(String, String, String, String)> = self
             .control
             .read_now(|c| {
-                let mut statement = c.prepare_cached("SELECT opener, opened, resident, body FROM asset_body_conversations")?;
+                let mut statement =
+                    c.prepare_cached("SELECT opener, opened, resident, body FROM asset_body_conversations")?;
                 let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
                 Ok(rows.collect::<std::result::Result<_, _>>()?)
             })
@@ -138,7 +145,12 @@ impl Bodies {
 
     /// Every opener, as opened, of a conversation described into a body.
     pub(crate) fn conversation_openers(&self) -> BTreeSet<(fastctx_types::AccountName, jiff::Timestamp)> {
-        self.conversations.lock().expect("body conversations").keys().map(|(opener, opened, _)| (opener.clone(), *opened)).collect()
+        self.conversations
+            .lock()
+            .expect("body conversations")
+            .keys()
+            .map(|(opener, opened, _)| (opener.clone(), *opened))
+            .collect()
     }
 
     /// The opener `opener` as opened at the millisecond `at`, of a
@@ -156,7 +168,8 @@ impl Bodies {
     /// account it is: never one locked.
     pub(crate) fn member(&self, directory: &Directory, actor: &fastctx_types::AccountName, body: &str) -> bool {
         let Some(found) = directory.account(actor).filter(|found| !found.locked) else { return false };
-        self.members(directory, body).is_ok_and(|members| members.contains(&format!("{actor}@{}", found.opened.as_millisecond())))
+        self.members(directory, body)
+            .is_ok_and(|members| members.contains(&format!("{actor}@{}", found.opened.as_millisecond())))
     }
 
     /// Keeps that the conversation `resident` `opener` opened at `opened` is
@@ -168,13 +181,21 @@ impl Bodies {
         opened: jiff::Timestamp,
         resident: &str,
     ) -> fastctx_storage::Result<()> {
-        c.prepare_cached("INSERT OR IGNORE INTO asset_body_conversations (opener, opened, resident, body) VALUES (?1, ?2, ?3, ?4)")?
-            .execute(params![opener.as_str(), opened.as_nanosecond().to_string(), resident, body])?;
+        c.prepare_cached(
+            "INSERT OR IGNORE INTO asset_body_conversations (opener, opened, resident, body) VALUES (?1, ?2, ?3, ?4)",
+        )?
+        .execute(params![opener.as_str(), opened.as_nanosecond().to_string(), resident, body])?;
         Ok(())
     }
 
     /// The same, as it is now kept, in memory.
-    pub(crate) fn kept_conversation(&self, body: &str, opener: &fastctx_types::AccountName, opened: jiff::Timestamp, resident: &str) {
+    pub(crate) fn kept_conversation(
+        &self,
+        body: &str,
+        opener: &fastctx_types::AccountName,
+        opened: jiff::Timestamp,
+        resident: &str,
+    ) {
         self.conversations
             .lock()
             .expect("body conversations")
@@ -207,7 +228,11 @@ impl Bodies {
         let id = body.to_string();
         let kept = self
             .control
-            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_bodies WHERE id = ?1")?.query_row([&id], |_| Ok(())).optional()?))
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT 1 FROM asset_bodies WHERE id = ?1")?
+                    .query_row([&id], |_| Ok(()))
+                    .optional()?)
+            })
             .map_err(io::Error::other)?;
         if kept.is_some() {
             return Ok(());
@@ -255,11 +280,17 @@ impl Bodies {
                 changes.push(BodyChange { id, machine, key: None, members: now });
             }
         }
-        let shared: BTreeSet<&MachineName> = directory.shares.iter().filter(|share| share.active()).map(|share| &share.machine).collect();
+        let shared: BTreeSet<&MachineName> =
+            directory.shares.iter().filter(|share| share.active()).map(|share| &share.machine).collect();
         for member in directory.members.iter().filter(|member| shared.contains(&member.name)) {
             let Some(id) = body_of(directory, &member.name).filter(|id| !known.contains(id)) else { continue };
             let members = serde_json::to_string(&live(directory, &member.name)).map_err(io::Error::other)?;
-            changes.push(BodyChange { id, machine: member.name.to_string(), key: Some(member.key.to_string()), members });
+            changes.push(BodyChange {
+                id,
+                machine: member.name.to_string(),
+                key: Some(member.key.to_string()),
+                members,
+            });
         }
         Ok(changes)
     }
@@ -271,9 +302,7 @@ impl Bodies {
         if changes.is_empty() {
             return Ok(());
         }
-        self.control
-            .write_now(256 * changes.len(), move |c| apply(c, &changes))
-            .map_err(io::Error::other)
+        self.control.write_now(256 * changes.len(), move |c| apply(c, &changes)).map_err(io::Error::other)
     }
 
     /// Whether `machine`, as `directory` has it now, is the machine `body`
@@ -304,7 +333,9 @@ impl Bodies {
         let machine: Option<String> = self
             .control
             .read_now(move |c| {
-                Ok(c.prepare_cached("SELECT machine FROM asset_bodies WHERE id = ?1")?.query_row([&id], |row| row.get(0)).optional()?)
+                Ok(c.prepare_cached("SELECT machine FROM asset_bodies WHERE id = ?1")?
+                    .query_row([&id], |row| row.get(0))
+                    .optional()?)
             })
             .map_err(io::Error::other)?;
         Ok(machine.and_then(|machine| MachineName::try_from(machine).ok()))
@@ -358,7 +389,11 @@ fn members_now(directory: &Directory, body: &str, machine: String, members: &str
         return Ok(live(directory, &name));
     }
     let frozen: BTreeSet<String> = serde_json::from_str(members).map_err(io::Error::other)?;
-    let alive: BTreeSet<String> = directory.accounts.iter().map(|account| format!("{}@{}", account.name, account.opened.as_millisecond())).collect();
+    let alive: BTreeSet<String> = directory
+        .accounts
+        .iter()
+        .map(|account| format!("{}@{}", account.name, account.opened.as_millisecond()))
+        .collect();
     Ok(frozen.intersection(&alive).cloned().collect())
 }
 

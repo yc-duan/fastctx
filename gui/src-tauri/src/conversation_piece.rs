@@ -72,6 +72,12 @@ pub(crate) enum Piece {
     Asked {
         event: Box<serde_json::value::RawValue>,
     },
+    /// What the turn is doing as it happens, ahead of its timeline: an item
+    /// begun or changed, its words as they are written, an item ended. The
+    /// page shows it until the timeline's own record of that item comes.
+    Live {
+        event: Box<serde_json::value::RawValue>,
+    },
     /// The watch is over: the node ended it, or the connection broke.
     Ended {
         error: Option<String>,

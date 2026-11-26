@@ -23,6 +23,25 @@ pub(crate) fn here(node: &Node, owner: &Address) -> String {
 /// other fan-outs ask (`fastctx_net::around`).
 const ASKING_AT_ONCE: usize = 32;
 
+/// How long a machine's answer stands for a conversation's listing of its
+/// tools: a session started again, or its tools listed again, does not ask
+/// every machine again (`descriptions`). Not longer: a scratch directory
+/// left unused is cleared there in time, and made again when asked.
+const KNOWN_FOR: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Each conversation's scratch directory on each machine, as it answered,
+/// and when.
+type Known = std::collections::HashMap<(ResidentId, String), (String, std::time::Instant)>;
+static KNOWN: std::sync::LazyLock<std::sync::Mutex<Known>> = std::sync::LazyLock::new(Default::default);
+
+fn known(id: &ResidentId, machine: &str) -> Option<String> {
+    let known = KNOWN.lock().expect("never poisoned");
+    known
+        .get(&(id.clone(), machine.to_string()))
+        .filter(|(_, at)| at.elapsed() < KNOWN_FOR)
+        .map(|(path, _)| path.clone())
+}
+
 /// How long one machine is given to say, waiting for its turn to be asked
 /// and for its hub included: it is then told as one that gave no answer, and
 /// its path comes with its first reply (`observed`). They are asked for a
@@ -61,13 +80,22 @@ pub(crate) async fn descriptions(
                 if !link.view().member(&written.name).is_some_and(|member| member.online) {
                     return Err(words::OFFLINE.into());
                 }
+                // May still be used, and online: as it answered lately.
+                if let Some(path) = known(&owner.resident, &machine) {
+                    return Ok(path);
+                }
+                let resident = owner.resident.clone();
                 match link
                     .call(&written.name, &account, Purpose::Hands, RemoteCall::Scratch { owner })
                     .await
                     .map_err(|error| error.to_string())?
                     .map_err(|error| error.message)?
                 {
-                    RemoteReply::Scratch { path } => Ok(path),
+                    RemoteReply::Scratch { path } => {
+                        let key = (resident, machine.clone());
+                        KNOWN.lock().expect("never poisoned").insert(key, (path.clone(), std::time::Instant::now()));
+                        Ok(path)
+                    }
                     _ => Err(words::WRONG_REPLY.into()),
                 }
             })

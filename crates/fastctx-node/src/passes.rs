@@ -73,7 +73,8 @@ where
             }
         })
     };
-    node.durable_jobs.register(Kind { name: pass.name, at_once: 1, within: pass.within, tries: 5 }, Arc::new(run));
+    node.durable_jobs
+        .register(Kind { name: pass.name, at_once: 1, within: pass.within, tries: 5, ready: None }, Arc::new(run));
     ask(node, pass.name);
 }
 

@@ -31,7 +31,7 @@ async fn remote(node: &Arc<Node>, address: &Address, town: &TownName) -> Result<
     let mut choices = Vec::new();
     for account in accounts {
         let Some(link) = node.link_of(&account.hub) else { continue };
-        link.refresh().await.map_err(Failure::new)?;
+        link.refresh_unless_current().await.map_err(Failure::new)?;
         let view = link.view();
         if view.project_named(&account.account, town).is_some()
             && view.admits(&view.me, &account.account, &address.machine, Purpose::Echo).is_ok()

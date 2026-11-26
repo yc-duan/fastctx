@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS asset_scopes (
     source TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
+-- A scope by the last part of its key, a conversation's id: its scopes are
+-- found without reading every one (mirror, deletion).
+CREATE INDEX IF NOT EXISTS asset_scopes_by_last ON asset_scopes (substr(key, length(rtrim(key, replace(key, '/', ''))) + 1));
 ";
 
 /// Brings a control database from before scopes were numbered up to them
@@ -89,7 +92,9 @@ fn identity(directory: &Indexed<'_>, key: &str) -> Option<String> {
         }
         // A project is its town, whoever owns it now: a project handed over
         // stays itself.
-        ("project", town) => directory.all.projects.iter().any(|project| project.town.to_string() == town).then(|| town.to_string()),
+        ("project", town) => {
+            directory.all.projects.iter().any(|project| project.town.to_string() == town).then(|| town.to_string())
+        }
         _ => None,
     }
 }
@@ -110,7 +115,9 @@ fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<Str
         Readers::Working { account, machine } => vec![format!("account:{account}"), format!("machine:{machine}")],
     };
     keys.into_iter()
-        .map(|key| identity(directory, &key).map(|found| (key.clone(), found)).ok_or_else(|| format!("there is no {key}")))
+        .map(|key| {
+            identity(directory, &key).map(|found| (key.clone(), found)).ok_or_else(|| format!("there is no {key}"))
+        })
         .collect()
 }
 
@@ -118,13 +125,17 @@ fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<Str
 /// account of the name of than `born` names, if any: as `said` says who each
 /// was as it was begun, or, said nothing of, as an account opened later than
 /// the scope was begun, `begun`, past the clocks' leeway, did not begin it.
-fn begun_for_another(born: &BTreeMap<String, String>, said: &BTreeMap<String, String>, begun: Option<i64>) -> Option<String> {
+fn begun_for_another(
+    born: &BTreeMap<String, String>,
+    said: &BTreeMap<String, String>,
+    begun: Option<i64>,
+) -> Option<String> {
     born.iter().filter(|(key, _)| key.starts_with("account:")).find_map(|(key, now)| {
         let other = match said.get(key) {
             Some(was) => was != now,
-            None => begun.zip(now.parse::<i64>().ok()).is_some_and(|(begun, opened)| {
-                opened > begun.saturating_add(fastctx_types::assets::BEGUN_CLOCKS)
-            }),
+            None => begun
+                .zip(now.parse::<i64>().ok())
+                .is_some_and(|(begun, opened)| opened > begun.saturating_add(fastctx_types::assets::BEGUN_CLOCKS)),
         };
         other.then(|| key.clone())
     })
@@ -166,7 +177,9 @@ pub(crate) fn reads_known(
                 return Ok(true);
             }
             match bodies {
-                Some(bodies) => bodies.members(directory.all, body)?.contains(&format!("{account}@{}", found.opened.as_millisecond())),
+                Some(bodies) => bodies
+                    .members(directory.all, body)?
+                    .contains(&format!("{account}@{}", found.opened.as_millisecond())),
                 None => false,
             }
         }
@@ -177,7 +190,8 @@ pub(crate) fn reads_known(
             fastctx_net::record_ownership::allows(directory, account, &openers, born_on)
         }
         Readers::Project { town } => {
-            same(directory, born, &format!("project:{town}")) && directory.authorize(account, Action::Project(town)).is_ok()
+            same(directory, born, &format!("project:{town}"))
+                && directory.authorize(account, Action::Project(town)).is_ok()
         }
         Readers::Account { account: only } => {
             only == account
@@ -216,7 +230,8 @@ pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> std::io::R
             if same(directory, born, &format!("account:{opener}")) {
                 return Ok(true);
             }
-            let bodies = scope.bodies.as_ref().ok_or_else(|| std::io::Error::other("a body's scope without its bodies"))?;
+            let bodies =
+                scope.bodies.as_ref().ok_or_else(|| std::io::Error::other("a body's scope without its bodies"))?;
             !bodies.members(directory.all, body)?.is_empty()
         }
         Readers::Hub => directory.all.accounts.iter().any(|account| account.is_super()),
@@ -422,13 +437,25 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
     holds_as(directory, machine, scope, class, Some(stream))
 }
 
+/// Whether the hub gives `stream` of the scope to `machine` to read: one it
+/// may hold that is not retired from every device (`super::retired`).
+pub(crate) fn serves(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
+    !super::retired::stream(scope, stream) && holds(directory, machine, scope, stream)
+}
+
 /// Whether `machine` may hold some stream of the class `class` of the scope:
 /// what a listing of what it holds names (§6.6).
 pub(crate) fn holds_class(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, class: &StreamClass) -> bool {
     holds_as(directory, machine, scope, class, None)
 }
 
-fn holds_as(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, class: &StreamClass, stream: Option<&str>) -> bool {
+fn holds_as(
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    scope: &Scope,
+    class: &StreamClass,
+    stream: Option<&str>,
+) -> bool {
     if !keeps_ledger(directory, machine, scope) {
         return false;
     }
@@ -490,9 +517,16 @@ pub(crate) fn stored(assets: &Assets, key: &str) -> Result<Option<Scope>, String
                 Ok(())
             })
             .map_err(|error| error.to_string())?;
+        assets.listing_moved();
     }
     let bodies = matches!(read.readers, Readers::Body { .. }).then(|| assets.bodies.clone());
-    Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner, bodies, source }))
+    Ok(Some(Scope {
+        descriptor: read,
+        fact: Fact { fact: Bytes(descriptor), word: Bytes(word) },
+        owner,
+        bodies,
+        source,
+    }))
 }
 
 /// The owner library of `scope`, with the scope installed in it: a scope
@@ -505,7 +539,9 @@ pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String>
     }
     let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     if library.holding(key).map_err(|error| error.to_string())?.is_none() {
-        library.install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64).map_err(|error| error.to_string())?;
+        library
+            .install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64)
+            .map_err(|error| error.to_string())?;
         // Deleted while it was installed: the deletion let go of it before
         // this put it back, so it is let go of again.
         if assets.was_deleted(key) {
@@ -716,7 +752,8 @@ pub(crate) fn describe(
             // Listed in the order the scopes were committed in, by the
             // number this very commit took: one committed late is never
             // behind a listing that went past it (AD03).
-            c.prepare_cached("UPDATE asset_scopes SET seq = ?2 WHERE key = ?1")?.execute(params![key_text, seq as i64])?;
+            c.prepare_cached("UPDATE asset_scopes SET seq = ?2 WHERE key = ?1")?
+                .execute(params![key_text, seq as i64])?;
             Ok(Some((seq, head)))
         })
         .map_err(|error| error.to_string())?
@@ -727,7 +764,7 @@ pub(crate) fn describe(
     if let Some((body, opener, opened, resident)) = &into_body {
         assets.bodies.kept_conversation(body, opener, *opened, resident);
     }
-    assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
+    assets.witness_advanced(seq, &head).map_err(|error| error.to_string())?;
     // Signed now, bound to the head the descriptor went into: a device that
     // saw it carries a head a hub put back to before it does not hold.
     let word = assets.signer().sign(&bytes);
@@ -739,6 +776,8 @@ pub(crate) fn describe(
             Ok(())
         })
         .map_err(|error| error.to_string())?;
+    // A scope described anew is found by the listings' cursor (its `seq` is
+    // this commit's): no listing is asked again for it.
     let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner, bodies, source };
     library(assets, &kept)?;
     // What the hub's records hold of it goes into it (design §28.17).

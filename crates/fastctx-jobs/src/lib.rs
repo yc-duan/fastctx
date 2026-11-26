@@ -18,15 +18,57 @@ pub mod submitted;
 mod table;
 
 pub use operations::{Operation, RESULT_BYTES, Standing, accept, settle, standing};
-pub use table::{KEY_BYTES, PAYLOAD_BYTES, SCHEMA, forget, rouse, submit, submit_after, submit_unless_waiting, submit_within, withdraw};
+pub use table::{
+    KEY_BYTES, PAYLOAD_BYTES, SCHEMA, forget, rouse, submit, submit_after, submit_unless_waiting, submit_within,
+    withdraw,
+};
 
 use fastctx_storage::Database;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::Duration;
+
+/// Every runner of a kind in this process, by the kind's name: submitting a
+/// job tells them at once (`stirred`), so a runner with nothing due sleeps
+/// until then, or until the earliest job it holds falls due, and never looks
+/// at its table only in case (`run::IDLE` is a long safety net).
+static RUNNERS: LazyLock<Mutex<Runners>> = LazyLock::new(Default::default);
+
+/// The runners of each kind, by the kind's name (`RUNNERS`).
+type Runners = HashMap<&'static str, Vec<Weak<Registered>>>;
+
+/// Tells every runner in this process to look at its table again: after the
+/// machine slept or its clock jumped, a job due by the wall clock may be due
+/// though the runner's sleep has not ended.
+pub fn stir_all() {
+    let runners: Vec<Arc<Registered>> = RUNNERS
+        .lock()
+        .expect("job runners")
+        .values()
+        .flat_map(|runners| runners.iter().filter_map(Weak::upgrade))
+        .collect();
+    for registered in runners {
+        registered.stirred.notify_one();
+    }
+}
+
+/// Tells the runners of `kind` that a job of it may have become due. Called
+/// in the transaction that submits it: a runner's next look goes through the
+/// same database's writer, after that transaction, so it sees the job.
+pub(crate) fn stirred(kind: &str) {
+    let runners: Vec<Arc<Registered>> = RUNNERS
+        .lock()
+        .expect("job runners")
+        .get(kind)
+        .map(|runners| runners.iter().filter_map(Weak::upgrade).collect())
+        .unwrap_or_default();
+    for registered in runners {
+        registered.stirred.notify_one();
+    }
+}
 
 /// One kind of work and how it is run on this machine.
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +80,16 @@ pub struct Kind {
     pub within: Duration,
     /// Failures in a row after which a job is set aside until it is asked for again.
     pub tries: u32,
+    /// How long until a job of the kind with this payload may begin, beyond
+    /// its own due time: what the kind paces all its jobs by. It is looked
+    /// at before a job is taken, so one that may not begin yet is not taken
+    /// only to be put back, a write each way (codex-7d36e00c). None for a
+    /// kind that paces nothing.
+    pub ready: Option<Ready>,
 }
+
+/// How long until a job with this payload may begin (`Kind::ready`).
+pub type Ready = fn(&[u8]) -> Option<Duration>;
 
 /// Work to be done: of a kind, named so asking again finds it, for a unit
 /// (a conversation, an account) whose jobs of a kind run one at a time.
@@ -124,6 +175,12 @@ impl Jobs {
         });
         let known = self.kinds.lock().expect("job kinds").insert(kind.name, registered.clone());
         assert!(known.is_none(), "the job kind {} is registered twice", kind.name);
+        {
+            let mut runners = RUNNERS.lock().expect("job runners");
+            let of_kind = runners.entry(kind.name).or_default();
+            of_kind.retain(|runner| runner.strong_count() > 0);
+            of_kind.push(Arc::downgrade(&registered));
+        }
         if let Some(runtime) = self.runtime.get() {
             run::serve_once(runtime, self.database.clone(), registered);
         }

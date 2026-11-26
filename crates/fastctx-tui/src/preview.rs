@@ -415,6 +415,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         shell: String::new(),
         form: None,
         node_lifetime: None,
+        hooks_skipped: None,
         stats: false,
     };
     let node = |name: &str, online: bool, since: i64, facts: Result<MachineFacts, String>| Node {
@@ -429,6 +430,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         owner: Some("me".parse().expect("an account")),
         rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
         group: None,
+        numbers: None,
     };
     NodesReply {
         machine: machine("desktop"),

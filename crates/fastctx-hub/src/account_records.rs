@@ -241,9 +241,9 @@ async fn asked_of(
                 if parent_deleted && !deleted {
                     return Err("this conversation was deleted".into());
                 }
-                if kind == fastctx_types::history::RECORD_KIND && deleted && !parent_deleted {
-                    return Err("history documents are retired as a new revision; their versions are preserved".into());
-                }
+                // A history document is retired as a new revision, which keeps
+                // its versions; deleted, it goes for good, every version with
+                // it (the user, 2026-11-25: 要允许撤下，也允许彻底删除).
                 // A revision the asset library took whose file was not
                 // published is published first: what is checked against is
                 // what was accepted.
@@ -470,9 +470,13 @@ async fn asked_of(
                     .checked_add(1)
                     .ok_or(words::REVISION)?
                     .max(hub.assets.number_floor());
+                // A history document written again after its deletion.
+                let reborn = kind == fastctx_types::history::RECORD_KIND
+                    && !deleted
+                    && before.is_some_and(|entry| entry.metadata.deleted);
                 let mut history_author = None;
                 if kind == fastctx_types::history::RECORD_KIND && !deleted {
-                    let stored: fastctx_types::history::stored::Stored =
+                    let mut stored: fastctx_types::history::stored::Stored =
                         serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
                     stored.validate()?;
                     crate::history_author::check(
@@ -487,10 +491,19 @@ async fn asked_of(
                     history_author = Some((stored.revision.author.clone(), stored.submission.is_some()));
                     fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
                     crate::history_limits::conversation(&records, &key)?;
-                    if stored.revision.version != version
-                        || key.rsplit('/').next() != Some(stored.revision.name.as_str())
+                    // A writer numbers its revision next after the one it
+                    // read. Where the hub was put back since, the hub numbers
+                    // it above every one written before, and the revision
+                    // kept takes that number, which the writer is told.
+                    let next = before.map_or(0, |entry| entry.metadata.version).saturating_add(1);
+                    if key.rsplit('/').next() != Some(stored.revision.name.as_str())
+                        || (stored.revision.version != version && stored.revision.version != next)
                     {
                         return Err("the history revision does not match its record key and version".into());
+                    }
+                    if stored.revision.version != version {
+                        stored.revision.version = version;
+                        body = serde_json::to_value(&stored).map_err(|error| error.to_string())?;
                     }
                 }
                 let record = Record {
@@ -533,6 +546,11 @@ async fn asked_of(
                 let path = slot.path(&record.metadata.kind, &record.metadata.key);
                 let archive = staged::archived(&record.metadata.kind);
                 let historical = archive.then(|| slot.history(&record.metadata.kind, &record.metadata.key));
+                // Written again after its deletion, it starts with no version of
+                // before: what an interrupted deletion left archived goes first.
+                if reborn && let Some(history) = &historical {
+                    history::delete(history).map_err(words::store)?;
+                }
                 // A record with a place in the asset library goes there first,
                 // as its truth; the file is its projection (design §15).
                 let place = crate::assets::mirror::place_of(&hub.assets, &account, opened, &record)?;

@@ -79,7 +79,8 @@ pub(crate) fn scope_of_conversation(node: &Node, resident: &ResidentId, machine:
     let library = kept.library.clone();
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
-        if !(read_here(node, &scope) && lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine)) {
+        if !(read_here(node, &scope) && lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine))
+        {
             continue;
         }
         if found.replace(scope.key).is_some() {
@@ -143,6 +144,16 @@ pub(crate) fn records_here(node: &Node, scope: &fastctx_content::v2::HeldScope) 
         scope.key.starts_with("a/") && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
     let body = scope.key.starts_with("b/") && scope.key.ends_with("/records");
     (account || body) && scope.pulled == Some(scope.holding) && reader_here(node, scope)
+}
+
+/// Whether the held scope `scope` is records this machine reads, as
+/// `records_here`, not yet pulled whole: what is read of the others meanwhile
+/// is not all there is.
+pub(crate) fn records_coming(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
+    let account =
+        scope.key.starts_with("a/") && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
+    let body = scope.key.starts_with("b/") && scope.key.ends_with("/records");
+    (account || body) && scope.pulled != Some(scope.holding) && reader_here(node, scope)
 }
 
 /// The id of the hub named `hub` among those this machine is on.

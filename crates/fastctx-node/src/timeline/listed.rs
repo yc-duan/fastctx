@@ -13,6 +13,7 @@ use fastctx_types::town::WhoReply;
 /// when no copy here says it lives there.
 pub(crate) fn of(node: &Node, machine: &MachineName) -> Option<WhoReply> {
     let library = &node.assets.as_ref()?.library;
-    let scopes: Vec<_> = library.held_scopes().ok()?.into_iter().filter(|scope| super::copy::read_here(node, scope)).collect();
+    let scopes: Vec<_> =
+        library.held_scopes().ok()?.into_iter().filter(|scope| super::copy::read_here(node, scope)).collect();
     fastctx_client::timeline_copy::listed(library, &scopes, machine)
 }

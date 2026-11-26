@@ -77,6 +77,12 @@ pub(super) fn consider(node: &Arc<Node>, resident: &ResidentId, session: &str, d
 }
 
 async fn settle(node: &Arc<Node>, resident: &ResidentId, session: &str, turn: &str, began: Timestamp, record: PathBuf) {
+    // How long the record was as its end was read: one longer by the time
+    // the turn would be settled went on meanwhile, and is not settled
+    // (codex-fb2e1cc5, codex-8cc17361).
+    let length = |path: &Path| fastctx_platform::disk::metadata(path).map(|metadata| metadata.len()).ok();
+    let read_length = length(&record);
+    let checked = record.clone();
     let answered = match fastctx_platform::task::spawn_blocking(move || ending::answered(&record)).await {
         Ok(Ok(Some(answered))) => answered,
         Ok(Ok(None)) | Err(_) => return,
@@ -105,7 +111,7 @@ async fn settle(node: &Arc<Node>, resident: &ResidentId, session: &str, turn: &s
         .residents
         .now(resident)
         .is_some_and(|now| now.activity == Activity::Busy && now.turn.as_deref() == Some(turn));
-    if !current {
+    if !current || length(&checked) != read_length {
         return;
     }
     let end = TurnEnd {

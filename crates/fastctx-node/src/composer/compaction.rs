@@ -39,7 +39,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
 
 pub(super) fn register_jobs(jobs: &Jobs, database: Database) {
     jobs.register(
-        Kind { name: KIND, at_once: 2, within: Duration::from_secs(60), tries: 5 },
+        Kind { name: KIND, at_once: 2, within: Duration::from_secs(60), tries: 5, ready: None },
         Arc::new(move |taken: Taken| {
             let database = database.clone();
             Box::pin(async move {

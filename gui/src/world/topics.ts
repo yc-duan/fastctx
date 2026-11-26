@@ -6,6 +6,9 @@ import { inShell, unwatch } from "./bridge";
 import { Backoff } from "./backoff";
 
 export const LOGINS = "logins";
+/** What this computer last heard of the other machines' agents and logins,
+ *  for every machine's listing: apart from `LOGINS`, this machine's own. */
+export const LOGINS_ELSEWHERE = "logins-elsewhere";
 export const SENTINELS = "sentinels";
 export const UPDATE = "update";
 export const BOOK = "book";
@@ -77,6 +80,13 @@ export interface Following { (): void; refresh(): void }
  *  timer. */
 export function followState(topic: string | null | (() => string | null), read: Read, every: Every, machine: string | null = null): Following {
   return topicsOf(machine).follow(topic, read, every);
+}
+
+/** Follows each of `topics` with the same reader, as one: stopped and
+ *  refreshed together. */
+export function followStates(topics: string[], read: Read, every: Every, machine: string | null = null): Following {
+  const all = topics.map((topic, at) => followState(topic, read, at === 0 ? every : () => false, machine));
+  return Object.assign(() => { for (const one of all) one(); }, { refresh: () => { for (const one of all) one.refresh(); } });
 }
 
 /** Specimen pages use their own seams and must never open a node connection. */

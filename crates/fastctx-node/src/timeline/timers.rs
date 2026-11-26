@@ -89,7 +89,12 @@ pub(super) async fn produce(
             }
         }
         for (item, body) in wanted {
-            writes.push(Write::<ConversationTimer> { order: item.clone(), item, value: Some(body), objects: Vec::new() });
+            writes.push(Write::<ConversationTimer> {
+                order: item.clone(),
+                item,
+                value: Some(body),
+                objects: Vec::new(),
+            });
         }
         // What this machine writes is its own before it is written, and stays
         // so until its tombstone is: stopped between the two, the next look
@@ -107,8 +112,11 @@ pub(super) async fn produce(
         }
         let count = writes.len();
         library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
-        let gone: Vec<String> =
-            writes.iter().filter(|write| write.value.is_none()).map(|write| String::from_utf8_lossy(&write.item).into_owned()).collect();
+        let gone: Vec<String> = writes
+            .iter()
+            .filter(|write| write.value.is_none())
+            .map(|write| String::from_utf8_lossy(&write.item).into_owned())
+            .collect();
         Writer::<ConversationTimer>::new(&library, &scope, ConversationTimer::STREAM)
             .map_err(failure)?
             .in_holding(holding)

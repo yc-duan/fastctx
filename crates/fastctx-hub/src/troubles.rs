@@ -627,7 +627,8 @@ impl Troubles {
         if written.is_empty() {
             return;
         }
-        let stood: HashMap<u64, Option<Timestamp>> = written.iter().map(|trouble| (trouble.id, trouble.resolved)).collect();
+        let stood: HashMap<u64, Option<Timestamp>> =
+            written.iter().map(|trouble| (trouble.id, trouble.resolved)).collect();
         let mut changed = Vec::new();
         let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.kept.rcu(|shelved| {
@@ -759,7 +760,10 @@ mod pruning_tests {
         assert!(again.pending.is_empty());
         // Waiting, it outlives the week it would have gone by.
         let mut all = vec![Arc::new(Kept {
-            trouble: Trouble { at: Timestamp::now().checked_sub(SignedDuration::from_hours(8 * 24)).unwrap(), ..earlier.trouble.clone() },
+            trouble: Trouble {
+                at: Timestamp::now().checked_sub(SignedDuration::from_hours(8 * 24)).unwrap(),
+                ..earlier.trouble.clone()
+            },
             ..earlier
         })];
         assert!(pruned(&mut all, Timestamp::now()).is_empty());
@@ -774,7 +778,8 @@ mod pruning_tests {
     #[test]
     fn a_trouble_not_written_yet_is_kept_until_its_own_bounds() {
         let now = Timestamp::now();
-        let mut all = vec![kept(1, 100, true), kept(2, 30, true), kept(3, 8, false), kept(4, 1, false), kept(5, 1, true)];
+        let mut all =
+            vec![kept(1, 100, true), kept(2, 30, true), kept(3, 8, false), kept(4, 1, false), kept(5, 1, true)];
         let gone = pruned(&mut all, now);
         assert_eq!(ids(&all), vec![2, 4, 5]);
         assert_eq!(ids(&gone), vec![1, 3]);

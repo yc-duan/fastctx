@@ -63,7 +63,7 @@ import { escape, plain, render } from "./prose";
 import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
 import { numbered, parse, type DiffRow } from "./diff";
-import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
+import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff, wholeDiff } from "./diff-lines";
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
 import { drawDeeds, foldedCard, goingOn, type DeedTools } from "./deeds/draw";
@@ -1562,7 +1562,7 @@ export class ConversationView {
     if (!this.context.lines) return "";
     let raw: OpenedLines | null = null;
     try {
-      raw = await this.context.lines(write.diff.machine, write.diff.path, { kind: "file", encoding: "utf-8" });
+      raw = (await wholeDiff(write.diff)) ?? (await this.context.lines(write.diff.machine, write.diff.path, { kind: "file", encoding: "utf-8" }));
       const source = await RemoteDiff.open(raw, signal);
       const shown: string[] = [];
       const kept: string[] = [];
@@ -1878,6 +1878,11 @@ export class ConversationView {
    *  not known, and the line says nothing. */
   unfollowed(): void {
     this.followed = false;
+  }
+  /** The session is followed again, its watch taken up anew after it was
+   *  refused or ended (codex-fb2e1cc5): the line says what it hears. */
+  followedAgain(): void {
+    this.followed = true;
   }
   private followed = true;
 
@@ -3439,7 +3444,7 @@ export class ConversationView {
     else this.closers.set(key, [closing]);
     const pending = (async () => {
       try {
-        held.raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+        held.raw = (await wholeDiff(diff)) ?? (await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" }));
         if (request.signal.aborted) return close();
         const remote = await RemoteDiff.open(held.raw, request.signal);
         let long: LongText;
@@ -3521,7 +3526,7 @@ export class ConversationView {
       for (const [key, write, diff] of taken) {
         let raw: OpenedLines | null = null;
         try {
-          raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+          raw = (await wholeDiff(diff)) ?? (await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" }));
           const remote = await RemoteDiff.open(raw, request.signal);
           const rows = [...(await remote.read(0, remote.extent.length, request.signal))];
           this.findWrites.set(key, { signature: JSON.stringify(write), lines: rows });

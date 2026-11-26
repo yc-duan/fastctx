@@ -7,43 +7,43 @@
 //! keep it and writes what changed.
 
 pub(crate) mod api;
+mod artifacts;
 mod assets;
+mod attachments;
+mod beside;
 mod build;
-pub(crate) mod copy;
-pub(crate) mod last_page;
 pub(crate) mod copied_changes;
 pub(crate) mod copied_records;
-pub(crate) mod records_known;
+pub(crate) mod copy;
+pub(crate) mod draft;
 #[cfg(feature = "timeline-drill")]
 mod drill;
+mod file_changes;
 mod identity;
+pub(crate) mod last_page;
 mod later;
 pub(crate) mod listed;
 mod local;
-mod artifacts;
-mod attachments;
-mod beside;
-mod file_changes;
-pub(crate) mod draft;
 mod meta;
+pub(crate) mod records_known;
 pub(crate) mod words;
 pub(crate) use assets::{checkpoint_of, scope_of};
 pub(crate) use attachments::placed_here as attached;
 pub(crate) use identity::likeness;
+pub(crate) mod born_shared;
 pub(crate) mod names;
 mod order;
 mod preview;
 pub(crate) mod reads;
 mod serial;
-pub(crate) mod stored;
 pub(crate) mod spill;
+pub(crate) mod stored;
+mod tail;
 pub(crate) mod viewed;
 pub(crate) mod world;
-pub(crate) mod born_shared;
-mod tail;
+pub(crate) use assets::Early;
 #[cfg(feature = "bench")]
 pub use tail::bench;
-pub(crate) use assets::Early;
 pub(crate) use tail::told_again;
 pub(crate) use tail::{LEFT_MOST, forget_windows};
 pub(crate) mod timers;
@@ -113,7 +113,8 @@ pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {
 pub(crate) fn joined_anew(node: &crate::Node) {
     // Archived ones too: their metadata and words go into the new holding
     // period as well (J06).
-    let here: Vec<ResidentId> = node.residents.everyone().filter(|record| record.here).map(|record| record.id).collect();
+    let here: Vec<ResidentId> =
+        node.residents.everyone().filter(|record| record.here).map(|record| record.id).collect();
     for resident in &here {
         tail::wanted(node, resident);
     }
@@ -139,7 +140,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             }
         })
     };
-    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES, ready: None }, Arc::new(run));
 }
 
 /// Brings the timelines of the conversations whose history grew to it, read
@@ -173,13 +174,21 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
         // Archived ones are brought too — their metadata and words, whose
         // job may not have been written as the node stopped (J06) — and
         // their histories not checked.
-        let archived: Vec<ResidentId> =
-            node.residents.everyone().filter(|record| record.here && record.removed.is_some()).map(|record| record.id).collect();
+        let archived: Vec<ResidentId> = node
+            .residents
+            .everyone()
+            .filter(|record| record.here && record.removed.is_some())
+            .map(|record| record.id)
+            .collect();
         for resident in &archived {
             tail::wanted(&node, resident);
         }
-        let here: Vec<ResidentId> =
-            node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+        let here: Vec<ResidentId> = node
+            .residents
+            .everyone()
+            .filter(|record| record.here && record.removed.is_none())
+            .map(|record| record.id)
+            .collect();
         // The asset timeline of each, whose version — what its history is
         // read from, as cheaply as it can be told — tells at once whether
         // anything is to do (BB06): one unchanged is not read, one changed
@@ -220,7 +229,8 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
     // its history read whole for it (design §28.52 52-1). A lab makes it
     // all the same (`api::here`).
     let assets = std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_none()
-        && fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, resident)).unwrap_or(false);
+        && fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, resident))
+            .unwrap_or(false);
     if assets {
         UNREAD.lock().expect("unread timelines").remove(resident);
         return Outcome::Done;

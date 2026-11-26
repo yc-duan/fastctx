@@ -22,19 +22,37 @@ const FABLE_LINE: u64 = 50;
 
 #[derive(Clone)]
 pub(crate) enum UsedUp {
-    Weekly { allowance: Usd, until: Timestamp },
-    Daily { allowance: Usd, until: Timestamp },
-    FiveHour { share: u8, until: Option<Timestamp> },
+    Weekly {
+        allowance: Usd,
+        until: Timestamp,
+    },
+    Daily {
+        allowance: Usd,
+        until: Timestamp,
+    },
+    FiveHour {
+        share: u8,
+        until: Option<Timestamp>,
+    },
     Unavailable,
-    Fable { allowance: Usd, until: Timestamp },
+    Fable {
+        allowance: Usd,
+        until: Timestamp,
+    },
     /// The whole login's Fable reached its line: everyone's Fable waits,
     /// the owner's too.
-    FableLine { allowance: Usd, until: Timestamp },
+    FableLine {
+        allowance: Usd,
+        until: Timestamp,
+    },
 }
 impl UsedUp {
     pub(super) fn until(&self) -> Timestamp {
         match self {
-            Self::Weekly { until, .. } | Self::Daily { until, .. } | Self::Fable { until, .. } | Self::FableLine { until, .. } => *until,
+            Self::Weekly { until, .. }
+            | Self::Daily { until, .. }
+            | Self::Fable { until, .. }
+            | Self::FableLine { until, .. } => *until,
             Self::FiveHour { until, .. } => until.unwrap_or(Timestamp::MAX),
             Self::Unavailable => Timestamp::MAX,
         }
@@ -150,7 +168,12 @@ pub(crate) fn fable_line(node: &Node, about: &About) -> Option<UsedUp> {
     super::with_book(node, &path, |book| {
         let reckoned = super::reckoning::of(&path, book, "claude", now);
         let (week, allowance) = (reckoned.week, Usd(reckoned.figure.0 / 100 * FABLE_LINE));
-        let fable: Vec<_> = book.recent.iter().filter(|charge| charge.fable && charge.at <= now).map(|charge| (charge.at, quota(charge))).collect();
+        let fable: Vec<_> = book
+            .recent
+            .iter()
+            .filter(|charge| charge.fable && charge.at <= now)
+            .map(|charge| (charge.at, quota(charge)))
+            .collect();
         let until = if week.window {
             let spent = fable
                 .iter()
@@ -178,7 +201,9 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
         }
     };
     let agent = about.host.agent.as_str();
-    if assist.five_hour.is_none() && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none() && assist.share.is_none())) {
+    if assist.five_hour.is_none()
+        && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none() && assist.share.is_none()))
+    {
         return None;
     }
     let dir = login(node, about)?;
@@ -254,7 +279,8 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
             if let Some(until) = weekly(&used, allowance) {
                 reached.push(UsedUp::Weekly { allowance, until });
             }
-            let fable: Vec<_> = costs.iter().filter(|charge| charge.fable).map(|charge| (charge.at, quota(charge))).collect();
+            let fable: Vec<_> =
+                costs.iter().filter(|charge| charge.fable).map(|charge| (charge.at, quota(charge))).collect();
             let allowance = Usd(allowance.0 / 2);
             if let Some(until) = weekly(&fable, allowance) {
                 reached.push(UsedUp::Fable { allowance, until });

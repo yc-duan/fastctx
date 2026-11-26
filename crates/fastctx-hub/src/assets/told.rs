@@ -48,8 +48,7 @@ pub(super) fn scope_of(
     opened: Timestamp,
 ) -> Result<Option<(scopes::Scope, fastctx_content::v2::Library)>, String> {
     let Some(scope) = scopes::scope(assets, &account_scope(assets, account, opened))? else { return Ok(None) };
-    if !matches!(&scope.owner, Owner::Account(name, at) if name == account.as_str() && *at == opened.as_millisecond())
-    {
+    if !matches!(&scope.owner, Owner::Account(name, at) if name == account.as_str() && *at == opened.as_millisecond()) {
         return Ok(None);
     }
     let library = scopes::library(assets, &scope)?;
@@ -65,9 +64,15 @@ fn place_bytes(place: &fastctx_content::Place) -> Vec<u8> {
 fn place_of(bytes: &[u8]) -> Option<fastctx_content::Place> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let bytes_of = |text: &str| -> Option<Vec<u8>> {
-        (0..text.len()).step_by(2).map(|at| text.get(at..at + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok())).collect()
+        (0..text.len())
+            .step_by(2)
+            .map(|at| text.get(at..at + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok()))
+            .collect()
     };
-    Some(fastctx_content::Place { order: bytes_of(value["order"].as_str()?)?, item: bytes_of(value["item"].as_str()?)? })
+    Some(fastctx_content::Place {
+        order: bytes_of(value["order"].as_str()?)?,
+        item: bytes_of(value["item"].as_str()?)?,
+    })
 }
 
 /// The item a machine log record is kept by: its number.
@@ -375,7 +380,10 @@ pub(crate) fn told(hub: &crate::Hub, trouble: Trouble, to: Vec<(AccountName, Tim
                 // (`caught_up`), kept until then.
                 Ok(false) => {}
                 Err(error) => {
-                    hub.log.line(format_args!("writing trouble {} for {account} into the asset library: {error}", trouble.id));
+                    hub.log.line(format_args!(
+                        "writing trouble {} for {account} into the asset library: {error}",
+                        trouble.id
+                    ));
                     FAILED.store(true, Ordering::SeqCst);
                 }
             }
@@ -428,7 +436,10 @@ async fn pass(
                 }
             }
             if !failed.is_empty() {
-                log.line(format_args!("writing what the hub tells {account} into the asset library: {}", failed.join("; ")));
+                log.line(format_args!(
+                    "writing what the hub tells {account} into the asset library: {}",
+                    failed.join("; ")
+                ));
                 FAILED.store(true, Ordering::SeqCst);
             }
         }
@@ -441,8 +452,13 @@ type Accounts = Vec<(AccountName, Timestamp, Kept)>;
 
 fn accounts_now(hub: &crate::Hub) -> (fastctx_storage::Database, Accounts) {
     let store = hub.store();
-    let accounts =
-        store.book.directory.accounts.iter().map(|account| (account.name.clone(), account.opened, kept_of(account))).collect();
+    let accounts = store
+        .book
+        .directory
+        .accounts
+        .iter()
+        .map(|account| (account.name.clone(), account.opened, kept_of(account)))
+        .collect();
     (store.shelf.0.clone(), accounts)
 }
 
@@ -465,8 +481,8 @@ pub(crate) async fn follow(hub: &Arc<crate::Hub>) -> std::io::Result<()> {
     loop {
         let notified = hub.machine_log_changed.notified();
         let (database, accounts) = accounts_now(hub);
-        let troubles = first
-            .then(|| accounts.iter().map(|(account, opened, _)| hub.troubles.told_to(account, *opened)).collect());
+        let troubles =
+            first.then(|| accounts.iter().map(|(account, opened, _)| hub.troubles.told_to(account, *opened)).collect());
         pass(hub, database, accounts, troubles).await;
         first = false;
         notified.await;

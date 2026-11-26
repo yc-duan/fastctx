@@ -2,11 +2,21 @@
 
 use fastctx_net::wire::{self, Down, Told};
 
+/// The most bytes of an answer that go in one frame to a member that reads
+/// answers in parts. A frame being written holds up every other on the
+/// connection, a pong, a stop or a word for a conversation among them: at
+/// the 35–55 KiB a second slow lines were measured to take, a part of a
+/// quarter of a megabyte held them up for five seconds (`interaction-latency`).
+/// The format is the one every member that reads parts reads; only its
+/// pieces are smaller.
+const PART_AT_MOST: usize = 32 * 1024;
+
 /// The answer to the question `id` as the frames it goes in: one when it
 /// fits; else in parts for a member that reads them, or an explicit error.
 pub(super) fn frames(id: u64, answer: Result<Told, String>, parts: bool) -> Vec<Down> {
     let whole = Down::Told { id, answer };
-    if wire::encode(&whole).len() <= wire::MAX_CONTROL_FRAME {
+    let size = wire::encode(&whole).len();
+    if size <= PART_AT_MOST || (!parts && size <= wire::MAX_CONTROL_FRAME) {
         return vec![whole];
     }
     let Down::Told { answer, .. } = whole else { unreachable!("made above") };
@@ -27,7 +37,7 @@ pub(super) fn frames(id: u64, answer: Result<Told, String>, parts: bool) -> Vec<
     }
     // The total is not known yet; reserve the widest possible counters.
     let overhead = wire::encode(&Down::Part { id, index: u32::MAX, total: u32::MAX, text: String::new() }).len();
-    let room = wire::MAX_CONTROL_FRAME - overhead;
+    let room = wire::MAX_CONTROL_FRAME.min(PART_AT_MOST) - overhead;
     let mut pieces = Vec::new();
     let mut rest = text.as_str();
     while !rest.is_empty() {

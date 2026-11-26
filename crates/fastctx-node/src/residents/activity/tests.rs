@@ -9,7 +9,9 @@ fn arrival(at: i128) -> [u8; 16] {
 fn the_last_action_is_one_row_read_without_sorting() {
     let db = Connection::open_in_memory().expect("open");
     db.execute_batch(crate::records::SCHEMA).expect("schema");
-    for (position, family, at) in [(1, "actions", 10), (2, "messages", 20), (3, "actions", 30), (4, "actions", 40), (5, "seen", 50)] {
+    for (position, family, at) in
+        [(1, "actions", 10), (2, "messages", 20), (3, "actions", 30), (4, "actions", 40), (5, "seen", 50)]
+    {
         db.execute(
             "INSERT INTO conversation_records(position,conversation,family,identity,body,modified,arrival) VALUES(?1,'c',?2,?3,?4,'',?5)",
             params![position, family, format!("row-{position}"), format!("{{\"n\":{position}}}").into_bytes(), arrival(at).as_slice()],
@@ -52,8 +54,9 @@ fn the_last_action_is_one_row_read_without_sorting() {
     assert_eq!(within(41, 900), None);
     for (from, until, found) in [(0, 40, Some(8_i64)), (41, 900, None)] {
         let mut asked = db.prepare(LAST_ARRIVED_WITHIN).expect("prepare");
-        let told: Option<i64> =
-            asked.query_row(params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0)).expect("within");
+        let told: Option<i64> = asked
+            .query_row(params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0))
+            .expect("within");
         assert_eq!(told, found);
         let steps = asked.get_status(StatementStatus::VmStep);
         assert!(steps < 200, "{steps} steps for the span {from}..{until}");

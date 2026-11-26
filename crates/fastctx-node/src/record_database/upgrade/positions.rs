@@ -64,7 +64,9 @@ pub(super) fn runs(db: &Connection) -> Result<()> {
         ],
     )?;
     if !super::column(db, "run_versions", "since")? {
-        db.execute_batch("ALTER TABLE run_versions ADD COLUMN since INTEGER; ALTER TABLE run_versions ADD COLUMN last INTEGER;")?;
+        db.execute_batch(
+            "ALTER TABLE run_versions ADD COLUMN since INTEGER; ALTER TABLE run_versions ADD COLUMN last INTEGER;",
+        )?;
     }
     // What development builds kept apart before (never released).
     db.execute_batch("DROP TABLE IF EXISTS run_tracked; DROP INDEX IF EXISTS run_call_versions_since;")?;

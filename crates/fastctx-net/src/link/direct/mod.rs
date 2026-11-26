@@ -391,9 +391,11 @@ impl Inner {
         for conn in conns {
             if view.member(&conn.name).is_none_or(|member| member.key != conn.key) {
                 conn.close(format!("{} is no longer a member this machine knows", conn.name));
-            } else if view.me().zip(view.member(&conn.name)).is_some_and(|(mine, member)| {
-                view.directory.direct_withheld(mine, member, jiff::Timestamp::now())
-            }) {
+            } else if view
+                .me()
+                .zip(view.member(&conn.name))
+                .is_some_and(|(mine, member)| view.directory.direct_withheld(mine, member, jiff::Timestamp::now()))
+            {
                 // Whichever of the two made the link: one kept from linking
                 // with this machine (`Assist::direct`) is let go here too.
                 conn.close(format!("{}'s account's machines no longer link with this machine directly", conn.name));

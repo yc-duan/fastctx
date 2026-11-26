@@ -225,6 +225,9 @@ export interface MachineFacts {
     windows_job: { kill_on_close: boolean; breakaway_allowed: boolean; silent_breakaway: boolean } | null;
   };
   shell: string;
+  /** The World's hooks Claude Code passes over there, as a session's own
+   *  record said lately; absent while they run, or from an older node. */
+  hooks_skipped?: { by: string; hooks: string[]; session: string; at?: Timestamp; plugins: string };
   /** What kind of device it is; older nodes do not say. */
   form?: "desktop" | "laptop" | "server";
   /** It tells how it is doing (`machine_stats`); older nodes do not. */
@@ -339,6 +342,24 @@ export interface Node {
   group?: string;
   /** What each of this computer's accounts may do on it. */
   rights: [AccountName, Rights][];
+  /** What its answers stand at, kind by kind, as its hub told them
+   *  (`fastctx_types::numbers`): a page holding one of its answers reads it
+   *  again once its number of that kind moved (`app/numbers.ts`). Absent
+   *  from an older hub or node, and of a kind not told to the logins here. */
+  numbers?: Numbers;
+}
+
+/** The numbers a machine's answers stand at (`fastctx_types::numbers`):
+ *  each moves whenever what the machine answers of its kind changes. */
+export interface Numbers {
+  /** Its agents, logins and their usage. */
+  logins?: number;
+  /** Its book of what was done there. */
+  book?: number;
+  /** How its updates stand. */
+  updates?: number;
+  /** How the sentinels it is home to stand. */
+  sentinels?: number;
 }
 
 /** Which page did something, as a record of a release before pages were

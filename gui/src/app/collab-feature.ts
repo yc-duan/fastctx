@@ -205,6 +205,12 @@ export class CollabFeature {
         const view = this.view;
         if (!view) throw new Error(this.frame.words.unavailable);
         const next = change(structuredClone(view.collab));
+        // Shown at once as it will stand, the page busy until the World
+        // says (先显示后确认): refused, what stood is shown again.
+        if (account === this.account) {
+          this.view = { ...view, collab: next };
+          this.draw();
+        }
         try {
           const version = await writeCollab(account?.hubName ?? null, account?.account ?? null, next);
           if (account === this.account) this.view = { ...view, collab: { ...next, version } };
@@ -212,6 +218,7 @@ export class CollabFeature {
           return;
         } catch (error) {
           const elsewhere = /model collaboration changed/.test(detailOf(error));
+          if (account === this.account) this.view = view;
           await this.reread();
           if (!elsewhere || tries >= SAVE_TRIES) throw error;
         }

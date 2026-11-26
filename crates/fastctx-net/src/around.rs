@@ -7,6 +7,7 @@ use std::any::Any;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fastctx_types::access::Written;
 use fastctx_types::observation::MachineSource;
@@ -19,16 +20,22 @@ use jiff::Timestamp;
 use crate::link::{CallFailure, Link};
 
 /// How one machine answered.
+#[derive(Clone)]
 pub enum Heard {
     Answered(RemoteReply),
     Offline(Option<Timestamp>),
     NoAnswer(String),
+    /// It was not answered within the round's time, or its call's: told as
+    /// no answer, though what is known of it otherwise may stand for it,
+    /// where a refusal may not.
+    Late(String),
 }
 
 /// A machine to ask, through one hub and for one account. `written` is
 /// how the asker writes it: with its hub where another hub the asker is on
 /// has a machine of that name, so the answer can be told apart and sent
 /// back through the hub it came by (`world-network.md`, 机器的名字).
+#[derive(Clone)]
 pub struct Reachable {
     pub link: Arc<Link>,
     pub name: MachineName,
@@ -68,16 +75,36 @@ impl Asked {
 pub async fn ask_each(machines: Vec<Reachable>, call: impl Fn(&MachineName) -> RemoteCall) -> Vec<(Asked, Heard)> {
     type Refresh = Shared<BoxFuture<'static, Result<(), String>>>;
     let mut refreshes: Vec<(Arc<Link>, Refresh)> = Vec::new();
-    ask(machines, call, |link| match refreshes.iter().find(|(asked, _)| Arc::ptr_eq(asked, link)) {
-        Some((_, fresh)) => fresh.clone(),
-        None => {
-            let asked = link.clone();
-            let fresh = async move { refresh(&asked).await }.boxed().shared();
-            refreshes.push((link.clone(), fresh.clone()));
-            fresh
-        }
-    })
+    ask(
+        machines,
+        call,
+        |link| match refreshes.iter().find(|(asked, _)| Arc::ptr_eq(asked, link)) {
+            Some((_, fresh)) => fresh.clone(),
+            None => {
+                let asked = link.clone();
+                let fresh = async move { refresh(&asked).await }.boxed().shared();
+                refreshes.push((link.clone(), fresh.clone()));
+                fresh
+            }
+        },
+        None,
+    )
     .await
+}
+
+/// Asks every machine concurrently as its hub last told who is connected,
+/// none of the hubs asked again first: what someone waits on is answered
+/// from what is here, and the directory follows its hub's changes on its
+/// own. All of them are answered within `within` at most, besides each
+/// call's own contract, the wait for a turn to ask included: one that is not
+/// is told as no answer, the others not held for it (codex-580b4d87).
+/// Results are sorted by machine name.
+pub async fn ask_known(
+    machines: Vec<Reachable>,
+    call: impl Fn(&MachineName) -> RemoteCall,
+    within: Duration,
+) -> Vec<(Asked, Heard)> {
+    ask(machines, call, |_| ready(Ok(())), Some(within)).await
 }
 
 /// Asks hubs concurrently, passing each one's fresh directory result to
@@ -101,7 +128,7 @@ pub async fn ask_refreshed(
     call: impl Fn(&MachineName) -> RemoteCall,
     fresh: Result<(), String>,
 ) -> Vec<(Asked, Heard)> {
-    ask(machines, call, |_| ready(fresh.clone())).await
+    ask(machines, call, |_| ready(fresh.clone()), None).await
 }
 
 async fn refresh(link: &Link) -> Result<(), String> {
@@ -122,9 +149,12 @@ async fn ask<F: Future<Output = Result<(), String>>>(
     machines: Vec<Reachable>,
     call: impl Fn(&MachineName) -> RemoteCall,
     mut refreshed: impl FnMut(&Arc<Link>) -> F,
+    cap: Option<Duration>,
 ) -> Vec<(Asked, Heard)> {
     let mut asks = FuturesUnordered::new();
     let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE));
+    // A cap bounds the whole round, waiting for a turn to ask included.
+    let deadline = cap.map(|cap| tokio::time::Instant::now() + cap);
     let sources: Vec<_> = machines
         .iter()
         .map(|machine| MachineSource {
@@ -150,16 +180,27 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                 }
                 match seen {
                     Some(seen) if seen.online => {
-                        let _turn = asking.acquire().await;
+                        let turn = match deadline {
+                            Some(deadline) => match tokio::time::timeout_at(deadline, asking.acquire()).await {
+                                Ok(turn) => turn,
+                                Err(_) => return Heard::Late("it was not asked in time: too many were asked before it".to_string()),
+                            },
+                            None => asking.acquire().await,
+                        };
+                        let _turn = turn;
                         let name = &seen.name;
                         let purpose = call.purpose();
-                        let within = call.contract().within;
+                        let left = deadline.map(|deadline| deadline.saturating_duration_since(tokio::time::Instant::now()));
+                        let within = match (call.contract().within, left) {
+                            (Some(within), Some(left)) => Some(within.min(left)),
+                            (within, left) => within.or(left),
+                        };
                         let work = link.call(name, &account, purpose, call);
                         let answer = match within {
                             Some(within) => {
-                                match fastctx_platform::doing::outside(format!("{name}'s answer"), within, work).await {
+                                match fastctx_platform::doing::outside(name.to_string(), within, work).await {
                                     Ok(answer) => answer,
-                                    Err(late) => return Heard::NoAnswer(late.to_string()),
+                                    Err(late) => return Heard::Late(late.to_string()),
                                 }
                             }
                             None => work.await,

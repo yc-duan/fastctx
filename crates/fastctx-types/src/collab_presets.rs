@@ -123,7 +123,8 @@ pub fn in_host<'a>(text: &'a str, agent: &str) -> std::borrow::Cow<'a, str> {
         return std::borrow::Cow::Borrowed(text);
     }
     std::borrow::Cow::Owned(
-        text.replace("GPT, run by Codex", "Claude, run by Claude Code").replace("unless you are GPT too", "unless you are Claude too"),
+        text.replace("GPT, run by Codex", "Claude, run by Claude Code")
+            .replace("unless you are GPT too", "unless you are Claude too"),
     )
 }
 

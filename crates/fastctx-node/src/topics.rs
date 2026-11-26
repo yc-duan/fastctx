@@ -15,6 +15,10 @@ pub(crate) const WAITS: Duration = Duration::from_secs(25);
 
 pub(crate) struct Topics {
     run: String,
+    /// When this run began, in microseconds: the floor of the numbers told
+    /// of its topics to others (`number`), so a number of a later run never
+    /// equals one of an earlier.
+    began: u64,
     revisions: Mutex<HashMap<String, u64>>,
     moved: tokio::sync::watch::Sender<u64>,
 }
@@ -25,6 +29,7 @@ impl Topics {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
         Self {
             run: format!("{started:x}-{:x}", std::process::id()),
+            began: u64::try_from(started / 1000).unwrap_or(u64::MAX / 2),
             revisions: Mutex::new(NAMES.iter().map(|name| ((*name).to_owned(), 1)).collect()),
             moved: tokio::sync::watch::channel(0).0,
         }
@@ -38,6 +43,24 @@ impl Topics {
         }
         *self.revisions.lock().expect("never poisoned").entry(topic.to_owned()).or_insert(1) += 1;
         self.moved.send_modify(|moves| *moves = moves.wrapping_add(1));
+    }
+
+    /// Where `topic` stands now: for a loop of the node's own that follows a
+    /// topic with `watch` instead of looking on a timer.
+    pub(crate) fn revision(&self, topic: &str) -> u64 {
+        self.revisions.lock().expect("never poisoned").get(topic).copied().unwrap_or(1)
+    }
+
+    /// Where `topic` stands, as told to other machines (`Numbers`): its
+    /// revision past the start of this run, so it only grows from one run of
+    /// the node to the next.
+    pub(crate) fn number(&self, topic: &str) -> u64 {
+        self.began.saturating_add(self.revision(topic))
+    }
+
+    /// Told whenever any topic changes.
+    pub(crate) fn watch(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.moved.subscribe()
     }
 
     /// Invalidates a family's topics without walking the towns or readers.
@@ -122,8 +145,9 @@ mod tests {
             let topics = Topics::new();
             topics.changed("logins");
             // A reader that was told no run is told every topic it asks for.
-            let first =
-                topics.told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("book", 0), at("other", 0)] }, WAITS).await;
+            let first = topics
+                .told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("book", 0), at("other", 0)] }, WAITS)
+                .await;
             assert_eq!(first.changed, [at("logins", 2), at("book", 1), at("other", 0)]);
             let known = TopicsAsk { run: Some(first.run.clone()), known: first.changed };
             // Nothing changed: it waits, and is answered with none.

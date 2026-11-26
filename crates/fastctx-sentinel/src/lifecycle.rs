@@ -1,5 +1,5 @@
 //! Durable definitions with a replaceable transport to their selected home.
-use crate::records::{Error, Records};
+use crate::records::{Error, Head, Record, Records};
 use fastctx_agent::FutureResult;
 use fastctx_types::{Address, SentinelId, access::HubAccount, sentinel::Kind, sentinel_control::*};
 pub const KIND: &str = "sentinel";
@@ -19,20 +19,38 @@ pub async fn get(
     let record = tokio::time::timeout(std::time::Duration::from_secs(60), records.get(scope, KIND, id.as_str()))
         .await
         .map_err(|_| Error::Unavailable("reading sentinel timed out".into()))??;
-    record
-        .map(|record| {
-            let registration: Registration = serde_json::from_value(record.value)
-                .map_err(|e| Error::Unavailable(format!("invalid sentinel definition: {e}")))?;
-            if registration.scope != *scope
-                || registration.definition.account != scope.account
-                || registration.definition.id != *id
-            {
-                return Err(Error::Unavailable("sentinel record identity mismatch".into()));
-            }
-            Ok((record.version, registration))
-        })
-        .transpose()
+    record.map(|record| registration_of(record, scope, id)).transpose()
 }
+
+/// `get`, of the sentinel a listing just named at `head`'s version
+/// (`Records::get_listed`).
+async fn get_listed(
+    records: &dyn Records,
+    scope: &HubAccount,
+    id: &SentinelId,
+    head: &Head,
+) -> Result<Option<(u64, Registration)>, Error> {
+    let record = tokio::time::timeout(std::time::Duration::from_secs(60), records.get_listed(scope, KIND, head))
+        .await
+        .map_err(|_| Error::Unavailable("reading sentinel timed out".into()))??;
+    record.map(|record| registration_of(record, scope, id)).transpose()
+}
+
+/// The registration `record` holds, where it is the sentinel `id` of `scope`.
+fn registration_of(record: Record, scope: &HubAccount, id: &SentinelId) -> Result<(u64, Registration), Error> {
+    let registration: Registration = serde_json::from_value(record.value)
+        .map_err(|e| Error::Unavailable(format!("invalid sentinel definition: {e}")))?;
+    if registration.scope != *scope
+        || registration.definition.account != scope.account
+        || registration.definition.id != *id
+    {
+        return Err(Error::Unavailable("sentinel record identity mismatch".into()));
+    }
+    Ok((record.version, registration))
+}
+
+/// How many sentinels of a listing are read and asked of their homes at once.
+const LISTED_AT_ONCE: usize = 8;
 pub async fn create(records: &dyn Records, homes: &dyn Homes, registration: Registration) -> Result<Summary, Error> {
     let value = serde_json::to_value(&registration).map_err(|e| Error::Unavailable(e.to_string()))?;
     let record = tokio::time::timeout(
@@ -82,33 +100,39 @@ async fn list_inner(
     scope: &HubAccount,
     include: &(dyn Fn(&Address) -> bool + Sync),
 ) -> Result<Vec<Summary>, Error> {
+    use futures_util::stream::{self, StreamExt as _};
     let heads = tokio::time::timeout(std::time::Duration::from_secs(60), records.list(scope, KIND))
         .await
         .map_err(|_| Error::Unavailable("listing sentinels timed out".into()))??;
-    let mut result = Vec::new();
-    for head in heads {
-        let id = head.key.parse().map_err(|e: fastctx_types::NameError| Error::Unavailable(e.to_string()))?;
-        let Some((_, registration)) = get(records, scope, &id).await? else { continue };
-        if !registration.active || !include(&registration.definition.owner) {
-            continue;
-        }
-        let summary = match tokio::time::timeout(std::time::Duration::from_secs(15), homes.inspect(&registration)).await
-        {
-            Ok(Ok(summary)) => summary,
-            result => Summary {
-                definition: registration.definition,
-                phase: Phase::Unavailable,
-                plan: String::new(),
-                latest: None,
-                reason: Some(match result {
-                    Ok(Err(error)) => error,
-                    _ => "the sentinel home did not answer".into(),
-                }),
-            },
-        };
-        result.push(summary);
-    }
-    Ok(result)
+    // Each read and each home asked a few at once, in the listing's order:
+    // a listing waits for its slowest sentinel, not for all of them in turn.
+    let listed: Vec<Result<Option<Summary>, Error>> = stream::iter(heads)
+        .map(|head| async move {
+            let id = head.key.parse().map_err(|e: fastctx_types::NameError| Error::Unavailable(e.to_string()))?;
+            let Some((_, registration)) = get_listed(records, scope, &id, &head).await? else { return Ok(None) };
+            if !registration.active || !include(&registration.definition.owner) {
+                return Ok(None);
+            }
+            Ok(Some(
+                match tokio::time::timeout(std::time::Duration::from_secs(15), homes.inspect(&registration)).await {
+                    Ok(Ok(summary)) => summary,
+                    result => Summary {
+                        definition: registration.definition,
+                        phase: Phase::Unavailable,
+                        plan: String::new(),
+                        latest: None,
+                        reason: Some(match result {
+                            Ok(Err(error)) => error,
+                            _ => "the sentinel home did not answer".into(),
+                        }),
+                    },
+                },
+            ))
+        })
+        .buffered(LISTED_AT_ONCE)
+        .collect()
+        .await;
+    listed.into_iter().filter_map(Result::transpose).collect()
 }
 pub async fn stop(
     records: &dyn Records,

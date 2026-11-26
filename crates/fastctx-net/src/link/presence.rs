@@ -25,24 +25,32 @@ impl Inner {
             }
             presences.insert(machine.clone(), (rev, presence.clone()));
         }
+        // Whether anything changed, and whether more than its numbers did.
         let changed = {
             let mut view = self.view.lock().expect("never poisoned");
             let now =
                 view.directory.members.iter().find(|member| member.name == machine).map(|member| Presence::of(member));
-            if rev <= view.presence || now.is_none_or(|now| now == presence) {
-                false
-            } else {
-                let mut next = View::clone(&view);
-                if let Some(member) = next.directory.members.iter_mut().find(|member| member.name == machine) {
-                    presence.apply(Arc::make_mut(member));
+            match now {
+                Some(now) if rev > view.presence && now != presence => {
+                    let more = Presence { numbers: None, ..now } != Presence { numbers: None, ..presence.clone() };
+                    let mut next = View::clone(&view);
+                    if let Some(member) = next.directory.members.iter_mut().find(|member| member.name == machine) {
+                        presence.apply(Arc::make_mut(member));
+                    }
+                    *view = Arc::new(next);
+                    Some(more)
                 }
-                *view = Arc::new(next);
-                true
+                _ => None,
             }
         };
-        if changed {
-            self.ways_changed();
-            self.node.presence_changed();
+        match changed {
+            Some(true) => {
+                self.ways_changed();
+                self.node.presence_changed();
+            }
+            // Its numbers alone: no way to it moved (`Node::numbers_changed`).
+            Some(false) => self.node.numbers_changed(),
+            None => {}
         }
     }
 

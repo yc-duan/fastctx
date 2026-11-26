@@ -44,7 +44,9 @@ pub(super) async fn catalog(
             // The first version's replicas follow the opener as it is: a
             // body's conversation whose opener went, or was made again, is
             // read through the body's scope alone (§29, 2.6).
-            .filter(|(conversation, opened)| directory.account(&conversation.account).is_some_and(|owner| owner.opened == *opened))
+            .filter(|(conversation, opened)| {
+                directory.account(&conversation.account).is_some_and(|owner| owner.opened == *opened)
+            })
             .collect::<Vec<_>>();
         let projects = directory
             .projects
@@ -74,6 +76,7 @@ pub(super) async fn catalog(
             document: Document::Plan { owner: address.clone() },
             version: plan.map(|entry| entry.metadata.version),
             retired: plan.is_some_and(|entry| entry.metadata.deleted),
+            deleted: false,
             history: None,
         });
         let scope = Scope::Conversation { conversation: conversation.clone() };
@@ -85,7 +88,21 @@ pub(super) async fn catalog(
                     document: Document::History { scope: scope.clone(), name: revision.name.clone() },
                     version: Some(revision.version),
                     retired: revision.retired,
+                    deleted: false,
                     history: Some(revision.clone()),
+                });
+            } else if entry.metadata.deleted
+                && let Some((_, name)) = entry.metadata.key.split_once('/')
+            {
+                // Deleted for good: a copy kept of it is withdrawn.
+                catalog.documents.push(Head {
+                    owner: conversation.account.clone(),
+                    opened,
+                    document: Document::History { scope: scope.clone(), name: name.into() },
+                    version: Some(entry.metadata.version),
+                    retired: true,
+                    deleted: true,
+                    history: None,
                 });
             }
         }
@@ -96,14 +113,28 @@ pub(super) async fn catalog(
         for (project, opened) in projects {
             let scope = Scope::Project { town: project.town.clone(), name: project.name.clone() };
             if let Some(ledger) = ledgers.towns.get(&project.town) {
-                for revision in ledger.history.catalog().documents {
+                let listed = ledger.history.catalog();
+                for revision in listed.documents {
                     catalog.documents.push(Head {
                         owner: project.owner.clone(),
                         opened,
                         document: Document::History { scope: scope.clone(), name: revision.name.clone() },
                         version: Some(revision.version),
                         retired: revision.retired,
+                        deleted: false,
                         history: Some(revision),
+                    });
+                }
+                // Deleted for good: a copy kept of it is withdrawn.
+                for (name, version) in listed.deleted {
+                    catalog.documents.push(Head {
+                        owner: project.owner.clone(),
+                        opened,
+                        document: Document::History { scope: scope.clone(), name },
+                        version: Some(version),
+                        retired: true,
+                        deleted: true,
+                        history: None,
                     });
                 }
             }

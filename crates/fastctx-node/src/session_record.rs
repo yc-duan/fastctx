@@ -141,7 +141,10 @@ pub(crate) fn page_each(
 /// whole record read (`history`): every event read, a page at a time and
 /// none held past `found` (design §28.51 ⑥) — one that cannot be read
 /// fails the reading wherever it stands, as it fails `history`.
-pub(crate) fn first<T>(directory: &ConversationDir, found: &mut dyn FnMut(SessionEvent) -> Option<T>) -> io::Result<Option<T>> {
+pub(crate) fn first<T>(
+    directory: &ConversationDir,
+    found: &mut dyn FnMut(SessionEvent) -> Option<T>,
+) -> io::Result<Option<T>> {
     let (mut after, mut through, mut first) = (0, None, None);
     loop {
         let (latest, next, count) = page_each(directory, after, through, 512, &mut |_, body| {
@@ -184,7 +187,6 @@ pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
     }
     Ok(result)
 }
-
 
 pub fn stamp(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
     digest(&latest(&ConversationDir::at(directory))?.to_be_bytes());

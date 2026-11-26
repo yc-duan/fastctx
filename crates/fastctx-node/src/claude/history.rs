@@ -9,11 +9,11 @@ use std::collections::HashSet;
 mod follow;
 pub(crate) mod kept;
 pub(crate) mod placement;
-pub(crate) use follow::{Accepting, Keep, Onward, PrefixIds, Stamp, key as left_key, onward, window};
 #[cfg(any(test, feature = "bench"))]
 pub(crate) use follow::read_on;
 #[cfg(test)]
 pub(crate) use follow::turns;
+pub(crate) use follow::{Accepting, Keep, Onward, PrefixIds, Stamp, key as left_key, onward, window};
 pub(crate) use placement::place;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -87,7 +87,15 @@ pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[
                     unread |= !whole;
                     unsettled |= !whole;
                     let stopped = read.refused.is_some();
-                    let (shown, problem) = session_events(node, resident, &id, began, read.title, read.events, (&read.problems, read.problems_omitted));
+                    let (shown, problem) = session_events(
+                        node,
+                        resident,
+                        &id,
+                        began,
+                        read.title,
+                        read.events,
+                        (&read.problems, read.problems_omitted),
+                    );
                     if stopped {
                         let mut kept = HashSet::new();
                         freeze(&mut kept, &shown);
@@ -118,7 +126,11 @@ pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[
 /// The events of `sessions` (the resident's, before its last), read whole as
 /// `hosted` reads them, and the ids of their records; none where one could
 /// not be read whole, so that all is read as ever.
-async fn earlier(node: &Arc<Node>, resident: &ResidentId, sessions: Vec<Session>) -> Option<(Vec<SessionEvent>, HashSet<String>)> {
+async fn earlier(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    sessions: Vec<Session>,
+) -> Option<(Vec<SessionEvent>, HashSet<String>)> {
     let root = exchange::sessions(node.world.path());
     let (mut events, mut ids) = (Vec::new(), HashSet::new());
     for Session { id, began, process, kept } in sessions {
@@ -128,7 +140,15 @@ async fn earlier(node: &Arc<Node>, resident: &ResidentId, sessions: Vec<Session>
             return None;
         }
         ids.extend(read.uuids.iter().cloned());
-        let (shown, _) = session_events(node, resident, &id, began, read.title, read.events, (&read.problems, read.problems_omitted));
+        let (shown, _) = session_events(
+            node,
+            resident,
+            &id,
+            began,
+            read.title,
+            read.events,
+            (&read.problems, read.problems_omitted),
+        );
         events.extend(shown);
     }
     Some((events, ids))
@@ -225,16 +245,23 @@ pub(crate) async fn hosted_kept(
                 // Read before it held all its mod saw kept: read again next
                 // time, not kept.
                 unread |= !whole;
-                fastctx_platform::task::blocking(move || holding.lock().expect("never poisoned").accept(&id, began, &read)).await?;
+                fastctx_platform::task::blocking(move || {
+                    holding.lock().expect("never poisoned").accept(&id, began, &read)
+                })
+                .await?;
             }
             Err(why) => {
                 unread = true;
                 let text = format!("Claude Code's record of session {id}: {why}");
-                fastctx_platform::task::blocking(move || holding.lock().expect("never poisoned").failed(began, text)).await?;
+                fastctx_platform::task::blocking(move || holding.lock().expect("never poisoned").failed(began, text))
+                    .await?;
             }
         }
     }
-    let reading = Arc::try_unwrap(reading).map_err(|_| "the reading is held still".to_string())?.into_inner().expect("never poisoned");
+    let reading = Arc::try_unwrap(reading)
+        .map_err(|_| "the reading is held still".to_string())?
+        .into_inner()
+        .expect("never poisoned");
     let (placed, early) = fastctx_platform::task::blocking(move || {
         // Placed in the turns of all the World's record (kept on disk,
         // design §28.51 ⑥-1), merged with all of it, its names and keys
@@ -250,8 +277,10 @@ pub(crate) async fn hosted_kept(
         };
         let placed = named.and_then(|(names, sent)| {
             fastctx_platform::roles::in_place("placing Claude history", || {
-                let projection = crate::context::input::Projection::open(&directory).map_err(|error| error.to_string())?;
-                let mut restore = |event: &mut SessionEvent| projection.restore(event).map_err(|error| error.to_string());
+                let projection =
+                    crate::context::input::Projection::open(&directory).map_err(|error| error.to_string())?;
+                let mut restore =
+                    |event: &mut SessionEvent| projection.restore(event).map_err(|error| error.to_string());
                 let world = kept::Placing::Kept { turns: world.turns(&heard), sent, names };
                 reading.place(world, &mut restore, &kept::Fresh(directory.clone()), early.as_ref(), &|_| false)
             })
@@ -326,7 +355,9 @@ async fn read_kept_into(
     };
     // Shared by the readings, not copied for each.
     let cuts = Arc::new(cuts);
-    let Some(kept) = kept else { return read_now_kept(node, resident, path, cuts, reading).await.map(|read| (read, true)) };
+    let Some(kept) = kept else {
+        return read_now_kept(node, resident, path, cuts, reading).await.map(|read| (read, true));
+    };
     let _waiting = fastctx_platform::doing::waiting_outside(
         format!("Claude Code to write {kept} to session {session}'s record"),
         WRITTEN_WITHIN,
@@ -393,9 +424,13 @@ async fn read_now_kept(
 ) -> Result<transcript::Transcript, String> {
     let mut overtaken = 0;
     loop {
-        let (reading_path, cuts, holding, node, whose) = (path.clone(), cuts.clone(), reading.clone(), node.clone(), resident.clone());
+        let (reading_path, cuts, holding, node, whose) =
+            (path.clone(), cuts.clone(), reading.clone(), node.clone(), resident.clone());
         let read = fastctx_platform::task::spawn_blocking(move || {
-            holding.lock().expect("never poisoned").read(&reading_path, &cuts, &mut |event| crate::user_images::claude(&node, &whose, event))
+            holding
+                .lock()
+                .expect("never poisoned")
+                .read(&reading_path, &cuts, &mut |event| crate::user_images::claude(&node, &whose, event))
         })
         .await
         .map_err(|error| format!("reading it: {error}"))?;
@@ -677,7 +712,10 @@ pub(crate) fn freeze(frozen: &mut HashSet<String>, shown: &[SessionEvent]) {
         }
         frozen.insert(crate::timeline::names::frozen(event));
         if matches!(event.happened, Happened::Heard { .. }) {
-            let restored = fastctx_types::session::attachments::restore(event.clone(), &fastctx_types::session::attachments::NoReceipts);
+            let restored = fastctx_types::session::attachments::restore(
+                event.clone(),
+                &fastctx_types::session::attachments::NoReceipts,
+            );
             frozen.extend(restored.iter().map(crate::timeline::names::frozen));
         }
     }
@@ -697,7 +735,10 @@ mod frozen {
     fn words_in_an_envelope_are_kept_as_restored() {
         let file = fastctx_types::attachments::Attachment {
             id: "desk-f-0001".parse().unwrap(),
-            owner: fastctx_types::Address { machine: "desk".parse().unwrap(), resident: "claude-a0a0".parse().unwrap() },
+            owner: fastctx_types::Address {
+                machine: "desk".parse().unwrap(),
+                resident: "claude-a0a0".parse().unwrap(),
+            },
             conversation: None,
             town: None,
             path: "Pasted text.txt".into(),
@@ -736,7 +777,12 @@ mod frozen {
         };
         let mut frozen = HashSet::new();
         freeze(&mut frozen, std::slice::from_ref(&event));
-        let placed = crate::talk::merged(Vec::new(), Some(vec![event]), "claude", &fastctx_types::session::attachments::NoReceipts);
+        let placed = crate::talk::merged(
+            Vec::new(),
+            Some(vec![event]),
+            "claude",
+            &fastctx_types::session::attachments::NoReceipts,
+        );
         assert!(!placed.is_empty());
         for event in &placed {
             let known = crate::timeline::names::frozen(event);

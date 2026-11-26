@@ -243,26 +243,28 @@ pub(crate) fn cut_streams(hub: &Hub) {
                 standings
                     .iter()
                     .find_map(|standing| {
-                        standing.identity_changed(&store).or_else(|| {
-                            directory
-                                .authorize(
-                                    &standing.account,
-                                    fastctx_net::authorization::Action::Call {
-                                        from: &standing.from,
-                                        to: &standing.to,
-                                        purpose: standing.purpose,
-                                    },
-                                )
-                                .err()
-                                .map(|error| error.message)
-                        })
-                        // Sealed meanwhile, a stream of anything but an
-                        // answer to work ends too (design §28.41).
-                        .or_else(|| {
-                            (standing.purpose != fastctx_types::access::Purpose::Echo)
-                                .then(|| crate::control::sealed(hub))
-                                .flatten()
-                        })
+                        standing
+                            .identity_changed(&store)
+                            .or_else(|| {
+                                directory
+                                    .authorize(
+                                        &standing.account,
+                                        fastctx_net::authorization::Action::Call {
+                                            from: &standing.from,
+                                            to: &standing.to,
+                                            purpose: standing.purpose,
+                                        },
+                                    )
+                                    .err()
+                                    .map(|error| error.message)
+                            })
+                            // Sealed meanwhile, a stream of anything but an
+                            // answer to work ends too (design §28.41).
+                            .or_else(|| {
+                                (standing.purpose != fastctx_types::access::Purpose::Echo)
+                                    .then(|| crate::control::sealed(hub))
+                                    .flatten()
+                            })
                     })
                     .map(|why| (stream, why))
             })
@@ -405,7 +407,20 @@ pub(crate) async fn end(
             match peer {
                 Ok((peer, cutting)) => {
                     let began = Instant::now();
-                    let carried = relay(socket, peer, cutting).await;
+                    // Whom the other end is, as what the pair was allowed under
+                    // names it: what passes to each is counted as written to it
+                    // (`crate::egress`).
+                    let other = hub.data.lock().expect("never poisoned").live.get(&stream).and_then(|live| {
+                        live.standings.first().map(|standing| {
+                            if standing.from == me { standing.to.clone() } else { standing.from.clone() }
+                        })
+                    });
+                    let passed = relay(socket, peer, cutting).await;
+                    hub.health.egress.added(&me, "data/relay", passed.returned.0, passed.returned.1);
+                    if let Some(other) = &other {
+                        hub.health.egress.added(other, "data/relay", passed.carried.0, passed.carried.1);
+                    }
+                    let carried = passed.carried.1 + passed.returned.1;
                     drop(active);
                     let took = began.elapsed();
                     TRANSFERS.record(took);
@@ -483,16 +498,24 @@ fn pair(
     Ok((source, sink, standings))
 }
 
+/// What a relay passed each way: from the first end to the second, and
+/// back, each as messages and bytes.
+#[derive(Default)]
+struct Passed {
+    carried: (u64, u64),
+    returned: (u64, u64),
+}
+
 /// Relays between the two ends until either is done or the pair is cut;
-/// returns how many bytes passed, both ways (codex-d515b194). An end
-/// that does not take a message within the silence ends the pair, as one
-/// that says nothing ends it at its own end.
-async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver<String>) -> u64 {
+/// returns what passed, each way (codex-d515b194). An end that does not
+/// take a message within the silence ends the pair, as one that says
+/// nothing ends it at its own end.
+async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver<String>) -> Passed {
     if !paired(&mut first).await || !paired(&mut second).await {
-        return 0;
+        return Passed::default();
     }
-    let mut carried = 0_u64;
-    let mut returned = 0_u64;
+    let mut carried = (0_u64, 0_u64);
+    let mut returned = (0_u64, 0_u64);
     let (first_pulse, second_pulse) = (crate::pulse_of(&first), crate::pulse_of(&second));
     let (mut first_sink, mut first_stream) = first.split();
     let (mut second_sink, mut second_stream) = second.split();
@@ -503,7 +526,8 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let forward = async {
         while let Some(Ok(message)) = first_stream.next().await {
             told(&first_pulse, &message);
-            carried += message.len() as u64;
+            carried.0 += 1;
+            carried.1 += message.len() as u64;
             if message.is_close() {
                 break;
             }
@@ -518,7 +542,8 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
             told(&second_pulse, &message);
-            returned += message.len() as u64;
+            returned.0 += 1;
+            returned.1 += message.len() as u64;
             if message.is_close() {
                 break;
             }
@@ -546,7 +571,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     };
     close(&mut first_sink, first_why).await;
     close(&mut second_sink, second_why).await;
-    carried + returned
+    Passed { carried, returned }
 }
 
 /// Closes an end of a pair, saying `why` when there is something to say.

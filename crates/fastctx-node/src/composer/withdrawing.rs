@@ -74,7 +74,9 @@ fn take_back(
     // Taken back, an upload still arriving would be left behind with the
     // queue entry it belonged to: the words wait until it has arrived.
     if !state.queue[position].document.view().uploads.is_empty() {
-        return Err(failure("an attachment of these words is still uploading; they stay in the queue until it arrives"));
+        return Err(failure(
+            "an attachment of these words is still uploading; they stay in the queue until it arrives",
+        ));
     }
     if state.draft.can_take_back(&state.queue[position].document).is_err() {
         return Err(failure("the input is full; the words stay in the queue, where they can be edited or removed"));

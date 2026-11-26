@@ -63,7 +63,7 @@ pub(super) fn follow(node: &Arc<Node>, key: &str, searching: &Arc<Searching>) {
                 searching.stop.load(Ordering::Relaxed),
             );
             if last != Some(now) {
-                node.topics.changed(fastctx_types::topics::LOGINS);
+                crate::logins::changed(&node);
                 last = Some(now);
             }
             drop(node);

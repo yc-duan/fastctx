@@ -25,6 +25,11 @@ pub struct Head {
     pub document: Document,
     pub version: Option<u64>,
     pub retired: bool,
+    /// A history document deleted for good, retired as well: its copy is
+    /// withdrawn as a retired one's, and its file written again starts the
+    /// document anew.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
     pub history: Option<HistoryRevision>,
 }
 

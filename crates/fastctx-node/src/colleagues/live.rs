@@ -366,7 +366,9 @@ mod lingering {
         came.notify_one();
         assert!(tokio::time::timeout(Duration::from_millis(400), &mut kept).await.is_err());
         drop(again);
-        assert!(tokio::time::timeout(Duration::from_secs(5), &mut kept).await.expect("ends after the linger").is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), &mut kept).await.expect("ends after the linger").is_none()
+        );
     }
 
     #[tokio::test]

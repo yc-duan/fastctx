@@ -50,9 +50,13 @@ pub enum Ask {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "told", rename_all = "snake_case")]
 pub enum Told {
-    Heads { heads: Vec<Head> },
+    Heads {
+        heads: Vec<Head>,
+    },
     /// Frames, their bodies following in order as one run of bytes.
-    Frames { frames: Vec<Frame> },
+    Frames {
+        frames: Vec<Frame>,
+    },
     /// The object `index` of an `Ask::Objects`: its bytes follow when it is
     /// `given`, and `why` says why not otherwise.
     Object {
@@ -63,7 +67,9 @@ pub enum Told {
     },
     /// The ask was refused: the permit does not stand, or what was asked for
     /// is not this machine's to give.
-    Failed { why: String },
+    Failed {
+        why: String,
+    },
     /// As much is being given as this machine gives at once: asked again
     /// shortly.
     Busy,

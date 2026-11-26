@@ -51,7 +51,7 @@ fn open_workbench(
 ) -> anyhow::Result<()> {
     use fastctx_types::logins::ChangeEnd;
     use fastctx_types::{Call, Reply};
-    let (_, machine) = crate::ask::call(Call::AgentLogins { machine: None })?;
+    let (_, machine) = crate::ask::call(Call::AgentLogins { machine: None, at_once: false })?;
     let machine = fastctx_types::access::Written { name: machine, hub: None };
     for (agent, dir) in homes {
         let call = Call::ChangeAgentLogin {

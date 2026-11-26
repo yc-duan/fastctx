@@ -38,7 +38,7 @@ impl Link {
                 .ok_or_else(|| format!("there is no project {name} on {}", self.hub_name()))
         };
         if matches!(&change, AccountChange::UpdateDue { batch: Some(_), .. }) {
-            self.inner.refresh().await?;
+            self.refresh_unless_current().await?;
         }
         self.check_account_change(&change)?;
         let wire = match change {
@@ -87,7 +87,9 @@ impl Link {
                     .await
                     .map(|()| None);
             }
-            AccountChange::Plan { machine, agent, home, plan, ultra } => Change::Plan { machine, agent, home, plan, ultra },
+            AccountChange::Plan { machine, agent, home, plan, ultra } => {
+                Change::Plan { machine, agent, home, plan, ultra }
+            }
             AccountChange::StopActing { machine } => Change::StopActing { machine },
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason, then } => Change::Remove { name, reason, then },
@@ -207,7 +209,9 @@ impl Link {
             }
             if !view.managing {
                 let hub = self.hub_name();
-                return Err(format!("the hub {hub} takes a share from no one but the login's owner; upgrade it for that"));
+                return Err(format!(
+                    "the hub {hub} takes a share from no one but the login's owner; upgrade it for that"
+                ));
             }
             let change = Change::Assist {
                 machine: assist.machine,

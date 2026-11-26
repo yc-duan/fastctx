@@ -25,12 +25,16 @@ export interface HistoryRevision {
   version: number;
   /** Taken down from the interface: models are no longer given it. */
   retired?: true;
+  /** Deleted for good: listed nowhere and read no more. */
+  deleted?: true;
   author: HistoryAuthor;
 }
 
 export interface HistoryCatalog {
   /** Each document's newest version, the latest changed first. */
   documents: HistoryRevision[];
+  /** The version each document deleted for good was deleted at, by name. */
+  deleted?: Record<string, number>;
 }
 
 export interface HistoryDocument {
@@ -73,6 +77,8 @@ export interface HistorySeam {
   retire(scope: HistoryScope, name: string, expected: number): Promise<HistoryRevision>;
   /** Takes a version's text as the newest, bringing a retired one back. */
   restore(scope: HistoryScope, name: string, version: number): Promise<HistoryRevision>;
+  /** Deletes the document for good, as it stands at `expected`. */
+  remove(scope: HistoryScope, name: string, expected: number): Promise<HistoryRevision>;
   /** Follows the catalog: as it stands, then after each change; the id
    *  resolves for `unwatch`. */
   watch(scope: HistoryScope, onCatalog: (catalog: HistoryCatalog) => void): Promise<number>;
@@ -84,6 +90,7 @@ export const history: HistorySeam = {
   save: (scope, name, text, expected) => invoke<HistoryRevision>("history_save", { scope, name, text, expected }),
   retire: (scope, name, expected) => invoke<HistoryRevision>("history_retire", { scope, name, expected }),
   restore: (scope, name, version) => invoke<HistoryRevision>("history_restore", { scope, name, version }),
+  remove: (scope, name, expected) => invoke<HistoryRevision>("history_delete", { scope, name, expected }),
   watch: (scope, onCatalog) =>
     observe<{ kind: "catalog"; catalog: HistoryCatalog }, number>("history_watch", { scope }, (piece) => {
       // A broken watch keeps the catalog last seen until it comes back.

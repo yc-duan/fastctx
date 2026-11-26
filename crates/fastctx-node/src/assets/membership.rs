@@ -40,7 +40,8 @@ pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<
     // What an earlier term left held here of streams this machine keeps
     // (`direct`) is not unsent: it ends with that term's holdings.
     let stays = super::standing::kept_here_of(node.link_of(hub).as_deref());
-    let network = match blocking(&assets.library, move |library| library.join_but(&theirs, &device, anew, stays)).await {
+    let network = match blocking(&assets.library, move |library| library.join_but(&theirs, &device, anew, stays)).await
+    {
         Ok(network) => network,
         Err(why) => {
             // Not joined: no earlier term stands in for it here meanwhile.
@@ -51,7 +52,9 @@ pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<
     if anew {
         match fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(mark)).await {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                node.log.line(format_args!("joined {hub} anew; its mark stays and the next joining is anew again: {error}"));
+                node.log.line(format_args!(
+                    "joined {hub} anew; its mark stays and the next joining is anew again: {error}"
+                ));
             }
             _ => {}
         }

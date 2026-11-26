@@ -101,6 +101,13 @@ impl WorldDir {
         self.root.join("node.lock")
     }
 
+    /// The process that took `node_lock` last, for whoever must end a holder
+    /// that no longer answers; it holds only while that process lives and
+    /// the lock is held.
+    pub fn node_holder(&self) -> PathBuf {
+        self.root.join("node.holder")
+    }
+
     /// Present while a system service keeps this World's node running: no
     /// one else starts a node for it then (`fastctx service node install`).
     pub fn node_service(&self) -> PathBuf {

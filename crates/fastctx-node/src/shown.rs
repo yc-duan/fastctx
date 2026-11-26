@@ -313,9 +313,10 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
                 // what the copies here have of it (§28.32).
                 last: match afoot {
                     Some(afoot) => Some(Box::new(reply(afoot))),
-                    None => fastctx_platform::roles::in_place("listing a machine's conversations from the copies here", || {
-                        crate::timeline::listed::of(node, &name)
-                    })
+                    None => fastctx_platform::roles::in_place(
+                        "listing a machine's conversations from the copies here",
+                        || crate::timeline::listed::of(node, &name),
+                    )
                     .map(Box::new),
                 },
                 machine: name,
@@ -388,6 +389,7 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
                 owner: machine.home.clone(),
                 group: machine.group.clone(),
                 rights,
+                numbers: machine.numbers.filter(|_| current),
             });
         }
         // This computer is decided as any machine is: a locked account

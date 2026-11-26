@@ -165,7 +165,9 @@ pub(crate) fn write_relaxed_at<T: Send + 'static>(
         return Err(io::Error::other(error.clone()));
     }
     database
-        .write_relaxed_now_at(priority, bytes, move |connection| action(&Rows { connection, conversation: &conversation }))
+        .write_relaxed_now_at(priority, bytes, move |connection| {
+            action(&Rows { connection, conversation: &conversation })
+        })
         .map_err(io::Error::other)
 }
 

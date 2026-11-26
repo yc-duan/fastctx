@@ -131,7 +131,16 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
     let (sink, stream) = socket.split();
     let mut beat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
     beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut io = Io { sink, stream, pulse, pace: Pace::default(), beat, heard: Instant::now() };
+    let mut io = Io {
+        sink,
+        stream,
+        pulse,
+        pace: Pace::default(),
+        beat,
+        heard: Instant::now(),
+        member: me.clone(),
+        hub: hub.clone(),
+    };
     let origin = Origin { name: me.clone(), key };
     if let Err(why) = run(&hub, &mut io, &origin).await {
         hub.log.line(format_args!("an asset line with {me}: {why}"));
@@ -148,10 +157,15 @@ struct Io {
     beat: tokio::time::Interval,
     /// When something of the member's own last came.
     heard: Instant,
+    /// Whose line it is, and the hub counting what goes down it
+    /// (`crate::egress`).
+    member: MachineName,
+    hub: Arc<Hub>,
 }
 
 impl Io {
     async fn put(&mut self, message: WsMessage) -> Result<(), String> {
+        self.hub.health.egress.added(&self.member, "assets/line", 1, message.len() as u64);
         write(&mut self.sink, &self.pulse, message).await
     }
 
@@ -219,7 +233,9 @@ impl Io {
                 }
                 Some(WsMessage::Binary(piece)) => bytes.extend_from_slice(&piece),
                 Some(_) => return Err("words came where bytes were due".into()),
-                None => return Err(format!("the member left, or sent none of the bytes due for {} s", SILENCE.as_secs())),
+                None => {
+                    return Err(format!("the member left, or sent none of the bytes due for {} s", SILENCE.as_secs()));
+                }
             }
         }
         Ok(bytes)
@@ -423,7 +439,9 @@ async fn run(hub: &Arc<Hub>, io: &mut Io, origin: &Origin) -> Result<(), String>
                         // each body sent apart is.
                         if bodies.len() as u64 > RUN_BYTES {
                             let (asker, key) = (origin.clone(), scope);
-                            let still = blocked(hub, io, origin, None, move |hub| objects::line_scope(&hub, &asker, &key)).await?;
+                            let still =
+                                blocked(hub, io, origin, None, move |hub| objects::line_scope(&hub, &asker, &key))
+                                    .await?;
                             if !matches!(still, Ok(Ok(_))) {
                                 return Err("the scope was withdrawn as its frames were given".into());
                             }
@@ -528,7 +546,8 @@ async fn take_object(
     prove: bool,
 ) -> Result<(), String> {
     let asker = origin.clone();
-    let asked = blocked(hub, io, origin, None, move |hub| objects::line_put(&hub, &asker, &scope, &object, prove)).await?;
+    let asked =
+        blocked(hub, io, origin, None, move |hub| objects::line_put(&hub, &asker, &scope, &object, prove)).await?;
     let (library, object) = match asked {
         Ok(Ok(Some(wanted))) => wanted,
         Ok(Ok(None)) => return io.tell(&Told::Held).await,
@@ -550,20 +569,20 @@ async fn take_object(
     }
     let holder = format!("upload:{}", origin.name);
     let kept = blocked(hub, io, origin, Some(taken), move |_| -> Result<(), String> {
-            if prove {
-                // Every byte, hashed: nothing is kept again.
-                if <[u8; 32]>::from(Sha256::digest(&bytes)) != object.hash {
-                    return Err("the bytes sent do not hash to the object".into());
-                }
-                return Ok(());
-            }
-            let lease = library.put(&mut bytes.as_slice(), &holder, LEASE).map_err(|error| error.to_string())?;
-            if lease.object != object {
+        if prove {
+            // Every byte, hashed: nothing is kept again.
+            if <[u8; 32]>::from(Sha256::digest(&bytes)) != object.hash {
                 return Err("the bytes sent do not hash to the object".into());
             }
-            Ok(())
-        })
-        .await?;
+            return Ok(());
+        }
+        let lease = library.put(&mut bytes.as_slice(), &holder, LEASE).map_err(|error| error.to_string())?;
+        if lease.object != object {
+            return Err("the bytes sent do not hash to the object".into());
+        }
+        Ok(())
+    })
+    .await?;
     match kept {
         Ok(()) => {
             // Every byte of it sent proves holding as well as a proof does.

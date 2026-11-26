@@ -80,6 +80,9 @@ pub struct Composers {
     /// The stop the user asked for in each conversation, until it ends
     /// (`submissions::stop_asked`); the composer state keeps it as well.
     stopping: Mutex<HashMap<ResidentId, submissions::Stop>>,
+    /// The conversations whose kept stop this node took already
+    /// (`submissions::restore_stop`): from then on the one in memory stands.
+    restored: Mutex<HashSet<ResidentId>>,
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
     legacy_refreshes: legacy_refresh::Refreshes,
@@ -105,6 +108,7 @@ pub async fn deleted(node: &Node, id: &ResidentId) -> Result<(), Failure> {
     node.composers.upload_failures.lock().expect("composer upload failures").remove(id);
     node.composers.holds.lock().expect("composer checkpoint failures").remove(id);
     node.composers.stopping.lock().expect("composer stops").remove(id);
+    node.composers.restored.lock().expect("composer stops").remove(id);
     settling::forget(node, id);
     Ok(())
 }

@@ -362,6 +362,9 @@ export class Fold {
   private claimedHeard = new Set<string>();
   /** Entries by key, and by their turn and item; tools by their call. */
   private byKey = new Map<string, Entry>();
+  /** The tools a word that no turn ran stood as cut off, by key, with the
+   *  end it gave them (`noTurnRuns`, `uncut`). */
+  private cutUnseen = new Map<string, object>();
   /** How words being sent are sent again or taken away, by their key. */
   private settlers = new Map<string, Settler>();
   private byItem = new Map<string, Keyed>();
@@ -491,6 +494,7 @@ export class Fold {
     this.byTurn.clear();
     this.heardIn.clear();
     this.endedTurns.clear();
+    this.cutUnseen.clear();
     this.over.clear();
     this.stretches.clear();
     this.pagedGroups = places !== undefined;
@@ -945,8 +949,10 @@ export class Fold {
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
+          if (shown.prose === "message") this.lastWordsTaken(event.turn, shown.text, true);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
+          this.lastWordsTaken(event.turn, event.text, true);
           this.overtaken(event.turn);
           this.add({
             kind: "prose",
@@ -1000,6 +1006,7 @@ export class Fold {
           }
         }
         this.endedTurns.add(event.turn);
+        this.lastWords(event.turn, event.end);
         this.add({ kind: "ended", key: `e:${event.turn}`, stamp: 0, at: 0, turn: event.turn, end: event.end });
         return;
       }
@@ -1183,9 +1190,37 @@ export class Fold {
     this.add({ kind: "health", key: `x:${this.currentPlace}`, stamp: 0, at: 0, health });
   }
 
+  /** A turn that ended telling its last words, where no message of it after
+   *  its last tool shows them — its machine told the end first, and the
+   *  record of the words is on its way (codex-d0397b85) — shows them from
+   *  its end until that message comes and takes their place (`item`). A
+   *  message of other words before them, as one telling how the work goes,
+   *  is not they (`sameWords`). */
+  private lastWords(turn: string, end: TurnEnd): void {
+    const words = end.last_message?.trim();
+    if (!words) return;
+    const entries = this.byTurn.get(turn) ?? [];
+    let tool = -1;
+    entries.forEach((entry, at) => {
+      if (entry.kind === "tool") tool = at;
+    });
+    if (entries.some((entry, at) => at > tool && entry.kind === "prose" && entry.prose === "message" && sameWords(entry.text, words, entry.writing))) return;
+    this.add({ kind: "prose", key: lastWordsKey(turn), stamp: 0, at: 0, item: LAST_WORDS, turn, prose: "message", text: words, writing: false, version: 0 });
+  }
+
+  /** A message of `turn` came, saying `text` so far (`coming`: more of it
+   *  may come): the last words shown from its end, where they are its
+   *  words, give it their place. */
+  private lastWordsTaken(turn: string, text: string, coming: boolean): void {
+    const key = lastWordsKey(turn);
+    const shown = this.byKey.get(key);
+    if (shown?.kind === "prose" && sameWords(text, shown.text, coming)) this.remove((entry) => entry.key === key);
+  }
+
   /** An item began or finished: shown where it first appeared, as it now
    *  stands. */
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
+    if (native.kind === "message") this.lastWordsTaken(turn, native.text, !finished);
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
@@ -1685,6 +1720,22 @@ export class Fold {
     for (const word of this.haltedWords) if (word.key === key) word.delivery = delivery;
   }
 
+  /** The tools of `turn`, which runs, that a word that no turn ran stood as
+   *  cut off (`noTurnRuns`), and nothing ended since: they run on, as far as
+   *  is known (`now`). One its host, or a stop, cut stays cut. */
+  private uncut(turn: string): void {
+    let changed = false;
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind === "tool" && entry.ended?.use === "cut" && this.cutUnseen.get(entry.key) === entry.ended) {
+        this.cutUnseen.delete(entry.key);
+        entry.ended = null;
+        this.touch(entry);
+        changed = true;
+      }
+    }
+    if (changed) this.clock += 1;
+  }
+
   /** The World says no turn runs: what is still shown under way here
    *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
@@ -1695,6 +1746,9 @@ export class Fold {
     for (const entry of this.entries) {
       if (entry.kind === "tool" && entry.ended === null) {
         entry.ended = { at, use: "cut" };
+        // Cut by this word alone, which a later one that the turn runs
+        // takes back (`uncut`).
+        this.cutUnseen.set(entry.key, entry.ended);
         this.touch(entry);
         changed = true;
       }
@@ -1820,6 +1874,10 @@ export class Fold {
       this.haltedUnseen = false;
     }
     if (busy && turn) this.underWay(turn, Date.now());
+    // A turn the machine says runs was not cut off: what an earlier word
+    // that none ran, laid over a reading that held it, stood as cut in it
+    // runs on.
+    if (busy && turn && !this.endedTurns.has(turn)) this.uncut(turn);
     if (!busy) {
       // No turn runs, but words the stop waits for may still be on their
       // way: kept by the machine, or not yet answered for. The stop of them
@@ -2226,4 +2284,41 @@ function askedText(words: string, questions: Asked[]): string {
 /** What was asked without stopping, as words said to the user. */
 function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
   return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: null, text: entry.text, status: "info", attachments: [] };
+}
+
+/** What ends a text a preview cut short (`timeline::preview`). */
+const CUT = "…";
+/** The fewest first characters a message cut short, or still coming in,
+ *  must share with the other to be taken for it. */
+const WORDS_AT_LEAST = 40;
+
+/** Whether a message saying `message` says the words a turn's end told it
+ *  ended with: the same whole; or, where either was cut short (and marked
+ *  so) or the message is still `coming` in, the same as far as it goes.
+ *  Two whole messages that differ anywhere are two. One saying nothing yet,
+ *  or too little to tell, is not. */
+function sameWords(message: string, told: string, coming: boolean): boolean {
+  const said = message.trim();
+  const words = told.trim();
+  if (said === "" || words === "") return false;
+  if (said === words) return true;
+  const cut = (text: string) => (text.endsWith(CUT) ? text.slice(0, -CUT.length).trimEnd() : null);
+  const begins = (part: string, whole: string) => part.length >= WORDS_AT_LEAST && whole.startsWith(part);
+  const saidCut = cut(said);
+  const wordsCut = cut(words);
+  if (saidCut !== null && wordsCut !== null) {
+    const shared = Math.min(saidCut.length, wordsCut.length);
+    return shared >= WORDS_AT_LEAST && saidCut.slice(0, shared) === wordsCut.slice(0, shared);
+  }
+  if (saidCut !== null) return begins(saidCut, words);
+  if (wordsCut !== null) return begins(wordsCut, said);
+  return coming && begins(said, words);
+}
+
+/** The item a turn's last words shown from its end stand as (`Fold.lastWords`). */
+const LAST_WORDS = "last-words";
+
+/** Where a turn's last words shown from its end are kept. */
+function lastWordsKey(turn: string): string {
+  return `w:${turn}`;
 }

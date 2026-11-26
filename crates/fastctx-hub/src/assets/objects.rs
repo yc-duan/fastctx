@@ -66,20 +66,48 @@ const RANGES_AT_ONCE: usize = 16_384;
 enum Ticket {
     /// `missing` names the chunks wanted; none for a large object put, whose
     /// digests come on the data connection first.
-    Put { machine: MachineName, key: [u8; 32], scope: Scope, object: ObjectRef, missing: Option<Vec<u64>>, prove: bool, at: Instant },
-    Get { machine: MachineName, key: [u8; 32], scope: Scope, object: ObjectRef, from: u64, at: Instant },
+    Put {
+        machine: MachineName,
+        key: [u8; 32],
+        scope: Scope,
+        object: ObjectRef,
+        missing: Option<Vec<u64>>,
+        prove: bool,
+        at: Instant,
+    },
+    Get {
+        machine: MachineName,
+        key: [u8; 32],
+        scope: Scope,
+        object: ObjectRef,
+        from: u64,
+        at: Instant,
+    },
     /// A frame body staged apart (`apart`).
-    Stage { machine: MachineName, key: [u8; 32], scope: Scope, size: u64, at: Instant },
+    Stage {
+        machine: MachineName,
+        key: [u8; 32],
+        scope: Scope,
+        size: u64,
+        at: Instant,
+    },
     /// The bodies of `stream`'s frames a reply sends apart.
-    Bodies { machine: MachineName, key: [u8; 32], scope: Scope, stream: String, at: Instant },
+    Bodies {
+        machine: MachineName,
+        key: [u8; 32],
+        scope: Scope,
+        stream: String,
+        at: Instant,
+    },
 }
 
 impl Ticket {
     fn holder(&self) -> (&MachineName, &[u8; 32]) {
         match self {
-            Self::Put { machine, key, .. } | Self::Get { machine, key, .. } | Self::Stage { machine, key, .. } | Self::Bodies { machine, key, .. } => {
-                (machine, key)
-            }
+            Self::Put { machine, key, .. }
+            | Self::Get { machine, key, .. }
+            | Self::Stage { machine, key, .. }
+            | Self::Bodies { machine, key, .. } => (machine, key),
         }
     }
 
@@ -91,11 +119,13 @@ impl Ticket {
 
     fn scope(&self) -> &Scope {
         match self {
-            Self::Put { scope, .. } | Self::Get { scope, .. } | Self::Stage { scope, .. } | Self::Bodies { scope, .. } => scope,
+            Self::Put { scope, .. }
+            | Self::Get { scope, .. }
+            | Self::Stage { scope, .. }
+            | Self::Bodies { scope, .. } => scope,
         }
     }
 }
-
 
 /// The tickets handed out, and the proofs of holding that stand, each under
 /// the key of the device that gave it.
@@ -261,7 +291,14 @@ fn ranges(indices: &[u64]) -> Vec<(u64, u64)> {
 /// A put asked on the control connection (`Request::Put`): which chunks
 /// are wanted, under what ticket; a large object's are said once its
 /// digests came on the data connection.
-pub(crate) fn put(assets: &Assets, machine: &MachineName, key: &PublicKey, scope: Scope, object: &WireObject, prove: bool) -> Result<Reply, String> {
+pub(crate) fn put(
+    assets: &Assets,
+    machine: &MachineName,
+    key: &PublicKey,
+    scope: Scope,
+    object: &WireObject,
+    prove: bool,
+) -> Result<Reply, String> {
     let object = local(object)?;
     let library = scopes::library(assets, &scope)?;
     let held = library.size(&object.hash).map_err(|error| error.to_string())?;
@@ -304,8 +341,20 @@ pub(crate) fn put(assets: &Assets, machine: &MachineName, key: &PublicKey, scope
 /// Room for a frame body of `size` bytes, too large for the control
 /// connection (`Request::Stage`): the ticket a data connection sends it
 /// under.
-pub(crate) fn stage(assets: &Assets, machine: &MachineName, key: &PublicKey, scope: Scope, size: u64) -> Result<Reply, String> {
-    let ticket = assets.objects.ticket(Ticket::Stage { machine: machine.clone(), key: *key.as_bytes(), scope, size, at: Instant::now() })?;
+pub(crate) fn stage(
+    assets: &Assets,
+    machine: &MachineName,
+    key: &PublicKey,
+    scope: Scope,
+    size: u64,
+) -> Result<Reply, String> {
+    let ticket = assets.objects.ticket(Ticket::Stage {
+        machine: machine.clone(),
+        key: *key.as_bytes(),
+        scope,
+        size,
+        at: Instant::now(),
+    })?;
     if let Err(why) = super::apart::stage(&assets.objects.apart, ticket, key.as_bytes(), size) {
         assets.objects.tickets.lock().expect("tickets").remove(&ticket);
         return Err(why);
@@ -322,7 +371,13 @@ pub(crate) fn send_apart(
     stream: &str,
     bodies: Vec<Vec<u8>>,
 ) -> Result<u64, String> {
-    let ticket = assets.objects.ticket(Ticket::Bodies { machine: machine.clone(), key: *key.as_bytes(), scope, stream: stream.to_string(), at: Instant::now() })?;
+    let ticket = assets.objects.ticket(Ticket::Bodies {
+        machine: machine.clone(),
+        key: *key.as_bytes(),
+        scope,
+        stream: stream.to_string(),
+        at: Instant::now(),
+    })?;
     if let Err(why) = super::apart::send_later(&assets.objects.apart, ticket, key.as_bytes(), bodies) {
         assets.objects.tickets.lock().expect("tickets").remove(&ticket);
         return Err(why);
@@ -332,9 +387,15 @@ pub(crate) fn send_apart(
 
 /// Whether `machine` reaches `object` in `scope`: through a stream of it
 /// the machine may hold (design §2.3), not merely through the scope.
-fn reachable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, library: &Library, object: &ObjectRef) -> Result<(), String> {
+fn reachable(
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    scope: &Scope,
+    library: &Library,
+    object: &ObjectRef,
+) -> Result<(), String> {
     let streams = library.streams_reading(&scope.descriptor.scope, &object.hash).map_err(|error| error.to_string())?;
-    if streams.iter().any(|stream| scopes::holds(directory, machine, scope, stream)) {
+    if streams.iter().any(|stream| scopes::serves(directory, machine, scope, stream)) {
         Ok(())
     } else {
         Err("the object is read through no stream of the scope this machine holds".into())
@@ -358,15 +419,28 @@ pub(crate) fn get(
     if library.size(&object.hash).map_err(|error| error.to_string())? != Some(object.size) {
         return Err("the hub does not hold the object".into());
     }
-    let ticket =
-        assets.objects.ticket(Ticket::Get { machine: machine.clone(), key: *key.as_bytes(), scope, object, from, at: Instant::now() })?;
+    let ticket = assets.objects.ticket(Ticket::Get {
+        machine: machine.clone(),
+        key: *key.as_bytes(),
+        scope,
+        object,
+        from,
+        at: Instant::now(),
+    })?;
     Ok(Reply::Get { ticket, manifest: Vec::new() })
 }
 
 /// Whether `me`, whose key is `key`, may go on with an object of `scope` —
 /// a get's `object` — by the directory as it stands now. Call on a thread
 /// that may block.
-fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: Option<&ObjectRef>, stream: Option<&str>) -> Result<(), String> {
+fn allowed(
+    hub: &Hub,
+    me: &MachineName,
+    key: &PublicKey,
+    scope: &Scope,
+    object: Option<&ObjectRef>,
+    stream: Option<&str>,
+) -> Result<(), String> {
     if let Some(why) = hub.assets.sealed() {
         return Err(format!("every asset is sealed: {why}"));
     }
@@ -392,7 +466,13 @@ fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: 
 }
 
 /// `allowed`, off the async threads.
-async fn still(hub: &Arc<Hub>, me: &MachineName, key: &PublicKey, scope: &Scope, object: Option<&ObjectRef>) -> Result<(), String> {
+async fn still(
+    hub: &Arc<Hub>,
+    me: &MachineName,
+    key: &PublicKey,
+    scope: &Scope,
+    object: Option<&ObjectRef>,
+) -> Result<(), String> {
     still_holding(hub, me, key, scope, object, None).await
 }
 
@@ -405,7 +485,8 @@ pub(super) async fn still_holding(
     object: Option<&ObjectRef>,
     stream: Option<&str>,
 ) -> Result<(), String> {
-    let (hub, me, key, scope, object, stream) = (hub.clone(), me.clone(), *key, scope.clone(), object.copied(), stream.map(str::to_string));
+    let (hub, me, key, scope, object, stream) =
+        (hub.clone(), me.clone(), *key, scope.clone(), object.copied(), stream.map(str::to_string));
     fastctx_platform::task::spawn_blocking(move || allowed(&hub, &me, &key, &scope, object.as_ref(), stream.as_deref()))
         .await
         .map_err(|error| error.to_string())?
@@ -439,10 +520,18 @@ pub(super) fn line_scope(hub: &Hub, origin: &crate::origin::Origin, key: &str) -
 /// An object an asset line gives `origin`, judged as a get's is by the
 /// directory as it stands now: the library it is read from. Call on a
 /// thread that may block.
-pub(super) fn line_object(hub: &Hub, origin: &crate::origin::Origin, scope: &Scope, object: &WireObject) -> Result<(Library, ObjectRef), String> {
+pub(super) fn line_object(
+    hub: &Hub,
+    origin: &crate::origin::Origin,
+    scope: &Scope,
+    object: &WireObject,
+) -> Result<(Library, ObjectRef), String> {
     let object = local(object)?;
     if object.size > fastctx_types::asset_lines::OBJECT_BYTES {
-        return Err(format!("an object over {} bytes travels under a ticket", fastctx_types::asset_lines::OBJECT_BYTES));
+        return Err(format!(
+            "an object over {} bytes travels under a ticket",
+            fastctx_types::asset_lines::OBJECT_BYTES
+        ));
     }
     allowed(hub, &origin.name, &origin.key, scope, Some(&object), None)?;
     let library = scopes::library(&hub.assets, scope)?;
@@ -466,7 +555,10 @@ pub(super) fn line_put(
 ) -> Result<Result<Option<(Library, ObjectRef)>, Reply>, String> {
     let object = local(object)?;
     if object.size > fastctx_types::asset_lines::OBJECT_BYTES {
-        return Err(format!("an object over {} bytes travels under a ticket", fastctx_types::asset_lines::OBJECT_BYTES));
+        return Err(format!(
+            "an object over {} bytes travels under a ticket",
+            fastctx_types::asset_lines::OBJECT_BYTES
+        ));
     }
     let kept = match line_scope(hub, origin, scope)? {
         Ok(kept) => kept,
@@ -485,7 +577,14 @@ pub(super) fn line_put(
 }
 
 /// The hub's end of an object's data connection under `ticket`.
-pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], key: PublicKey, proof: Signature, ticket: u64) {
+pub(crate) async fn serve(
+    hub: Arc<Hub>,
+    mut socket: Socket,
+    binding: [u8; 32],
+    key: PublicKey,
+    proof: Signature,
+    ticket: u64,
+) {
     let me = match hub.member(&key, &proof, &binding) {
         Ok(me) => me,
         Err(reason) => {
@@ -517,7 +616,9 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
         return;
     }
     let outcome = match ticket {
-        Ticket::Put { scope, object, missing, prove, .. } => take(&hub, socket, &me, &key, Put { scope, object, missing, prove }).await,
+        Ticket::Put { scope, object, missing, prove, .. } => {
+            take(&hub, socket, &me, &key, Put { scope, object, missing, prove }).await
+        }
         Ticket::Get { scope, object, from, .. } => give(&hub, socket, &me, &key, scope, object, from).await,
         Ticket::Stage { size, .. } => super::apart::receive(&hub, socket, &me, key.as_bytes(), number, size).await,
         Ticket::Bodies { .. } => {
@@ -576,7 +677,12 @@ impl<'a> Keeper<'a> {
 }
 
 /// `length` bytes the member sends, in as many messages as it likes.
-async fn bytes<S>(stream: &mut S, pulse: &Pulse, length: u64, mut keeper: Option<&mut Keeper<'_>>) -> Result<Vec<u8>, String>
+async fn bytes<S>(
+    stream: &mut S,
+    pulse: &Pulse,
+    length: u64,
+    mut keeper: Option<&mut Keeper<'_>>,
+) -> Result<Vec<u8>, String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
@@ -650,8 +756,13 @@ where
 }
 
 /// Runs `work` where blocking is allowed.
-pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> fastctx_content::Result<T> + Send + 'static) -> Result<T, String> {
-    fastctx_platform::task::spawn_blocking(work).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())
+pub(super) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> fastctx_content::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    fastctx_platform::task::spawn_blocking(work)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 /// Takes the chunks of an object put, or proved, under its ticket, and
@@ -793,7 +904,15 @@ fn keeping(me: &MachineName, object: &ObjectRef) -> fastctx_platform::doing::Out
 /// Sends a large object's digests, then its chunks from the chunk `from`,
 /// each its head then its bytes, and waits for the member's word that it
 /// has them all.
-async fn give(hub: &Arc<Hub>, socket: Socket, me: &MachineName, key: &PublicKey, scope: Scope, object: ObjectRef, from: u64) -> Result<(), String> {
+async fn give(
+    hub: &Arc<Hub>,
+    socket: Socket,
+    me: &MachineName,
+    key: &PublicKey,
+    scope: Scope,
+    object: ObjectRef,
+    from: u64,
+) -> Result<(), String> {
     let library = scopes::library(&hub.assets, &scope)?;
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
@@ -828,7 +947,8 @@ async fn give(hub: &Arc<Hub>, socket: Socket, me: &MachineName, key: &PublicKey,
             let length = (object.size - offset).min(CHUNK_BYTES) as u32;
             let reading = library.clone();
             let bytes = blocking(move || reading.read(&object.hash, offset, length)).await?;
-            let head = serde_json::to_string(&ChunkHead { index, size: bytes.len() as u64 }).expect("a head serializes");
+            let head =
+                serde_json::to_string(&ChunkHead { index, size: bytes.len() as u64 }).expect("a head serializes");
             write(&mut sink, &pulse, WsMessage::Text(head.into())).await?;
             for piece in bytes.chunks(pace.chunk()) {
                 let began = std::time::Instant::now();

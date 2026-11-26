@@ -36,14 +36,46 @@ pub(crate) enum Change {
 /// date to this hub's worker, to try again on their own. What the first
 /// failure was, if any.
 pub(crate) fn retry_later(node: &Arc<Node>, account: &HubAccount, failed: Vec<(Head, String)>) -> Option<String> {
-    let (_, first) = failed.first()?;
-    let error = format!("{} documents not synchronized; the first: {first}", failed.len());
+    let (first_head, first) = failed.first()?;
+    // Which they are, and as which version each is held here: a summary that
+    // names none tells no one what to look at.
+    let named: Vec<String> = failed.iter().take(NAMED).map(|(head, _)| named(head)).collect();
+    let more = failed.len().saturating_sub(NAMED);
+    let error = format!(
+        "{} documents not synchronized ({}{}); {}: {first}",
+        failed.len(),
+        named.join(", "),
+        if more > 0 { format!(" and {more} more") } else { String::new() },
+        named_first(first_head),
+    );
     start(node, &account.hub, false, |pending| {
         for (head, _) in failed {
             pending.documents.insert(super::state::identity(account, &head), (account.clone(), head));
         }
     });
     Some(error)
+}
+
+/// How many of the documents not synchronized a summary names.
+const NAMED: usize = 5;
+
+/// A document as a summary names it, with the version held here.
+fn named(head: &Head) -> String {
+    use fastctx_types::replicas::{Document, Scope};
+    let version = head.version.map_or_else(|| " (none held)".to_string(), |version| format!(" v{version}"));
+    match &head.document {
+        Document::Plan { owner } => format!("the plan of {}{version}", owner.resident),
+        Document::History { scope: Scope::Conversation { conversation }, name } => {
+            format!("note {name} of {}{version}", conversation.address.resident)
+        }
+        Document::History { scope: Scope::Project { name: project, .. }, name } => {
+            format!("note {name} of project {project}{version}")
+        }
+    }
+}
+
+fn named_first(head: &Head) -> String {
+    format!("the first, {}", named(head))
 }
 
 pub(crate) fn schedule(node: &Arc<Node>, hub: &HubId, change: Change) {

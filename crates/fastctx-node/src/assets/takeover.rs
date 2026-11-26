@@ -44,8 +44,8 @@ pub(crate) fn want(node: &Arc<Node>, hub: &HubId, scope: &str, stream: &str) {
     }
     let directory = assets.conversation_dir(resident_of(scope));
     let wish = (scope.to_string(), stream.to_string());
-    let adopted =
-        assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &assets.device());
+    let adopted = assets.adopting.lock().expect("adopting").contains(scope)
+        || super::release::adopting(&directory, hub.as_str(), scope, &assets.device());
     if !adopted && super::release::carried(&directory, hub.as_str(), scope, stream, &assets.device()).is_none() {
         // Said once: the producer asks again and again while it waits.
         if assets.unreleased.lock().expect("unreleased").insert(wish) {
@@ -72,8 +72,14 @@ pub(super) async fn run(
     key: &PublicKey,
     scope: &str,
 ) -> Result<(), String> {
-    let asked: Vec<String> =
-        assets.takeovers.lock().expect("takeovers").iter().filter(|(of, _)| of == scope).map(|(_, stream)| stream.clone()).collect();
+    let asked: Vec<String> = assets
+        .takeovers
+        .lock()
+        .expect("takeovers")
+        .iter()
+        .filter(|(of, _)| of == scope)
+        .map(|(_, stream)| stream.clone())
+        .collect();
     // An adopting not done is looked at again, its streams found since among
     // them (NN11, L05).
     if asked.is_empty() && !assets.adopting.lock().expect("adopting").contains(scope) {
@@ -146,7 +152,9 @@ pub(super) async fn run(
         let mut mine = true;
         for stream in released {
             let (scope_text, library) = (scope.to_string(), &assets.library);
-            mine &= blocking(library, move |library| library.orderer(&scope_text, &stream)).await?.is_some_and(|orderer| orderer == device);
+            mine &= blocking(library, move |library| library.orderer(&scope_text, &stream))
+                .await?
+                .is_some_and(|orderer| orderer == device);
         }
         if mine {
             let _ = super::release::clear_package(&directory);
@@ -159,7 +167,14 @@ pub(super) async fn run(
 }
 
 /// Takes `stream` of `scope` over; whether it is ordered here now.
-async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str) -> Result<bool, String> {
+async fn take_over(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+) -> Result<bool, String> {
     let library = &assets.library;
     let device = assets.device();
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
@@ -172,9 +187,10 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     let directory = assets.conversation_dir(resident_of(scope));
     // Adopted by the account's word, a package beside it — broken, it may
     // be — is not used (LL08).
-    let adopted =
-        assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &device);
-    let carried = if adopted { None } else { super::release::carried(&directory, hub.as_str(), scope, stream, &device) };
+    let adopted = assets.adopting.lock().expect("adopting").contains(scope)
+        || super::release::adopting(&directory, hub.as_str(), scope, &device);
+    let carried =
+        if adopted { None } else { super::release::carried(&directory, hub.as_str(), scope, stream, &device) };
     // A stream kept by the machine that orders it (`direct`) is not adopted
     // by the account's word: the hub holds too little of it to say where
     // another machine takes over, and one taken over there would order on
@@ -202,7 +218,8 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
         }
         let path = super::release::object_path(&directory, &hash);
         let lease = blocking(library, move |library| {
-            let mut file = fastctx_platform::disk::open(&path).map_err(|error| fastctx_content::Error::Invalid(error.to_string()))?;
+            let mut file = fastctx_platform::disk::open(&path)
+                .map_err(|error| fastctx_content::Error::Invalid(error.to_string()))?;
             library.put(&mut file, "release", fastctx_content::v2::LEASE)
         })
         .await?;
@@ -214,7 +231,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     for frame in carried.iter().flat_map(|carried| &carried.tail) {
         let (mut staged, mut proven, mut rounds) = (0, Vec::new(), 0);
         loop {
-            let Reply::Received { received } = super::apart::take(assets, link, scope, frame, &proven, &mut staged).await? else {
+            let Reply::Received { received } =
+                super::apart::take(assets, link, scope, frame, &proven, &mut staged).await?
+            else {
                 return Err("the hub did not take the predecessor's frame".into());
             };
             let (objects, prove) = match &received {
@@ -224,7 +243,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             };
             rounds += 1;
             if rounds > OBJECT_ROUNDS {
-                return Err(format!("{stream} of {scope}: the hub still wants the objects of the predecessor's frames"));
+                return Err(format!(
+                    "{stream} of {scope}: the hub still wants the objects of the predecessor's frames"
+                ));
             }
             proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
         }
@@ -242,7 +263,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
         if !matches!(imported, Imported::Applied { .. } | Imported::Already) {
             // Not caught up to where the hub took the predecessor's frames
             // up to: asked again once it is.
-            return Err(format!("{stream} of {scope}: the predecessor's frames do not follow what is here ({imported:?})"));
+            return Err(format!(
+                "{stream} of {scope}: the predecessor's frames do not follow what is here ({imported:?})"
+            ));
         }
     }
     // Under the release it carried; or, none, as the account that opened it
@@ -273,7 +296,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             // on since is history here (AN02); not before the stream here
             // reaches where it begins, asked again then (AP03).
             let scope_text = scope.to_string();
-            let taken = blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?;
+            let taken =
+                blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted))
+                    .await?;
             drop(leases);
             match not_taken(scope, stream, taken) {
                 Some(why) => Err(why),
@@ -293,14 +318,18 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
                 // opened as a takeover opens it (AQ01); not opened, the
                 // takeover is asked again, said why.
                 if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
-                    let taken = blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?;
+                    let taken = blocking(library, move |library| {
+                        library.take_over(&scope_text, signed, &super::session::Trusted)
+                    })
+                    .await?;
                     if let Some(why) = not_taken(scope, stream, taken) {
                         return Err(why);
                     }
                     opened |= taken == Taken::Opened;
                     continue;
                 }
-                blocking(library, move |library| library.accept_epoch(&scope_text, signed, &super::session::Trusted)).await?;
+                blocking(library, move |library| library.accept_epoch(&scope_text, signed, &super::session::Trusted))
+                    .await?;
             }
             Ok(opened)
         }
@@ -314,8 +343,12 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
 pub(super) fn not_taken(scope: &str, stream: &str, taken: Taken) -> Option<String> {
     match taken {
         Taken::Opened | Taken::History => None,
-        Taken::Behind => Some(format!("{stream} of {scope} here ends before the epoch handed over begins: it catches up first")),
-        Taken::Ahead => Some(format!("{stream} of {scope} here goes on past where the epoch handed over begins: it is not opened")),
+        Taken::Behind => {
+            Some(format!("{stream} of {scope} here ends before the epoch handed over begins: it catches up first"))
+        }
+        Taken::Ahead => {
+            Some(format!("{stream} of {scope} here goes on past where the epoch handed over begins: it is not opened"))
+        }
         Taken::Forked => Some(format!(
             "{stream} of {scope} here is written by another history than the epoch handed over follows: it is not opened"
         )),
@@ -332,7 +365,8 @@ pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> R
     };
     // Kept beside the conversation first: a node that stops goes on with it
     // when it starts (LL09).
-    super::release::adopt(&assets.conversation_dir(resident.as_str()), hub.as_str(), &scope, &assets.device()).map_err(|error| error.to_string())?;
+    super::release::adopt(&assets.conversation_dir(resident.as_str()), hub.as_str(), &scope, &assets.device())
+        .map_err(|error| error.to_string())?;
     assets.adopting.lock().expect("adopting").insert(scope.clone());
     assets.unreleased.lock().expect("unreleased").retain(|(of, _)| *of != scope);
     // Every stream of the conversation's scope another device orders now —
@@ -349,9 +383,10 @@ pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> R
             .collect())
     })()
     .map_err(|error| error.to_string())?;
-    for stream in theirs.iter().map(String::as_str).chain([<fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM]) {
+    for stream in
+        theirs.iter().map(String::as_str).chain([<fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM])
+    {
         want(node, &hub, &scope, stream);
     }
     Ok(())
 }
-

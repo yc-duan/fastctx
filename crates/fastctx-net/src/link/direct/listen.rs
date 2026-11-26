@@ -146,7 +146,8 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
     };
     if !takes_direct {
         log(format!("refused a connection on {path}: this machine only relays to the hub"));
-        let _ = peer::send(&mut socket, &Frame::Refused { reason: "this machine only relays to the hub".to_string() }).await;
+        let _ = peer::send(&mut socket, &Frame::Refused { reason: "this machine only relays to the hub".to_string() })
+            .await;
         return;
     }
     if path != peer::LINK_PATH && path != peer::DATA_PATH {

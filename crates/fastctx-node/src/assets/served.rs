@@ -13,6 +13,7 @@ use super::Assets;
 use super::direct::{CLOCKS_APART, machine_orders};
 use super::session::blocking;
 use crate::Node;
+use fastctx_content::v2::Header;
 use fastctx_net::data::Stream;
 use fastctx_net::link::Caller;
 use fastctx_platform::readings::counter_of;
@@ -21,7 +22,6 @@ use fastctx_types::asset_lines::{FRAME_BYTES, FRAMES, OBJECTS, RUN_BYTES};
 use fastctx_types::asset_peers::{Ask, Head, Permit, SCOPES, Told};
 use fastctx_types::assets::{self as wire};
 use fastctx_types::ipc::Failure;
-use fastctx_content::v2::Header;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,7 +74,14 @@ async fn refuse(stream: &mut Stream, why: String) -> Result<(), String> {
 }
 
 /// Where the streams this machine orders of `scopes` stand.
-async fn heads(assets: &Assets, hub: &HubId, caller: &Caller, stream: &mut Stream, permit: Permit, scopes: Vec<String>) -> Result<(), String> {
+async fn heads(
+    assets: &Assets,
+    hub: &HubId,
+    caller: &Caller,
+    stream: &mut Stream,
+    permit: Permit,
+    scopes: Vec<String>,
+) -> Result<(), String> {
     if scopes.len() > SCOPES {
         return refuse(stream, format!("where streams stand is asked of {SCOPES} scopes at a time at most")).await;
     }
@@ -94,8 +101,12 @@ async fn heads(assets: &Assets, hub: &HubId, caller: &Caller, stream: &mut Strea
             // What the hub once refused of a stream waits for the stream's
             // new epoch (`Library::waiting`): until it has one, the stream
             // stands, for those that hold a copy, where it was cut.
-            let cut: HashMap<String, u64> =
-                library.waiting(&scope)?.into_iter().filter(|(_, _, renewed)| !renewed).map(|(stream, cut, _)| (stream, cut)).collect();
+            let cut: HashMap<String, u64> = library
+                .waiting(&scope)?
+                .into_iter()
+                .filter(|(_, _, renewed)| !renewed)
+                .map(|(stream, cut, _)| (stream, cut))
+                .collect();
             for (name, next) in library.streams(&scope)? {
                 let next = cut.get(&name).map_or(next, |cut| next.min(*cut));
                 if next > 0 && own.contains(&name) && machine_orders(&name) {
@@ -142,16 +153,25 @@ async fn frames(
         // And nothing read while that changed: what was read may be of the
         // epoch before, cut away meanwhile; asked again, it is read anew.
         let waits = |library: &fastctx_content::v2::Library| {
-            Ok::<_, fastctx_content::Error>(library.waiting(&scope_text)?.into_iter().find(|(stream, _, _)| *stream == name_text).map(|(_, cut, renewed)| (cut, renewed)))
+            Ok::<_, fastctx_content::Error>(
+                library
+                    .waiting(&scope_text)?
+                    .into_iter()
+                    .find(|(stream, _, _)| *stream == name_text)
+                    .map(|(_, cut, renewed)| (cut, renewed)),
+            )
         };
         let before = waits(library)?;
-        let mut frames = library.export_within(&scope_text, &name_text, from, (most as usize).clamp(1, FRAMES), FRAME_BYTES)?;
+        let mut frames =
+            library.export_within(&scope_text, &name_text, from, (most as usize).clamp(1, FRAMES), FRAME_BYTES)?;
         let after = waits(library)?;
         if before != after {
             frames.clear();
         }
         if let Some((cut, false)) = after {
-            frames.retain(|frame| Header::decode(&frame.header).is_ok_and(|header| header.first + u64::from(header.count) <= cut));
+            frames.retain(|frame| {
+                Header::decode(&frame.header).is_ok_and(|header| header.first + u64::from(header.count) <= cut)
+            });
         }
         Ok(Some(frames))
     })
@@ -199,7 +219,9 @@ async fn objects(
     for (index, object) in wanted.into_iter().enumerate() {
         let index = index as u32;
         let Some(hash) = object.hash.array() else {
-            stream.tell(&Told::Object { index, given: false, why: "an object is named by its 32 bytes".into() }).await?;
+            stream
+                .tell(&Told::Object { index, given: false, why: "an object is named by its 32 bytes".into() })
+                .await?;
             continue;
         };
         let (scope_text, size) = (scope.clone(), object.size);
@@ -247,7 +269,8 @@ pub(crate) async fn serve(node: &Arc<Node>, hub: &HubId, caller: &Caller, mut st
         // Room is held while something is given, not while a line waits to
         // be asked on: as many given to at once as are, an ask waits its
         // turn a while, and is told to come again where none comes.
-        let Ok(Ok(_giving)) = tokio::time::timeout(WAITED_FOR, assets.direct.giving.clone().acquire_owned()).await else {
+        let Ok(Ok(_giving)) = tokio::time::timeout(WAITED_FOR, assets.direct.giving.clone().acquire_owned()).await
+        else {
             if stream.tell(&Told::Busy).await.is_err() {
                 return Ok(());
             }
@@ -258,7 +281,9 @@ pub(crate) async fn serve(node: &Arc<Node>, hub: &HubId, caller: &Caller, mut st
             Ask::Frames { permit, scope, stream: name, from, frames: most } => {
                 frames(assets, hub, caller, &mut stream, permit, scope, name, from, most).await
             }
-            Ask::Objects { permit, scope, objects: wanted } => objects(assets, hub, caller, &mut stream, permit, scope, wanted).await,
+            Ask::Objects { permit, scope, objects: wanted } => {
+                objects(assets, hub, caller, &mut stream, permit, scope, wanted).await
+            }
         };
         if let Err(why) = done {
             node.log.line(format_args!("giving {} what is kept here: {why}", caller.machine));

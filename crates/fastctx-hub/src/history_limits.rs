@@ -16,7 +16,8 @@ pub(crate) fn conversation(records: &crate::account_records::storage::Account, k
 }
 
 pub(crate) fn project(index: &fastctx_net::topic_history::Index, name: &str) -> Result<(), String> {
-    if index.latest(name).is_none() && index.document_count() >= MAX_DOCUMENTS {
+    // A name deleted for good, written again, is a new document.
+    if index.latest(name).is_none_or(|latest| latest.deleted) && index.document_count() >= MAX_DOCUMENTS {
         return Err(full());
     }
     Ok(())

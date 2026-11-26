@@ -67,7 +67,8 @@ pub(super) async fn produce(
     }
     let removed = node.residents.removed(resident);
     let title = node.residents.now(resident).and_then(|now| now.title);
-    let (reading, looked, asked, of, holds) = (library.clone(), scope.clone(), node.clone(), resident.clone(), held.clone());
+    let (reading, looked, asked, of, holds) =
+        (library.clone(), scope.clone(), node.clone(), resident.clone(), held.clone());
     let (options, kept_here) = fastctx_platform::task::blocking(move || {
         let _held = holds;
         let options = crate::session_options::read(&asked, &of)?;
@@ -83,7 +84,10 @@ pub(super) async fn produce(
     }
     let wanted: HashMap<&str, Option<Vec<u8>>> = HashMap::from([
         ("about", Some(serde_json::to_vec(&about).map_err(failure)?)),
-        ("place", Some(serde_json::to_vec(&serde_json::json!({ "project": town, "machine": lives })).map_err(failure)?)),
+        (
+            "place",
+            Some(serde_json::to_vec(&serde_json::json!({ "project": town, "machine": lives })).map_err(failure)?),
+        ),
         ("title", title.map(|title| serde_json::to_vec(&serde_json::json!({ "title": title })).unwrap_or_default())),
         (
             "options",
@@ -101,7 +105,8 @@ pub(super) async fn produce(
         // so, and the others are written all the same (J07).
         let value = wanted.get(item).cloned().flatten().map(|body| {
             if body.len() > ITEM_BYTES {
-                serde_json::to_vec(&serde_json::json!({ "omitted": "too large", "bytes": body.len() })).unwrap_or_default()
+                serde_json::to_vec(&serde_json::json!({ "omitted": "too large", "bytes": body.len() }))
+                    .unwrap_or_default()
             } else {
                 body
             }

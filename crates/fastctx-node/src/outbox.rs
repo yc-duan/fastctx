@@ -91,7 +91,7 @@ pub(crate) fn register(node: &Arc<Node>) {
             Outcome::Again { after: fastctx_net::again::backoff(failures) }
         })
     };
-    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES, ready: None }, Arc::new(run));
     let (database, jobs, mut ways) = (node.database.clone(), node.durable_jobs.clone(), node.ways.subscribe());
     fastctx_platform::task::spawn(async move {
         while ways.changed().await.is_ok() {

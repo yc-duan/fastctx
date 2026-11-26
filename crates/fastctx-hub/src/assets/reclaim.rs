@@ -93,7 +93,10 @@ impl Asked {
     fn finished(&self) -> Finished {
         Finished {
             said: self.said.clone(),
-            written: self.written.and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok()).map(|since| since.as_nanos()),
+            written: self
+                .written
+                .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_nanos()),
         }
     }
 }
@@ -180,7 +183,9 @@ impl Assets {
         // Through the hub, a conversation's streams are the hub's to keep:
         // its copies are the copies.
         if self.sync_version() < fastctx_types::assets::VOUCH {
-            report.failed.push(format!("conversations come through this hub ({}): nothing is let go", super::THROUGH_HUB));
+            report
+                .failed
+                .push(format!("conversations come through this hub ({}): nothing is let go", super::THROUGH_HUB));
             return finish(&mut report);
         }
         if let Some(why) = self.sealed() {
@@ -270,25 +275,29 @@ impl Assets {
                         drop(seal);
                         return stopped(&mut report, why);
                     }
-                    let marked = self.bodies.under_directory(&now.book.directory, |current| -> Result<fastctx_content::v2::Marked, String> {
-                        let index = fastctx_net::directory_index::Index::new(current);
-                        let indexed = fastctx_net::directory_index::Indexed::new(current, &index);
-                        let able: fastctx_content::v2::Able = library
-                            .vouchers(after, BATCH)
-                            .map_err(|error| error.to_string())?
-                            .into_iter()
-                            .filter_map(|voucher| {
-                                let (scope, key) = &voucher;
-                                let member = indexed.all.members.iter().find(|member| member.key.as_bytes() == key)?;
-                                let kept = super::scopes::scope(self, scope).ok().flatten()?;
-                                super::scopes::readable(&indexed, &member.name, &kept)
-                                    .then(|| (voucher.clone(), member.added.as_millisecond()))
-                            })
-                            .collect();
-                        library
-                            .mark_vouched(after, BATCH, fastctx_types::asset_peers::OBJECT_BYTES, apply, able)
-                            .map_err(|error| error.to_string())
-                    });
+                    let marked = self.bodies.under_directory(
+                        &now.book.directory,
+                        |current| -> Result<fastctx_content::v2::Marked, String> {
+                            let index = fastctx_net::directory_index::Index::new(current);
+                            let indexed = fastctx_net::directory_index::Indexed::new(current, &index);
+                            let able: fastctx_content::v2::Able = library
+                                .vouchers(after, BATCH)
+                                .map_err(|error| error.to_string())?
+                                .into_iter()
+                                .filter_map(|voucher| {
+                                    let (scope, key) = &voucher;
+                                    let member =
+                                        indexed.all.members.iter().find(|member| member.key.as_bytes() == key)?;
+                                    let kept = super::scopes::scope(self, scope).ok().flatten()?;
+                                    super::scopes::readable(&indexed, &member.name, &kept)
+                                        .then(|| (voucher.clone(), member.added.as_millisecond()))
+                                })
+                                .collect();
+                            library
+                                .mark_vouched(after, BATCH, fastctx_types::asset_peers::OBJECT_BYTES, apply, able)
+                                .map_err(|error| error.to_string())
+                        },
+                    );
                     drop(seal);
                     marked
                 };

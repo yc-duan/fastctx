@@ -290,11 +290,13 @@ impl Call {
                 use crate::history::HistoryCall;
                 match request {
                     HistoryCall::List { .. } | HistoryCall::Read { .. } => Response::Answer,
-                    HistoryCall::Save { .. } | HistoryCall::Retire { .. } | HistoryCall::Restore { .. } => {
-                        Response::Submit
-                    }
+                    HistoryCall::Save { .. }
+                    | HistoryCall::Retire { .. }
+                    | HistoryCall::Restore { .. }
+                    | HistoryCall::Delete { .. } => Response::Submit,
                 }
             }
+            Self::HistoryDelete { .. } => Response::Submit,
             Self::Timeline { request, .. } => timeline(request),
             Self::TimelinePreview { .. } => Response::Answer,
             // It waits for a change, as a timeline's `Moved` does.

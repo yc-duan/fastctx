@@ -66,6 +66,9 @@ fn serve() -> anyhow::Result<()> {
                 pending.planned.store(true, Ordering::SeqCst);
                 return ServiceControlHandlerResult::NoError;
             }
+            ServiceControl::UserEvent(code) if code.to_raw() == super::restart::RESTART => {
+                pending.restart.store(true, Ordering::SeqCst)
+            }
             ServiceControl::SessionChange(_)
             | ServiceControl::PowerEvent(_)
             | ServiceControl::TimeChange

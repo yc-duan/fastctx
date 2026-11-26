@@ -98,7 +98,8 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             }
         })
     };
-    node.durable_jobs.register(Kind { name: FORGETTING, at_once: 2, within: FORGETS_WITHIN, tries: 5 }, Arc::new(run));
+    node.durable_jobs
+        .register(Kind { name: FORGETTING, at_once: 2, within: FORGETS_WITHIN, tries: 5, ready: None }, Arc::new(run));
     let jobs = node.durable_jobs.clone();
     let database = node.database.clone();
     let node = Arc::downgrade(node);
@@ -124,7 +125,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             }
         })
     };
-    jobs.register(Kind { name: KIND, at_once: 1, within: WITHIN, tries: 5 }, Arc::new(run));
+    jobs.register(Kind { name: KIND, at_once: 1, within: WITHIN, tries: 5, ready: None }, Arc::new(run));
     // Asked for at each start: one that was set aside after failing is
     // tried again, and one that waits is the same job.
     fastctx_platform::task::spawn(async move {

@@ -17,9 +17,15 @@ use fastctx_types::{AccountName, MachineName};
 
 struct Machine(SecretKey);
 impl fastctx_content::v2::Signer for Machine {
-    fn device(&self) -> [u8; 32] { *self.0.public().as_bytes() }
-    fn key(&self) -> [u8; 32] { *self.0.public().as_bytes() }
-    fn sign(&self, header: &[u8]) -> Vec<u8> { self.0.sign(Domain::SyncSourceBatch, header).to_bytes().to_vec() }
+    fn device(&self) -> [u8; 32] {
+        *self.0.public().as_bytes()
+    }
+    fn key(&self) -> [u8; 32] {
+        *self.0.public().as_bytes()
+    }
+    fn sign(&self, header: &[u8]) -> Vec<u8> {
+        self.0.sign(Domain::SyncSourceBatch, header).to_bytes().to_vec()
+    }
 }
 
 fn member(name: &str, key: &SecretKey, account: &AccountName) -> Arc<Member> {
@@ -43,6 +49,7 @@ fn member(name: &str, key: &SecretKey, account: &AccountName) -> Arc<Member> {
         paths: None,
         strain: None,
         workbench: None,
+        numbers: None,
         settled: None,
     })
 }
@@ -111,13 +118,16 @@ fn found_out_only_by_receipts() {
     let dir = base.join("hub");
     let address: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
     let root = AccountName::try_from("root".to_string()).unwrap();
-    crate::init(&dir, crate::New {
-        name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
-        public: vec![address],
-        listen: address,
-        admin: root.clone(),
-        password: "a long enough password 123".into(),
-    })
+    crate::init(
+        &dir,
+        crate::New {
+            name: fastctx_types::HubName::try_from("lab".to_string()).unwrap(),
+            public: vec![address],
+            listen: address,
+            admin: root.clone(),
+            password: "a long enough password 123".into(),
+        },
+    )
     .unwrap();
     let k1 = SecretKey::generate().unwrap();
     let m1 = MachineName::try_from("m1".to_string()).unwrap();
@@ -130,7 +140,13 @@ fn found_out_only_by_receipts() {
     store.save_book().unwrap();
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
-    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
+    let describe = Request::Describe {
+        scope: conv.clone(),
+        readers,
+        classes: fastctx_types::assets::conversation_classes(),
+        born: Default::default(),
+        begun: None,
+    };
     let Reply::Described { descriptor } = ask(&store, &assets, describe).unwrap() else { panic!("described") };
 
     // The producer, m1: frame 0 taken and checkpointed.
@@ -140,14 +156,44 @@ fn found_out_only_by_receipts() {
     producer.install(&conv, descriptor.fact.0.clone(), 1).unwrap();
     let signer = Arc::new(Machine(SecretKey::from_seed(&k1.seed())));
     let commit = |item: &str| {
-        let record = KindRecord { kind: 1, schema: 1, record: Record { item: item.as_bytes().to_vec(), order: item.as_bytes().to_vec(), state: State::Is { body: item.as_bytes().to_vec(), objects: vec![] } } };
-        producer.raw_commit(Commit { scope: conv.clone(), stream: "timeline".into(), records: vec![record], leases: vec![], durable: true, op: None, holding: producer.holding(&conv).unwrap().unwrap() }, signer.clone()).unwrap();
+        let record = KindRecord {
+            kind: 1,
+            schema: 1,
+            record: Record {
+                item: item.as_bytes().to_vec(),
+                order: item.as_bytes().to_vec(),
+                state: State::Is { body: item.as_bytes().to_vec(), objects: vec![] },
+            },
+        };
+        producer
+            .raw_commit(
+                Commit {
+                    scope: conv.clone(),
+                    stream: "timeline".into(),
+                    records: vec![record],
+                    leases: vec![],
+                    durable: true,
+                    op: None,
+                    holding: producer.holding(&conv).unwrap().unwrap(),
+                },
+                signer.clone(),
+            )
+            .unwrap();
     };
     let wired = |first: u64| {
         let raw = producer.export(&conv, "timeline", first, 1).unwrap().remove(0);
-        (Header::decode(&raw.header).unwrap(), Frame { header: raw.header.into(), signature: raw.signature.into(), body: raw.body.into(), apart: 0 })
+        (
+            Header::decode(&raw.header).unwrap(),
+            Frame { header: raw.header.into(), signature: raw.signature.into(), body: raw.body.into(), apart: 0 },
+        )
     };
-    let take = |store: &crate::store::Store, assets: &Assets, frame: Frame| match ask(store, assets, Request::Take { scope: conv.clone(), frame, proven: vec![], staged: 0 }).unwrap() {
+    let take = |store: &crate::store::Store, assets: &Assets, frame: Frame| match ask(
+        store,
+        assets,
+        Request::Take { scope: conv.clone(), frame, proven: vec![], staged: 0 },
+    )
+    .unwrap()
+    {
         Reply::Received { received } => received,
         other => panic!("taken: {other:?}"),
     };
@@ -167,22 +213,41 @@ fn found_out_only_by_receipts() {
     let (store, assets) = open(&dir);
     commit("b");
     let (header1, frame1) = wired(1);
-    let Received::Applied { change, prefix, word, .. } = take(&store, &assets, frame1.clone()) else { panic!("applied") };
+    let Received::Applied { change, prefix, word, .. } = take(&store, &assets, frame1.clone()) else {
+        panic!("applied")
+    };
     assert_eq!(change, 2);
-    let applied = Reported { scope: conv.clone(), stream: "timeline".into(), epoch: 0, first: 1, digest: header1.digest.into(), said: Said::Applied { change, prefix }, word };
+    let applied = Reported {
+        scope: conv.clone(),
+        stream: "timeline".into(),
+        epoch: 0,
+        first: 1,
+        digest: header1.digest.into(),
+        said: Said::Applied { change, prefix },
+        word,
+    };
     commit("c");
     let (tail, _) = wired(2);
     producer.new_epoch(&conv, "timeline", 1, b"e1".to_vec()).unwrap();
     commit("d");
     let scope = scopes::scope(&assets, &conv).unwrap().unwrap();
     let library = scopes::library(&assets, &scope).unwrap();
-    let successor = Successor { device: *k1.public().as_bytes(), key: *k1.public().as_bytes(), kind: EpochKind::Source };
+    let successor =
+        Successor { device: *k1.public().as_bytes(), key: *k1.public().as_bytes(), kind: EpochKind::Source };
     library.open_epoch(&conv, "timeline", successor, assets.signer()).unwrap();
     let cut = Cutoff { next: 3, head: tail.chain() };
     library.handover(&conv, "timeline", successor, cut, serve::kinds(), assets.signer()).unwrap();
     let (header3, frame3) = wired(3);
     let Received::Parked { sequence, accumulated, word } = take(&store, &assets, frame3) else { panic!("parked") };
-    let parked = Reported { scope: conv.clone(), stream: "timeline".into(), epoch: 1, first: 3, digest: header3.digest.into(), said: Said::Parked { sequence, accumulated }, word };
+    let parked = Reported {
+        scope: conv.clone(),
+        stream: "timeline".into(),
+        epoch: 1,
+        first: 3,
+        digest: header3.digest.into(),
+        said: Said::Parked { sequence, accumulated },
+        word,
+    };
     drop((library, store, assets));
 
     for (receipt, said) in [(applied, "applied"), (parked, "parked")] {
@@ -190,10 +255,16 @@ fn found_out_only_by_receipts() {
         let (store, assets) = open(&dir);
         assert!(assets.sealed().is_none(), "{said}: the image tells nothing by itself: {:?}", assets.sealed());
         // A device that saw nothing newer is answered as the image says.
-        let open_with = |reported: Vec<Reported>| Request::Open { version: 1, seen: None, reported, pinned: None, lineage: vec![] };
-        assert!(matches!(ask(&store, &assets, open_with(vec![])).unwrap(), Reply::Ready { .. }), "{said}: an honest stale device");
+        let open_with =
+            |reported: Vec<Reported>| Request::Open { version: 1, seen: None, reported, pinned: None, lineage: vec![] };
+        assert!(
+            matches!(ask(&store, &assets, open_with(vec![])).unwrap(), Reply::Ready { .. }),
+            "{said}: an honest stale device"
+        );
         // The one with the receipt seals it as its session opens.
-        let Reply::Sealed { why, .. } = ask(&store, &assets, open_with(vec![receipt])).unwrap() else { panic!("{said}: sealed") };
+        let Reply::Sealed { why, .. } = ask(&store, &assets, open_with(vec![receipt])).unwrap() else {
+            panic!("{said}: sealed")
+        };
         assert!(why.contains("receipt"), "{said}: {why}");
         assert!(assets.sealed().is_some(), "{said}: and stays so");
         drop((store, assets));

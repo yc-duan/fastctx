@@ -39,7 +39,8 @@ pub(super) async fn produce(
     if !fastctx_platform::disk::exists(&folder).map_err(failure)? {
         return Ok(0);
     }
-    let Some(Beside { library, scope, holding }) = writable(node, resident, ConversationArtifact::STREAM, &held).await?
+    let Some(Beside { library, scope, holding }) =
+        writable(node, resident, ConversationArtifact::STREAM, &held).await?
     else {
         return Ok(0);
     };
@@ -86,7 +87,8 @@ pub(super) async fn produce(
             names.sort();
             // Every file, in parts of as many as a record refers to and a
             // body holds, written together (PP16, N16).
-            let mut parts: Vec<(Vec<serde_json::Value>, Vec<fastctx_content::ObjectRef>)> = vec![(Vec::new(), Vec::new())];
+            let mut parts: Vec<(Vec<serde_json::Value>, Vec<fastctx_content::ObjectRef>)> =
+                vec![(Vec::new(), Vec::new())];
             let mut listed = 0usize;
             for (name, file_path) in names {
                 let mut file = fastctx_platform::disk::open(&file_path).map_err(failure)?;

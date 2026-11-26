@@ -48,6 +48,7 @@ import { usageOf } from "./usage/model";
 import { assistingMe, namer } from "./usage/people";
 import type { UsageWords } from "./usage/words";
 import { waiting } from "./waiting";
+import { morph } from "./morph";
 
 type Agent = "codex" | "claude";
 
@@ -302,7 +303,7 @@ export class AgentLoginsPage implements Page {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
         this.problem = null;
-      } else if (heard) {
+      } else if (heard && heard.kind !== "asking") {
         this.record = null;
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
@@ -375,7 +376,7 @@ export class AgentLoginsPage implements Page {
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.body, () => {
-      this.body.innerHTML = html;
+      morph(this.body, html);
     });
   }
 

@@ -11,7 +11,6 @@ use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::*;
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{Found, Login, MachineLogins};
-use fastctx_types::remote::RemoteCall;
 
 use crate::Node;
 
@@ -114,8 +113,14 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
 }
 
 /// The agents on `machine`, or on this machine and each machine whoever
-/// asks (`acting`) may use.
-pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Written>) -> Result<WorldAgents, Failure> {
+/// asks (`acting`) may use: each other machine's as it last said them while
+/// that stands (`crate::elsewhere`); `at_once`, as `Call::Agents` says.
+pub async fn query(
+    node: &Arc<Node>,
+    acting: &Acting,
+    machine: Option<Written>,
+    at_once: bool,
+) -> Result<WorldAgents, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
     if machine.as_ref().is_none_or(|machine| node.is_here(machine)) {
@@ -150,7 +155,13 @@ pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Written>) 
         None if machine.is_none() => reachable,
         None => Vec::new(),
     };
-    let heard = crate::around::ask_each(reachable, |_| RemoteCall::Agents).await;
-    machines.extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.agents()));
+    let reading = crate::elsewhere::Reading::of(machine.as_ref(), at_once);
+    let (heard, asking) = crate::elsewhere::ask(node, crate::elsewhere::Kind::Agents, reachable, reading).await;
+    machines.extend(crate::elsewhere::listed(
+        heard,
+        asking,
+        |answers| answers.agents(),
+        |machine, observation| MachineAgents::Asking { observation, machine },
+    ));
     Ok(WorldAgents { machine: here, machines })
 }

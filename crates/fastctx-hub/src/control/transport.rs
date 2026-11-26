@@ -190,7 +190,7 @@ async fn read(
         // A heartbeat has bounded metadata and replaces its predecessor.
         // Preserve an unconsumed path change across later heartbeats that
         // omit paths; counters only move forward on this session.
-        if let Ok(Heartbeat { kind, n, took, paths, held, health, workbench }) =
+        if let Ok(Heartbeat { kind, n, took, paths, held, health, workbench, numbers }) =
             serde_json::from_slice::<Heartbeat>(&bytes)
             && kind == "ping"
         {
@@ -203,7 +203,15 @@ async fn read(
                     Some(Up::Ping { paths, .. }) => paths,
                     _ => None,
                 };
-                *previous = Some(Up::Ping { n, took, paths: paths.or(prior_paths), held, health, workbench });
+                *previous = Some(Up::Ping {
+                    n,
+                    took,
+                    paths: paths.or(prior_paths),
+                    held,
+                    health,
+                    workbench,
+                    numbers: numbers.map(Box::new),
+                });
             });
             continue;
         }
@@ -238,4 +246,6 @@ struct Heartbeat {
     health: Option<fastctx_types::health::Health>,
     #[serde(default)]
     workbench: Option<bool>,
+    #[serde(default)]
+    numbers: Option<fastctx_types::numbers::Numbers>,
 }

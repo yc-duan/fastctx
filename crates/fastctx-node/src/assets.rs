@@ -10,10 +10,11 @@
 //! (design §6.1).
 
 mod apart;
+pub(crate) mod copies;
 pub(crate) mod direct;
 mod hand_back;
+pub(crate) mod lazy;
 mod lines;
-pub(crate) mod copies;
 pub(crate) mod logs;
 pub(crate) mod membership;
 mod objects;
@@ -27,6 +28,13 @@ pub(crate) mod upkeep;
 mod vouch;
 
 pub(crate) use session::{Proposal, committed, pushed, shared_elsewhere, wake};
+
+/// Brings what the records taken from `hub` refer to and this machine has
+/// not yet, off the passes, now: a reader waits on one of them.
+pub(crate) fn fetch_soon(node: &Arc<crate::Node>, hub: &HubId) {
+    objects::lane(node, hub);
+    wake(node, hub);
+}
 
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
@@ -122,6 +130,9 @@ pub(crate) struct Assets {
     /// check or a giving back failed — looked at by themselves again until
     /// one does (HH03, HH06).
     pub(crate) relook: Mutex<std::collections::BTreeSet<String>>,
+    /// The streams whose frames, told moved while a turn of their scope was
+    /// under way, wait for that turn to end to be taken (`session::moved`).
+    pub(crate) moves_waiting: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Counted up as a conversation's description, place, title or
     /// archiving comes here from the hub: the World the interfaces are
     /// shown is worked out again, a machine that is away listed from the
@@ -173,6 +184,8 @@ pub(crate) struct Assets {
     /// Whether each account's copies of conversations living elsewhere are
     /// taken in here (`copies`).
     pub(crate) copies: copies::Copies,
+    /// The streams taken only once read that something read here (`lazy`).
+    pub(crate) lazy: lazy::Wanted,
     /// What is kept of taking conversations' streams from the machines that
     /// order them, and of giving this machine's own (`direct`).
     pub(crate) direct: direct::Direct,
@@ -189,6 +202,9 @@ pub(crate) struct Listed {
     pub(crate) whole: std::time::Instant,
     /// What decided what this machine may hold then, as the hub said.
     pub(crate) basis: String,
+    /// Where the hub's listing stood besides new scopes then
+    /// (`Reply::Holdings::epoch`); empty from a hub of before.
+    pub(crate) epoch: String,
 }
 
 /// The directory in the asset library's where readings are kept on disk.
@@ -241,8 +257,36 @@ impl Assets {
         // The kinds this machine knows: records of others wait in their
         // frames, out of the index, until a release that knows them, which
         // takes them in now (§2.3).
-        let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
-            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>().register::<fastctx_content::v2::ConversationWords>().register::<fastctx_content::v2::ConversationAttachment>().register::<fastctx_content::v2::JobFacts>().register::<fastctx_content::v2::JobOutput>().register::<fastctx_content::v2::ConversationPlan>().register::<fastctx_content::v2::ConversationHistory>().register::<fastctx_content::v2::ConversationGoal>().register::<fastctx_content::v2::ConversationSentinel>().register::<fastctx_content::v2::AccountSettings>().register::<fastctx_content::v2::AccountSkill>().register::<fastctx_content::v2::ProjectLedger>().register::<fastctx_content::v2::MachineAudit>().register::<fastctx_content::v2::AccountNotice>().register::<fastctx_content::v2::MachineLog>().register::<fastctx_content::v2::McpLog>().register::<fastctx_content::v2::HubLog>().register::<fastctx_content::v2::ConversationTimer>().register::<fastctx_content::v2::ConversationSentinelRun>().register::<fastctx_content::v2::ConversationArtifact>().register::<fastctx_content::v2::AccountProfile>().register::<fastctx_content::v2::AccountCollaboration>().register::<fastctx_content::v2::AccountActivity>().register::<fastctx_content::v2::AccountUsage>().register::<fastctx_content::v2::ConversationDraft>().register::<fastctx_content::v2::ConversationFileChange>());
+        let kinds: Arc<dyn fastctx_content::v2::Authorizer> = Arc::new(
+            fastctx_content::v2::Kinds::new()
+                .register::<fastctx_content::v2::Timeline>()
+                .register::<fastctx_content::v2::ConversationMeta>()
+                .register::<fastctx_content::v2::ConversationWords>()
+                .register::<fastctx_content::v2::ConversationAttachment>()
+                .register::<fastctx_content::v2::JobFacts>()
+                .register::<fastctx_content::v2::JobOutput>()
+                .register::<fastctx_content::v2::ConversationPlan>()
+                .register::<fastctx_content::v2::ConversationHistory>()
+                .register::<fastctx_content::v2::ConversationGoal>()
+                .register::<fastctx_content::v2::ConversationSentinel>()
+                .register::<fastctx_content::v2::AccountSettings>()
+                .register::<fastctx_content::v2::AccountSkill>()
+                .register::<fastctx_content::v2::ProjectLedger>()
+                .register::<fastctx_content::v2::MachineAudit>()
+                .register::<fastctx_content::v2::AccountNotice>()
+                .register::<fastctx_content::v2::MachineLog>()
+                .register::<fastctx_content::v2::McpLog>()
+                .register::<fastctx_content::v2::HubLog>()
+                .register::<fastctx_content::v2::ConversationTimer>()
+                .register::<fastctx_content::v2::ConversationSentinelRun>()
+                .register::<fastctx_content::v2::ConversationArtifact>()
+                .register::<fastctx_content::v2::AccountProfile>()
+                .register::<fastctx_content::v2::AccountCollaboration>()
+                .register::<fastctx_content::v2::AccountActivity>()
+                .register::<fastctx_content::v2::AccountUsage>()
+                .register::<fastctx_content::v2::ConversationDraft>()
+                .register::<fastctx_content::v2::ConversationFileChange>(),
+        );
         library.know(kinds.clone());
         library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");
@@ -272,6 +316,7 @@ impl Assets {
             looked: Mutex::new(HashMap::new()),
             uploads: Mutex::new(std::collections::BTreeSet::new()),
             relook: Mutex::new(std::collections::BTreeSet::new()),
+            moves_waiting: Mutex::new(std::collections::BTreeSet::new()),
             metadata_moved: tokio::sync::watch::channel(0).0,
             seeded: Mutex::new(std::collections::BTreeSet::new()),
             taken: Mutex::new(HashMap::new()),
@@ -289,6 +334,7 @@ impl Assets {
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
             rounds_later: Mutex::new(std::collections::BTreeSet::new()),
             copies: copies::Copies::open(&dir),
+            lazy: lazy::Wanted::new(&dir),
             direct: direct::Direct::default(),
             vouched: Default::default(),
         })
@@ -340,7 +386,12 @@ impl Assets {
     /// The hub's service key as pinned, pinning `offered` the first time,
     /// with the rotations the hub gave as its lineage. An error where the hub
     /// offers another key than the one pinned.
-    pub(crate) fn pin(&self, hub: &HubId, offered: &Bytes, rotations: &[fastctx_types::assets::Rotation]) -> Result<PublicKey, String> {
+    pub(crate) fn pin(
+        &self,
+        hub: &HubId,
+        offered: &Bytes,
+        rotations: &[fastctx_types::assets::Rotation],
+    ) -> Result<PublicKey, String> {
         let offered: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
         let mut hubs = self.hubs.lock().expect("hubs");
         match hubs.get(hub.as_str()) {
@@ -385,7 +436,12 @@ impl Assets {
     /// The hub's service key as pinned, pinning `offered` the first time, or
     /// following the hub's signed rotations from the key pinned to it (design
     /// §6.1). An error where no rotation leads from the one pinned.
-    pub(crate) fn pin_following(&self, hub: &HubId, offered: &Bytes, rotations: &[fastctx_types::assets::Rotation]) -> Result<PublicKey, String> {
+    pub(crate) fn pin_following(
+        &self,
+        hub: &HubId,
+        offered: &Bytes,
+        rotations: &[fastctx_types::assets::Rotation],
+    ) -> Result<PublicKey, String> {
         let offered_key: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
         let pinned = self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.key.array());
         let Some(mut at) = pinned else { return self.pin(hub, offered, rotations) };
@@ -412,7 +468,9 @@ impl Assets {
                 return Ok(PublicKey::from_bytes(offered_key));
             }
         }
-        Err(format!("the hub {hub} offers another service key than the one this machine pinned, and no rotation it signed leads to it"))
+        Err(format!(
+            "the hub {hub} offers another service key than the one this machine pinned, and no rotation it signed leads to it"
+        ))
     }
 
     /// The hub put the history this machine saw aside when it recovered
@@ -446,7 +504,8 @@ impl Assets {
         }
         let mut next = hubs.clone();
         if let Some(pinned) = next.get_mut(hub.as_str()) {
-            pinned.seen = Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
+            pinned.seen =
+                Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
         }
         if self.save(&next).is_err() {
             return false;

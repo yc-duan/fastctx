@@ -139,6 +139,12 @@ pub trait Node: Send + Sync + 'static {
     fn workbench(&self) -> Option<bool> {
         None
     }
+    /// The numbers this machine's answers to others stand at
+    /// (`crate::wire::Up::Ping::numbers`): told the hub with each heartbeat,
+    /// so it must answer at once.
+    fn numbers(&self) -> Option<fastctx_types::numbers::Numbers> {
+        None
+    }
     /// Takes the place a call from `from` takes here while it is answered,
     /// of the kind `pool` (`fastctx_types::contract::Pool`), before anything
     /// waits on it; or says why there is none: this machine is answering as
@@ -189,6 +195,13 @@ pub trait Node: Send + Sync + 'static {
     /// project contents are unchanged. Implementations may retain a full refresh.
     fn presence_changed(&self) {
         self.directory_changed();
+    }
+    /// Only what a member's answers stand at changed (`Presence::numbers`):
+    /// nothing of how it is reached, nor of what anyone may do. A machine at
+    /// work moves them every few seconds; what reads them follows, and no
+    /// more than that is done.
+    fn numbers_changed(&self) {
+        self.presence_changed();
     }
     /// An account record changed; consumers fetch the authoritative body as needed.
     fn account_record_changed(&self, _change: &fastctx_types::account_records::Changed) {}
@@ -826,6 +839,14 @@ impl Link {
         self.inner.afoot_elsewhere()
     }
 
+    /// What is afoot on the other machines the hub told of on the connection
+    /// up now, as `afoot`: one it told of only before, and not since (its
+    /// assets sealed, or no longer told whole), is left out, as what is
+    /// kept of it may not hold. None while no connection is up.
+    pub fn afoot_now(&self) -> std::collections::BTreeMap<MachineName, Elsewhere> {
+        self.inner.afoot_told_now()
+    }
+
     /// Whether `afoot` is what the session on now first told, or there is
     /// no session; false between a session's start and its first telling.
     pub fn afoot_ready(&self) -> bool {
@@ -854,6 +875,14 @@ impl Link {
     /// Asks the hub for this machine's view again.
     pub async fn refresh(&self) -> Result<(), String> {
         self.inner.refresh().await
+    }
+
+    /// Asks the hub for this machine's view again only where the view held is
+    /// not of the connection up now (`view_current`): while it is, the hub
+    /// tells each change of it as it happens, and asking again tells nothing
+    /// new.
+    pub async fn refresh_unless_current(&self) -> Result<(), String> {
+        if self.view_current() { Ok(()) } else { self.refresh().await }
     }
 
     /// Proves this machine is on the connection whose TLS exporter is
@@ -1489,7 +1518,10 @@ fn submits(question: &Question) -> bool {
                 | crate::wire::Change::DeleteProject { .. }
                 | crate::wire::Change::RenameGroup { .. }
                 | crate::wire::Change::SetRole { .. }
-                | crate::wire::Change::Direct { .. },
+                | crate::wire::Change::Direct { .. }
+                // Compared with the version read, written once under its name
+                // (H10): asked again after a lost answer, it is not refused.
+                | crate::wire::Change::Collab { .. },
             ..
         } | Question::Forget { .. }
         | Question::NetworkUpdates {

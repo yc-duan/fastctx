@@ -42,6 +42,15 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// Told when a deletion leaves a removal to do: the recovery that waits on
+/// it (`asked`) takes it up at once instead of on a timer.
+static ASKED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Resolves once a deletion left a removal to do since the last call.
+pub(crate) async fn asked() {
+    ASKED.notified().await;
+}
+
 fn removals(node: &Node) -> PathBuf {
     node.world.path().join("sentinel-owner-removals")
 }
@@ -71,12 +80,16 @@ pub(crate) fn note_deleted(node: &Node, id: &ResidentId) -> Result<(), String> {
     fastctx_agent::state::save(
         &removals(node).join(format!("{id}.json")),
         &Removal { owners, pending, since, failures: 0, next: None },
-    )
+    )?;
+    ASKED.notify_one();
+    Ok(())
 }
 
 /// One pass over the removals still pending and the markers left over; says
-/// what could not be done, each said once by the caller while it stays so.
-pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
+/// what could not be done, each said once by the caller while it stays so,
+/// and whether work is left that the next pass soon should take up: a
+/// removal still pending, or more markers than one pass lets go of.
+pub(crate) async fn recover(node: &Arc<Node>) -> (Vec<String>, bool) {
     let mut errors = Vec::new();
     let directory = removals(node);
     let entries = match fastctx_platform::task::blocking(move || {
@@ -87,18 +100,22 @@ pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => {
-            return vec![format!("reading sentinel owner removals: {e}")];
+            return (vec![format!("reading sentinel owner removals: {e}")], true);
         }
     };
+    let mut left = false;
     for entry in entries {
-        if let Err(error) = remove(node, entry.path(), &mut errors).await {
+        let path = entry.path();
+        if let Err(error) = remove(node, path.clone(), &mut errors).await {
             errors.push(format!("sentinel owner removal remains pending: {error}"));
         }
+        left |= fastctx_platform::disk::exists(&path).unwrap_or(true);
     }
-    if let Err(error) = let_markers_go(node).await {
-        errors.push(format!("letting go of deleted sentinel owners' markers: {error}"));
+    match let_markers_go(node).await {
+        Ok(more) => left |= more,
+        Err(error) => errors.push(format!("letting go of deleted sentinel owners' markers: {error}")),
     }
-    errors
+    (errors, left)
 }
 
 /// Asks each scope still pending of the removal at `path` to withdraw what
@@ -179,13 +196,14 @@ fn scopes(pending: &BTreeSet<HubAccount>) -> String {
 }
 
 /// Lets go of the markers of deleted owners with nothing left to withdraw
-/// and no tombstone left, a bounded number at a time.
-async fn let_markers_go(node: &Arc<Node>) -> std::io::Result<()> {
+/// and no tombstone left, a bounded number at a time: whether it stopped at
+/// that bound with more perhaps to let go of.
+async fn let_markers_go(node: &Arc<Node>) -> std::io::Result<bool> {
     let (markers, removals, tombstones) = (markers(node), removals(node), node.world.deleted());
     fastctx_platform::task::blocking(move || {
         let entries = match fastctx_platform::disk::read_dir(&markers) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
         };
         let mut gone = 0;
@@ -204,7 +222,7 @@ async fn let_markers_go(node: &Arc<Node>) -> std::io::Result<()> {
                 _ => gone += 1,
             }
         }
-        Ok(())
+        Ok(gone >= MARKERS_AT_ONCE)
     })
     .await
 }

@@ -105,6 +105,13 @@ pub struct Member {
     /// views, and none from a machine that never told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
+    /// The numbers its answers to others stand at, as it last told the hub,
+    /// while online, each only where this view's reader may ask it for that
+    /// kind (`fastctx_types::numbers`): a member keeping an answer knows when
+    /// to ask again (`crate::wire::Up::Ping::numbers`); none from a release
+    /// that does not tell them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbers: Option<fastctx_types::numbers::Numbers>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -134,6 +141,8 @@ pub struct Presence {
     pub strain: Option<Strain>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbers: Option<fastctx_types::numbers::Numbers>,
 }
 
 impl Presence {
@@ -147,6 +156,7 @@ impl Presence {
             paths: member.paths.clone(),
             strain: member.strain,
             workbench: member.workbench,
+            numbers: member.numbers,
         }
     }
 
@@ -159,6 +169,7 @@ impl Presence {
         member.paths = self.paths.clone();
         member.strain = self.strain;
         member.workbench = self.workbench;
+        member.numbers = self.numbers;
     }
 }
 
@@ -752,7 +763,8 @@ impl Directory {
                     .shares
                     .iter()
                     .filter(|share| {
-                        share.machine == member.name && (share.pending.is_some() || self.holds(&share.account, &member.name))
+                        share.machine == member.name
+                            && (share.pending.is_some() || self.holds(&share.account, &member.name))
                     })
                     .all(|share| {
                         // A waiting share is judged as it will be: what holding
@@ -948,6 +960,11 @@ pub struct View {
     /// Plan operations and their authorized return from remote jobs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub conversation_plans: bool,
+    /// History documents are deleted for good: a project's deletion leaves
+    /// its catalog and its versions are read no more, a conversation's record
+    /// goes with every version. A hub before it keeps a deletion as taken down.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_deletion: bool,
     /// Versioned plan history and working-copy merges.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan_copies: bool,
@@ -1091,6 +1108,7 @@ impl View {
             profiles: false,
             account_records: false,
             conversation_plans: false,
+            history_deletion: false,
             plan_copies: false,
             skill_files: false,
             record_keys: false,

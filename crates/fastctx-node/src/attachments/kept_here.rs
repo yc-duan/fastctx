@@ -75,7 +75,8 @@ pub(crate) async fn original(node: &Arc<Node>, receipt: &Attachment) -> Option<P
         }
         fastctx_platform::disk::create_dir_all(&folder).ok()?;
         let name: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
-        let path = folder.join(format!("{name}-{}", std::process::id() as u64 ^ jiff::Timestamp::now().as_nanosecond() as u64));
+        let path = folder
+            .join(format!("{name}-{}", std::process::id() as u64 ^ jiff::Timestamp::now().as_nanosecond() as u64));
         let passing = Passing(path.clone());
         let mut out = fastctx_platform::disk::create(&path).ok()?;
         let mut at = 0u64;
@@ -94,7 +95,8 @@ pub(crate) async fn original(node: &Arc<Node>, receipt: &Attachment) -> Option<P
 
 /// Whether any original is written out to be read now.
 pub(crate) fn passing(node: &Node) -> bool {
-    fastctx_platform::disk::read_dir(node.world.path().join("passing")).is_ok_and(|mut entries| entries.next().is_some())
+    fastctx_platform::disk::read_dir(node.world.path().join("passing"))
+        .is_ok_and(|mut entries| entries.next().is_some())
 }
 
 /// What a stop left of originals written out to read: none is read any

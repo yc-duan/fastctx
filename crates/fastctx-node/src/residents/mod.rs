@@ -23,8 +23,8 @@ mod records;
 mod removal;
 pub(crate) mod speaking;
 mod tombstones;
-pub use removal::removal;
 pub(crate) use removal::Takes;
+pub use removal::removal;
 pub use tombstones::Tombstone;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -949,6 +949,11 @@ impl Residents {
         id: &ResidentId,
     ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
         self.lock().live.contains_key(id).then(|| self.paying.get_or_insert_with(id, || crate::ranked::paying(id)))
+    }
+
+    /// The ids of every resident here, without reading any of them.
+    pub(crate) fn ids(&self) -> std::collections::HashSet<ResidentId> {
+        self.lock().live.ids().collect()
     }
 
     /// Every resident on record.

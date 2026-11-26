@@ -19,10 +19,12 @@ import type { ProjectWords } from "./words";
 import { agentName } from "../world/names";
 import type { HistoryAuthor, HistoryCatalog, HistoryRevision } from "../world/history";
 import type { HistoryWords } from "./history-words";
+import { followHistory, historyFind, historyRows } from "./history-list";
 import type { SentinelPhase, SentinelSummary } from "../world/sentinels";
 import { hubOf } from "./hub-model";
 import { hubPicture, type HubViewOptions } from "./hub-view";
 import "./hub.css";
+import { morph } from "../app/morph";
 
 export interface ProjectOptions {
   words: ProjectWords;
@@ -86,6 +88,8 @@ export class ProjectPage {
   private drawn = "";
   /** Its history as last read; none while it is not offered or unread. */
   private catalog: HistoryCatalog | null = null;
+  /** What the box above its history finds documents by. */
+  private historyQuery = "";
   private last: { map: MapView; who: WorldWho; now: Date } | null = null;
   /** Each conversation's plan as last read, by `resident@machine`. */
   private plans: ReadonlyMap<string, string | null> = new Map();
@@ -115,6 +119,9 @@ export class ProjectPage {
     });
     this.element.querySelector(".revise")!.addEventListener("click", () => {
       if (this.record) options.revise(options.town, this.record);
+    });
+    followHistory(this.element, (query) => {
+      this.historyQuery = query;
     });
     this.element.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-write-history]")) options.history?.write(options.town);
@@ -216,7 +223,7 @@ export class ProjectPage {
       this.drawn = board;
       redrawKeepingFocus(this.element, () => {
         this.intro.innerHTML = "";
-        this.board.innerHTML = board;
+        morph(this.board, board);
         this.choose();
       });
     }
@@ -261,20 +268,18 @@ export class ProjectPage {
     const write = `<button class="text-button start-history" type="button" data-write-history>${glyph("plus", 16)}<span>${escape(words.newDocument)}</span></button>`;
     if (!catalog.documents.length) return [["history", words.history, `<p class="quiet">${escape(words.noDocuments)}</p>${write}`]];
     const changed = (one: HistoryRevision) => Date.parse(one.author.at);
-    const sorted = [...catalog.documents].sort((a, b) => Number(a.retired === true) - Number(b.retired === true) || changed(b) - changed(a));
-    const rows = sorted
-      .map((one) => {
-        const said = words.changed(history.writer(one.author), this.options.home.ago(now.getTime() - changed(one)));
-        return `<li><a class="page-link history-link" href="${escape(history.link(town, one.name))}" title="${escape(said)}">
-          <span class="page-link-glyph">${glyph("journal", 18)}</span>
-          <span class="page-link-body">
-            <span class="page-link-title">${escape(one.name)}${one.retired ? `<span class="tag">${escape(words.retired)}</span>` : ""}</span>
-            <span class="page-link-about">${escape(one.description)}</span>
-          </span>
-        </a></li>`;
-      })
-      .join("");
-    return [["history", words.history, `<ul class="page-links">${rows}</ul>${write}`]];
+    const rows = historyRows(
+      catalog.documents,
+      {
+        link: (name) => history.link(town, name),
+        retired: words.retired,
+        title: (one) => words.changed(history.writer(one.author), this.options.home.ago(now.getTime() - changed(one))),
+        changed,
+      },
+      this.historyQuery,
+    );
+    const find = historyFind(words.find, words.noneFound, this.historyQuery, catalog.documents);
+    return [["history", words.history, `${find}${rows}${write}`]];
   }
 
   private places(map: MapView): string {

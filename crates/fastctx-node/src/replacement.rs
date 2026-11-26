@@ -107,6 +107,18 @@ pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
                     plan.retry.postpone(jiff::Timestamp::now());
                     store::save(&root, &plan)?;
                 }
+                // The service's node takes the World from a bridge its
+                // renewal left (`world_holder`); asked here at once.
+                let asked = runtime.block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_secs(10),
+                        fastctx_client::renewal::request(&world, fastctx_types::renewal::Action::Yield),
+                    )
+                    .await
+                });
+                if !matches!(asked, Ok(Ok(()))) {
+                    eprintln!("fastctx renew: the bridge left serving did not take the request to hand the World over");
+                }
                 break;
             }
             std::thread::sleep(Duration::from_millis(250));

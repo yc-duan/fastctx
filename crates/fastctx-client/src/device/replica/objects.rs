@@ -41,7 +41,11 @@ pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> (
     // ones neither holds up the short ones after them nor makes the look
     // come round at once for nothing (codex-f92d833e phone #7).
     let theirs = hub.as_str().to_string();
-    let wanted = match blocking(library, move |library| library.wanted_within(&theirs, FETCHED_AT_ONCE, &skipped, at_most)).await {
+    let wanted = match blocking(library, move |library| {
+        library.wanted_within(&theirs, FETCHED_AT_ONCE, &skipped, at_most)
+    })
+    .await
+    {
         Ok(wanted) => wanted,
         Err(why) => return (vec![format!("listing the objects wanted: {why}")], false),
     };
@@ -61,7 +65,13 @@ pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> (
 }
 
 /// Fetches `object` of `scope` from the hub, remembering a failure.
-pub(super) async fn fetch_now(replica: &Replica, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+pub(super) async fn fetch_now(
+    replica: &Replica,
+    hub: &HubId,
+    link: &Arc<Link>,
+    scope: &str,
+    object: ObjectRef,
+) -> Result<(), String> {
     let library = &replica.library;
     match fetch_one(replica, link, scope, object).await {
         Ok(()) => {
@@ -108,7 +118,8 @@ async fn fetch_one(replica: &Replica, link: &Arc<Link>, scope: &str, object: Obj
     let mut incoming = link.get_object(ticket).await?;
     let digests = incoming.manifest(chunks(object.size)).await?;
     let resumed = transfer.is_some();
-    let Some(started) = blocking(library, move |library| library.receive(object, digests, Some("hub".into()))).await? else {
+    let Some(started) = blocking(library, move |library| library.receive(object, digests, Some("hub".into()))).await?
+    else {
         return incoming.done().await;
     };
     if resumed && from > 0 && started.missing().first().copied().unwrap_or(0) < from {

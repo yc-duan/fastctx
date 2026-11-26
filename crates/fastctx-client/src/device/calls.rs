@@ -558,7 +558,7 @@ impl Device {
             Call::Who { all, town, since } => return Ok((Reply::Who(self.who(all, town, since).await?), here())),
             Call::Since { since, town } => return Ok((Reply::Since(self.since(since, town).await?), here())),
             Call::Look { ids } => return Ok((Reply::Looked { looked: self.look(ids).await? }, here())),
-            Call::Agents { machine } => return Ok((Reply::Agents(self.agents(machine).await?), here())),
+            Call::Agents { machine, .. } => return Ok((Reply::Agents(self.agents(machine).await?), here())),
             Call::AttachmentPlaces { target, machine, account: selected, preferred } => {
                 if machine.is_none() && matches!(target, fastctx_types::attachments::UploadTarget::New { .. }) {
                     let places = self.unattached_places(selected.as_ref(), preferred.as_ref())?;
@@ -615,7 +615,7 @@ impl Device {
                     _ => Err(failed("the conversation machine did not list attachment destinations")),
                 };
             }
-            Call::AgentLogins { machine } => {
+            Call::AgentLogins { machine, .. } => {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),

@@ -74,7 +74,11 @@ impl Pins {
 
     /// Writes `change` of the hubs kept, on the disk before in memory, all
     /// under the one lock it was judged under.
-    fn change(&self, hubs: &mut BTreeMap<String, Pinned>, change: impl FnOnce(&mut BTreeMap<String, Pinned>)) -> io::Result<()> {
+    fn change(
+        &self,
+        hubs: &mut BTreeMap<String, Pinned>,
+        change: impl FnOnce(&mut BTreeMap<String, Pinned>),
+    ) -> io::Result<()> {
         let mut next = hubs.clone();
         change(&mut next);
         self.save(&next)?;
@@ -99,7 +103,12 @@ impl Pins {
     /// The hub's service key as pinned: `offered` the first time, or the key
     /// the hub's signed rotations lead to from the one pinned. An error
     /// where none leads to it.
-    pub(super) fn pin_following(&self, hub: &HubId, offered: &Bytes, rotations: &[Rotation]) -> Result<PublicKey, String> {
+    pub(super) fn pin_following(
+        &self,
+        hub: &HubId,
+        offered: &Bytes,
+        rotations: &[Rotation],
+    ) -> Result<PublicKey, String> {
         let offered_key: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
         let mut hubs = self.hubs.lock().expect("hubs");
         let pinned = hubs.get(hub.as_str()).and_then(|pinned| pinned.key.array());
@@ -132,9 +141,9 @@ impl Pins {
                 ));
             }
         }
-        let grows = hubs
-            .get(hub.as_str())
-            .is_some_and(|pinned| pinned.key.array() != Some(offered_key) || grow(&mut pinned.lineage.clone(), rotations));
+        let grows = hubs.get(hub.as_str()).is_some_and(|pinned| {
+            pinned.key.array() != Some(offered_key) || grow(&mut pinned.lineage.clone(), rotations)
+        });
         if grows {
             self.change(&mut hubs, |hubs| {
                 if let Some(pinned) = hubs.get_mut(hub.as_str()) {
@@ -170,8 +179,12 @@ impl Pins {
             Some(_) => self
                 .change(&mut hubs, |hubs| {
                     if let Some(pinned) = hubs.get_mut(hub.as_str()) {
-                        pinned.seen =
-                            Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
+                        pinned.seen = Some(Seen {
+                            seq,
+                            head: head.into(),
+                            statement: statement.to_vec().into(),
+                            word: word.to_vec().into(),
+                        });
                     }
                 })
                 .is_ok(),

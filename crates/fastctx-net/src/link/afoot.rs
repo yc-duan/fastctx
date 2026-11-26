@@ -19,6 +19,10 @@ use crate::wire::Up;
 pub(crate) struct Afoots {
     here: Mutex<Here>,
     elsewhere: Mutex<BTreeMap<MachineName, Elsewhere>>,
+    /// The connection that last told of each machine: one told of only on
+    /// an earlier one, and not again (its assets sealed, or no longer seen
+    /// whole), stays shown as it was, but is not taken as what holds now.
+    told: Mutex<std::collections::HashMap<MachineName, u64>>,
     /// The session whose initial directory arrived.
     synced: Mutex<Option<u64>>,
     complete: Mutex<Option<u64>>,
@@ -147,18 +151,23 @@ impl Inner {
         }
     }
 
-    /// The hub told how what is afoot on `machine` changed.
+    /// The hub told, on the connection `generation`, how what is afoot on
+    /// `machine` changed.
     pub(super) fn heard_afoot(
         &self,
+        generation: u64,
         machine: MachineName,
         busy: Option<u32>,
         change: AfootChange<ResidentNow, RunningJob>,
     ) {
         {
+            // The connection that told it is taken with what it told, under
+            // the same lock: none reads the one without the other.
             let mut elsewhere = self.afoots.elsewhere.lock().expect("never poisoned");
-            let afoot = elsewhere.entry(machine).or_default();
+            let afoot = elsewhere.entry(machine.clone()).or_default();
             afoot.seen.apply(change);
             afoot.busy = busy;
+            self.afoots.told.lock().expect("never poisoned").insert(machine, generation);
         }
         self.node.afoot_changed();
     }
@@ -166,6 +175,11 @@ impl Inner {
     /// Forgets what was told of machines this machine's view no longer has.
     pub(super) fn prune_afoot(&self) {
         let view = self.view();
+        self.afoots
+            .told
+            .lock()
+            .expect("never poisoned")
+            .retain(|machine, _| view.machines().any(|member| member.name == *machine));
         let pruned = {
             let mut elsewhere = self.afoots.elsewhere.lock().expect("never poisoned");
             let before = elsewhere.len();
@@ -179,5 +193,18 @@ impl Inner {
 
     pub(crate) fn afoot_elsewhere(&self) -> BTreeMap<MachineName, Elsewhere> {
         self.afoots.elsewhere.lock().expect("never poisoned").clone()
+    }
+
+    /// What the hub told of the machines it told of on the connection up
+    /// now; none while none is.
+    pub(crate) fn afoot_told_now(&self) -> BTreeMap<MachineName, Elsewhere> {
+        let Some(connection) = self.connection() else { return BTreeMap::new() };
+        let elsewhere = self.afoots.elsewhere.lock().expect("never poisoned");
+        let told = self.afoots.told.lock().expect("never poisoned");
+        elsewhere
+            .iter()
+            .filter(|(machine, _)| told.get(*machine) == Some(&connection.generation))
+            .map(|(machine, afoot)| (machine.clone(), afoot.clone()))
+            .collect()
     }
 }

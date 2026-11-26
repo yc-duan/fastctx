@@ -19,8 +19,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 const BACKOFF: Duration = Duration::from_millis(250);
 /// The longest wait between tries.
 const BACKOFF_AT_MOST: Duration = Duration::from_secs(60);
-/// How long a runner with nothing due sleeps when no one stirs it.
-const IDLE: Duration = Duration::from_secs(30);
+/// How long a runner with nothing due sleeps when no one stirs it. Submitting
+/// stirs the kind's runners (`crate::stirred`) and a runner holding a later
+/// job sleeps until it falls due, so this only bounds a stir that was lost.
+const IDLE: Duration = Duration::from_secs(15 * 60);
 /// How many due jobs are looked at, at most, for those whose units are free.
 const LOOKED_AT: usize = 256;
 /// Bytes a bookkeeping write retains, beyond a payload.
@@ -75,6 +77,7 @@ async fn serve(database: Database, registered: Arc<Registered>) {
         let first = places.clone().acquire_owned().await.expect("the places are never closed");
         // Only this loop takes places, so those free now stay free until it does.
         let most = 1 + places.available_permits();
+        registered.measures.looked.add(1);
         let looked = {
             let registered = registered.clone();
             database.write_relaxed(WRITE_BYTES, move |db| look(db, &registered, most)).await
@@ -114,27 +117,48 @@ async fn serve(database: Database, registered: Arc<Registered>) {
 fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked> {
     let kind = registered.kind.name;
     let at = now();
+    // A kind that paces its jobs looks further: one it keeps waiting is not
+    // taken, and must not hide one behind it that may begin.
+    let limit = if registered.kind.ready.is_some() { LOOKED_AT } else { (most * 8).min(LOOKED_AT) };
+    // The units a job of the kind runs for are not looked at: those waiting
+    // on them would fill what is looked at, and hide one free behind them.
+    let busy_units: Vec<String> = registered.busy.lock().expect("busy units").iter().cloned().collect();
+    let busy_units = serde_json::to_string(&busy_units).unwrap_or_else(|_| "[]".to_string());
     let due: Vec<(i64, String, String, Vec<u8>, u32, i64)> = db
         .prepare_cached(
             "SELECT id, key, unit, payload, tries, due FROM jobs AS job \
              WHERE kind = ?1 AND state = ?2 AND due <= ?3 AND NOT EXISTS (\
                  SELECT 1 FROM jobs AS earlier WHERE earlier.kind = job.kind AND earlier.unit = job.unit \
                  AND earlier.state = ?2 AND earlier.id < job.id) \
+             AND job.unit NOT IN (SELECT value FROM json_each(?5)) \
              ORDER BY due, id LIMIT ?4",
         )?
-        .query_map(params![kind, WAITING, at, (most * 8).min(LOOKED_AT) as i64], |row| {
+        .query_map(params![kind, WAITING, at, limit as i64, busy_units], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+    let looked = due.len();
     let mut taken = Vec::new();
+    // The earliest a job due now that the kind keeps waiting may begin.
+    let mut resting: Option<i64> = None;
     {
         let mut busy = registered.busy.lock().expect("busy units");
         let mut take = db.prepare_cached("UPDATE jobs SET state = ?2, tries = tries + 1 WHERE id = ?1")?;
+        let mut defer = db.prepare_cached("UPDATE jobs SET due = ?2 WHERE id = ?1 AND due < ?2")?;
         for (id, key, unit, payload, tries, was_due) in due {
             if taken.len() == most {
                 break;
             }
             if busy.contains(&unit) {
+                continue;
+            }
+            if let Some(wait) = registered.kind.ready.and_then(|ready| ready(&payload)) {
+                let begins = at.saturating_add(i64::try_from(wait.as_millis()).unwrap_or(i64::MAX)).max(at + 1);
+                resting = Some(resting.map_or(begins, |resting| resting.min(begins)));
+                // Due from when it may begin: it leaves the head of the queue
+                // until then, so one behind it that may begin now is taken
+                // (codex-8cc17361), and it is written once, not each look.
+                defer.execute(params![id, begins])?;
                 continue;
             }
             take.execute(params![id, RUNNING])?;
@@ -146,9 +170,20 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
     if !taken.is_empty() {
         return Ok((taken, None));
     }
+    // Every one looked at kept waiting, and more may be due behind them:
+    // looked at again at once, those kept waiting due later now.
+    if resting.is_some() && looked == limit {
+        return Ok((taken, Some(at)));
+    }
+    // Looked at as of the same time as the jobs due, so one falling due
+    // between the two is not missed (codex-955b2bcb).
     let earliest: Option<i64> = db
         .prepare_cached("SELECT MIN(due) FROM jobs WHERE kind = ?1 AND state = ?2 AND due > ?3")?
-        .query_row(params![kind, WAITING, now()], |row| row.get(0))?;
+        .query_row(params![kind, WAITING, at], |row| row.get(0))?;
+    let earliest = match (earliest, resting) {
+        (Some(due), Some(resting)) => Some(due.min(resting)),
+        (due, resting) => due.or(resting),
+    };
     Ok((taken, earliest))
 }
 

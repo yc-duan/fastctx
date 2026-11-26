@@ -36,6 +36,7 @@ timeline-test-support = ["fastctx-timeline-core/test-support"]
 
 [dependencies]
 fastctx-timeline-core = { path = "../fastctx-timeline-core" }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tempfile = "3"
 anyhow.workspace = true
 base64 = "0.22"

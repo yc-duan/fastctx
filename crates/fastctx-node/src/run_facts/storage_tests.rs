@@ -10,7 +10,8 @@ fn the_calls_changed_since_a_version_are_known_while_every_change_named_its_call
     db.execute_batch(sql::SCHEMA).unwrap();
     let conversation = "conversation";
     let calls = |after, most| changed_in(&db, conversation, after, most).unwrap();
-    let named = |names: &[&str], through| Some((names.iter().map(|name| name.to_string()).collect::<Vec<_>>(), through));
+    let named =
+        |names: &[&str], through| Some((names.iter().map(|name| name.to_string()).collect::<Vec<_>>(), through));
     assert_eq!(calls(0, 10), (0, named(&[], 0)));
     sql::changed(&db, conversation, "a").unwrap();
     sql::changed(&db, conversation, "b").unwrap();

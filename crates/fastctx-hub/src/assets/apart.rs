@@ -61,7 +61,9 @@ pub(crate) struct Apart {
 impl Apart {
     fn reserve(&self, ticket: u64, key: [u8; 32], bytes: usize, body: Body) -> Result<(), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
-        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending | Body::Taking(..)) || kept.at.elapsed() < WAITS);
+        waiting.retain(|_, kept| {
+            matches!(kept.body, Body::Receiving | Body::Sending | Body::Taking(..)) || kept.at.elapsed() < WAITS
+        });
         let total: usize = waiting.values().map(|kept| kept.bytes).sum();
         let device: usize = waiting.values().filter(|kept| kept.key == key).map(|kept| kept.bytes).sum();
         if total + bytes > ROOM || device + bytes > DEVICE_ROOM {
@@ -206,7 +208,14 @@ pub(super) fn send_later(apart: &Apart, ticket: u64, key: &[u8; 32], bodies: Vec
 
 /// Takes a staged body of `size` bytes, its chunks in order, and says
 /// whether the hub kept it.
-pub(super) async fn receive(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &[u8; 32], ticket: u64, size: u64) -> Result<(), String> {
+pub(super) async fn receive(
+    hub: &Arc<Hub>,
+    mut socket: Socket,
+    me: &MachineName,
+    key: &[u8; 32],
+    ticket: u64,
+    size: u64,
+) -> Result<(), String> {
     let pulse = crate::pulse_of(&socket);
     let apart = &hub.assets.objects.apart;
     let kept: Result<(), String> = async {
@@ -283,7 +292,8 @@ pub(super) async fn send(
         for body in &bodies {
             objects::still_holding(hub, me, public, scope, None, Some(held)).await?;
             for chunk in body.chunks(CHUNK_BYTES as usize) {
-                let head = serde_json::to_string(&ChunkHead { index, size: chunk.len() as u64 }).expect("a head serializes");
+                let head =
+                    serde_json::to_string(&ChunkHead { index, size: chunk.len() as u64 }).expect("a head serializes");
                 write(&mut sink, &pulse, WsMessage::Text(head.into())).await?;
                 for piece in chunk.chunks(pace.chunk()) {
                     let began = std::time::Instant::now();

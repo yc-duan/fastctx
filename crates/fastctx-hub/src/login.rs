@@ -589,6 +589,7 @@ fn join(
                         paths: None,
                         strain: None,
                         workbench: None,
+                        numbers: None,
                         settled: None,
                     }));
                     joining.name.clone()

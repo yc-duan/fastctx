@@ -121,7 +121,9 @@ impl Queued {
         let ahead = self.ahead;
         let why = match self.line {
             Line::Callee(most) => {
-                format!("its callee works on at most {most} at once for the conversation that asked; {ahead} wait ahead of it")
+                format!(
+                    "its callee works on at most {most} at once for the conversation that asked; {ahead} wait ahead of it"
+                )
             }
             Line::Asker(most) => format!(
                 "the conversation that asked has at most {most} colleagues at work at once; {ahead} wait ahead of it"
@@ -340,7 +342,15 @@ pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<(u32, bool)> {
     // hold a place of its from before; one past its callee's line waits in
     // its asker's, while its place in its callee's is within the room there.
     let mut lines: Vec<_> = slots.iter().collect();
-    lines.sort_by_key(|(key, _)| if key.starts_with(ASKER) { 0 } else if key.starts_with(CALLEE) { 1 } else { 2 });
+    lines.sort_by_key(|(key, _)| {
+        if key.starts_with(ASKER) {
+            0
+        } else if key.starts_with(CALLEE) {
+            1
+        } else {
+            2
+        }
+    });
     lines.into_iter().find_map(|(key, line)| {
         line.waiting.iter().any(|waiting| waiting.id == *id).then(|| {
             let place = line.order().iter().position(|waiting| waiting == id).expect("it waits in line");

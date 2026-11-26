@@ -90,6 +90,8 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
             node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
         }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
+        // Let go of, or partly: no longer known whole.
+        super::query::unknown(None, Some(&town));
         match removed {
             Ok(()) => {
                 node.log.line(format_args!("let go of the project {town}: no account here may keep it"));

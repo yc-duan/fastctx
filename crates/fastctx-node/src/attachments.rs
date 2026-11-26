@@ -103,8 +103,17 @@ pub async fn upload(
             // The file as it is described, not its bytes alone: the same
             // bytes under another name are another upload.
             let described = serde_json::to_vec(&file).map_err(failure)?;
-            let operation = format!("upload-{resident}-{}", crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)]));
-            let sent = UploadTarget::Sent { machine: found, target: Box::new(target), operation, account: None, files_on: None };
+            let operation = format!(
+                "upload-{resident}-{}",
+                crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)])
+            );
+            let sent = UploadTarget::Sent {
+                machine: found,
+                target: Box::new(target),
+                operation,
+                account: None,
+                files_on: None,
+            };
             return Box::pin(upload(node, sent, None, file, composer, source)).await;
         }
     }
@@ -133,14 +142,8 @@ pub async fn upload(
         if !node.is_here(&machine) {
             node.settled(&machine).await;
             let (link, account_name) = node.speaking(&uploader, &machine, Purpose::Agents).await.map_err(failure)?;
-            let supported = match link
-                .call(&machine.name, &account_name, Purpose::Look, RemoteCall::Facts)
-                .await
-                .map_err(broke)??
-            {
-                RemoteReply::Facts(facts) => facts.attachment_places,
-                _ => false,
-            };
+            let supported =
+                facts_of(node, &link, &machine.name, &account_name).await?.is_some_and(|facts| facts.attachment_places);
             if supported {
                 let sent = UploadTarget::Sent { machine: machine.clone(), target, operation, account, files_on };
                 return relay(node, &uploader, &machine, sent, file, composer, source).await;
@@ -242,17 +245,14 @@ async fn relay(
     node.settled(machine).await;
     let (link, account) = node.speaking(acting, machine, Purpose::Agents).await.map_err(failure)?;
     let machine = machine.name.clone();
-    if !file.media_type.starts_with("image/") {
-        match link.call(&machine, &account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
-            RemoteReply::Facts(facts) if facts.attachment_places => {}
-            _ => {
-                return Err(Failure::not_run(
-                    "upgrade the conversation machine to keep assisted files on this account's machines",
-                ));
-            }
-        }
+    if !file.media_type.starts_with("image/")
+        && !facts_of(node, &link, &machine, &account).await?.is_some_and(|facts| facts.attachment_places)
+    {
+        return Err(Failure::not_run(
+            "upgrade the conversation machine to keep assisted files on this account's machines",
+        ));
     }
-    let resumes = composer.is_some() && resumes_there(&link, &machine, &account).await?;
+    let resumes = composer.is_some() && resumes_there(node, &link, &machine, &account).await?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));
     let feeding_error = source_error.clone();
@@ -286,14 +286,28 @@ async fn relay(
 /// it up from there. A machine that cannot be asked cannot take the upload
 /// either.
 async fn resumes_there(
-    link: &fastctx_net::link::Link,
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
     machine: &MachineName,
     account: &fastctx_types::AccountName,
 ) -> Result<bool, Failure> {
-    match link.call(machine, account, Purpose::Look, RemoteCall::Facts).await {
-        Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts.upload_resumes),
-        Ok(_) => Ok(false),
-        Err(error) => Err(broke(error)),
+    Ok(facts_of(node, link, machine, account).await?.is_some_and(|facts| facts.upload_resumes))
+}
+
+/// What `machine` says of itself on its connection now, as this node keeps
+/// it for that connection and key (`crate::facts::declared`): asked only
+/// when not kept for it yet, where an upload asked it up to three times, a
+/// round trip each before the first byte went. None from one that answered
+/// something else.
+async fn facts_of(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    machine: &MachineName,
+    account: &fastctx_types::AccountName,
+) -> Result<Option<fastctx_types::world::MachineFacts>, Failure> {
+    match crate::facts::declared(node, link, machine, account).await.map_err(broke)?? {
+        RemoteReply::Facts(facts) => Ok(Some(facts)),
+        _ => Ok(None),
     }
 }
 

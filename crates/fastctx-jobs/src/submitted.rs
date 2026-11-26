@@ -459,7 +459,10 @@ where
     // and settles its operation as failed, where a job set aside would
     // leave its caller waiting.
     let tries = if family.again { TRIES + 1 } else { 2 };
-    jobs.register(Kind { name: family.name, at_once: family.at_once, within: LONGEST, tries }, Arc::new(run));
+    jobs.register(
+        Kind { name: family.name, at_once: family.at_once, within: LONGEST, tries, ready: None },
+        Arc::new(run),
+    );
 }
 
 /// Does one job's work and says how its operation stands after; none when

@@ -339,7 +339,8 @@ impl Owners {
         check: impl FnOnce(&Library) -> io::Result<Option<String>>,
         library: &mut Option<Library>,
     ) -> io::Result<Result<Library, String>> {
-        let stamped = opened.stamp(STAMP, self.incarnation.clone()).map_err(|error| io::Error::other(error.to_string()))?;
+        let stamped =
+            opened.stamp(STAMP, self.incarnation.clone()).map_err(|error| io::Error::other(error.to_string()))?;
         if stamped != self.incarnation {
             return Ok(Err(format!("the library of {} is another hub's", owner.key())));
         }
@@ -374,7 +375,8 @@ impl Owners {
             self.forget(owner);
         }
         let directory = self.root.join(owner.directory());
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
         let aside = self.root.join(format!("{DISCARDED}{nanos:x}"));
         // The move lasts before the deletion is recorded done (AE06): no
         // power lost after that brings the library back where it was.

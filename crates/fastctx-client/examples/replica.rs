@@ -33,8 +33,16 @@ struct Asked {
 fn asked() -> Result<Asked, String> {
     let mut args = std::env::args().skip(1);
     let directory = PathBuf::from(args.next().ok_or("the device directory comes first")?);
-    let mut asked =
-        Asked { directory, hub: None, account: None, name: None, whole: false, seconds: 120, older: Vec::new(), ask: Vec::new() };
+    let mut asked = Asked {
+        directory,
+        hub: None,
+        account: None,
+        name: None,
+        whole: false,
+        seconds: 120,
+        older: Vec::new(),
+        ask: Vec::new(),
+    };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} takes a value"));
         match arg.as_str() {
@@ -80,7 +88,12 @@ async fn run() -> Result<(), String> {
         let password = std::env::var("FASTCTX_PASSWORD").map_err(|_| "FASTCTX_PASSWORD holds the password")?;
         let addresses = tokio::net::lookup_host(hub.as_str()).await.map_err(error)?.collect();
         let account = fastctx_types::AccountName::try_from(account.clone()).map_err(|error| error.to_string())?;
-        let name = asked.name.clone().map(fastctx_types::MachineName::try_from).transpose().map_err(|error| error.to_string())?;
+        let name = asked
+            .name
+            .clone()
+            .map(fastctx_types::MachineName::try_from)
+            .transpose()
+            .map_err(|error| error.to_string())?;
         // Logged in as asked: unless a network the device is on has that
         // account logged in already (codex-058517ed #25).
         if !device.state().hubs.iter().any(|hub| hub.logins.contains(&account)) {
@@ -90,7 +103,10 @@ async fn run() -> Result<(), String> {
     let tier = if asked.whole { Tier::Whole } else { Tier::Light };
     let replica = {
         let device = device.clone();
-        tokio::task::spawn_blocking(move || device.replicate(tier)).await.map_err(|error| error.to_string())?.map_err(error)?
+        tokio::task::spawn_blocking(move || device.replicate(tier))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(error)?
     };
     // Asked at once, as the first thing the device asks of a scope: the top
     // page, as soon as there is a link to its hub; what the hub answered.
@@ -146,7 +162,9 @@ async fn run() -> Result<(), String> {
             .iter()
             .filter(|(stream, next)| held_before.get(*stream) != Some(*next))
             .map(|(stream, next)| format!("{stream}={next}"))
-            .chain(held_before.keys().filter(|stream| !held.contains_key(*stream)).map(|stream| format!("{stream} gone")))
+            .chain(
+                held_before.keys().filter(|stream| !held.contains_key(*stream)).map(|stream| format!("{stream} gone")),
+            )
             .take(6)
             .collect();
         settled = if well && moved.is_empty() { settled + 1 } else { 0 };
@@ -232,7 +250,11 @@ type Key = (Vec<u8>, Vec<u8>);
 
 /// Where what is covered of `stream` of `scope` from its top down ends, a
 /// page to be asked below it; none once it reaches below everything.
-fn uncovered(replica: &fastctx_client::device::replica::Replica, scope: &str, stream: &str) -> Result<Option<Option<Key>>, String> {
+fn uncovered(
+    replica: &fastctx_client::device::replica::Replica,
+    scope: &str,
+    stream: &str,
+) -> Result<Option<Option<Key>>, String> {
     let runs = replica.library().coverage(scope, stream).map_err(|error| error.to_string())?;
     // From the top: the run reaching above everything, then each run that
     // ends where the one above it begins.

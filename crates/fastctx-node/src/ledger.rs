@@ -97,8 +97,8 @@ pub async fn open(
 
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
 /// ledger, and for a version of the project's record the machines it spans
-/// from then on. Returns once this machine has the accepted entry, including
-/// when it wrote on behalf of a device into a project that does not span it.
+/// from then on, including on behalf of a device into a project that does not
+/// span it. Returns once the hub accepted the entry (`write_for`).
 pub async fn write(
     node: &Arc<Node>,
     town: &TownName,
@@ -134,6 +134,10 @@ pub(crate) async fn write_memory(
     write_for(node, town, files.into_iter().map(|file| (file.path, file.bytes.0)).collect(), None, account).await
 }
 
+/// Writes an entry: written once the hub accepted it. Taking it here comes
+/// after, and is waited for a while (`take_latest`); one this machine has not
+/// taken by then is for the ledger's sync to catch up on, not a failed write
+/// to try again (which would write it twice).
 async fn write_for(
     node: &Arc<Node>,
     town: &TownName,
@@ -141,7 +145,12 @@ async fn write_for(
     machines: Option<Vec<MachineName>>,
     account: Option<fastctx_types::AccountName>,
 ) -> Result<(), Failure> {
-    accept_for(node, town, files, machines, account).await?.taken
+    if let Err(failure) = accept_for(node, town, files, machines, account).await?.taken {
+        node.log.line(format_args!(
+            "project {town}: its hub accepted an entry; this machine has not taken it yet: {failure}"
+        ));
+    }
+    Ok(())
 }
 
 async fn accept_for(
@@ -234,6 +243,8 @@ fn check_size(entry: &Entry) -> Result<(), String> {
 /// Takes the ledgers available to this machine's accounts, regardless of
 /// the projects' work locations. One sync runs at a time.
 pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result<(), String> {
+    // What a pass takes, or lets go of, is no longer known whole.
+    query::unknown(Some(hub), None);
     let Some(link) = node.link_of(hub) else { return Ok(()) };
     // A managed machine keeps no project's records: it acts for no one, and
     // the hub gives it none (`world-network.md`, 受管机器).
@@ -384,7 +395,7 @@ pub(crate) async fn take_latest(
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
     }
-    let changed = projected::take(node, link, name, town, latest, source, until).await?;
+    let changed = projected::take(node, link, name, town, latest, source, until, waits).await?;
     let _syncing = node.syncing.lock().await;
     check_place(node, link, name, town)?;
     if changed {

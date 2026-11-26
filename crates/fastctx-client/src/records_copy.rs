@@ -49,10 +49,16 @@ pub fn record_in(library: &Library, scope: &str, stream: &str, item: &str) -> Op
 /// holds it, shown to `account` as the hub shows it (`Link::plan_read`,
 /// `hub owned_records::projection`): which machine wrote it only where the
 /// account may work on that machine, by `directory` as it stands.
-pub fn plan_as_told(directory: &Directory, account: &AccountName, resident: &ResidentId, record: Option<Record>) -> Page {
+pub fn plan_as_told(
+    directory: &Directory,
+    account: &AccountName,
+    resident: &ResidentId,
+    record: Option<Record>,
+) -> Page {
     let record = record.filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
     let Some(mut record) = record else { return Page { owner: resident.clone(), metadata: None, body: None } };
-    let usable = |machine: &MachineName| directory.authorize(account, fastctx_net::authorization::Action::Work(machine)).is_ok();
+    let usable =
+        |machine: &MachineName| directory.authorize(account, fastctx_net::authorization::Action::Work(machine)).is_ok();
     if record.metadata.by.as_ref().is_some_and(|machine| !usable(machine)) {
         record.metadata.by = None;
     }

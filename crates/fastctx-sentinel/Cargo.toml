@@ -13,6 +13,7 @@ fastctx-agent = { path = "../fastctx-agent" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 jiff.workspace = true
 url = "2"
 serde.workspace = true

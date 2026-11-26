@@ -7,8 +7,8 @@
 // machine's own page.
 //
 // The folders are read from the machine one at a time as they are opened;
-// its changes are kept by their ids and read again now and then, a reading
-// adding only what is new. On a narrow window the tree and the file take
+// its changes are kept by their ids and read again as its book moves, a
+// reading adding only what is new. On a narrow window the tree and the file take
 // the page in turn.
 
 import { glyph } from "../conversation/glyphs";
@@ -48,6 +48,10 @@ export interface FilesPageOptions {
   /** A machine's changes of late: all of them, or what came since it was
    *  last asked; either fills the same book. */
   changes(machine: string): Promise<FileChange[]>;
+  /** Calls `read` whenever `machine`'s changes may have moved: as its book
+   *  changes, where that is told (`app/numbers.ts`). None for the specimen,
+   *  read every `AGAIN_MS`. Returns what stops it. */
+  follow?(machine: string, read: () => void): () => void;
   seams: ViewSeams;
   /** The address of a machine's files with one opened. */
   link(machine: string, path: string | null, tab: ViewTab | null): string;
@@ -56,7 +60,8 @@ export interface FilesPageOptions {
   now(): number;
 }
 
-/** How often a machine's changes are read again while its page is shown. */
+/** How often a machine's changes are read again while its page is shown,
+ *  where nothing tells when they move. */
 const AGAIN_MS = 8000;
 /** Machines from which the list is searched rather than read. */
 const FIND_FROM = 9;
@@ -79,7 +84,10 @@ export class FilesPage implements Page {
   private view: FileView | null = null;
   private readonly recent = new RecentFileViews();
   private readonly main: HTMLElement;
-  private timer = 0;
+  /** Stops following the machine's changes. */
+  private following: (() => void) | null = null;
+  /** A reading of the changes to try again, the last having failed. */
+  private retrying = 0;
   private left = false;
   /** Which machine's answers are still wanted. */
   private asked = 0;
@@ -123,12 +131,26 @@ export class FilesPage implements Page {
     document.addEventListener("pointerdown", this.outside);
     this.drawBar();
     void this.enter(options.tab);
-    this.timer = window.setInterval(() => void this.readChanges(), AGAIN_MS);
+    this.follow();
+  }
+
+  /** Follows the changes of the machine shown, as `options.follow` tells
+   *  they move, else on the clock. A reading that fails says so to what
+   *  follows, which reads again (`app/numbers.ts`). */
+  private follow(): void {
+    this.following?.();
+    if (this.options.follow) this.following = this.options.follow(this.machine, () => this.readChanges(true));
+    else {
+      const timer = window.setInterval(() => void this.readChanges(), AGAIN_MS);
+      this.following = () => clearInterval(timer);
+    }
   }
 
   leave(): void {
     this.left = true;
-    clearInterval(this.timer);
+    clearTimeout(this.retrying);
+    this.following?.();
+    this.following = null;
     document.removeEventListener("pointerdown", this.outside);
     this.tree.leave();
     this.view?.leave();
@@ -147,6 +169,7 @@ export class FilesPage implements Page {
       this.machine = machine;
       this.path = path;
       void this.enter(tab);
+      this.follow();
       return;
     }
     if (path !== null) return this.open(path, tab, false);
@@ -183,7 +206,7 @@ export class FilesPage implements Page {
     this.tree.changed([]);
     this.tree.show(null, this.mode);
     this.drawMain();
-    const [places] = await Promise.all([this.options.places(this.machine).catch(() => ({ home: null, places: [] }) as Places), this.readChanges()]);
+    const [places] = await Promise.all([this.options.places(this.machine).catch(() => ({ home: null, places: [] }) as Places), this.readChanges(true).catch(() => this.readAgainSoon())]);
     if (this.left || asked !== this.asked) return;
     this.places = places;
     this.root = this.rootFor(this.path);
@@ -203,12 +226,25 @@ export class FilesPage implements Page {
     return holding?.path ?? (split(path).folder || home);
   }
 
-  private async readChanges(): Promise<void> {
+  /** The changes could not be read as the page opened: what follows the
+   *  machine reads again only once its number moves, so they are read again
+   *  every `AGAIN_MS` until they are. */
+  private readAgainSoon(): void {
+    clearTimeout(this.retrying);
+    this.retrying = window.setTimeout(() => {
+      if (!this.left) void this.readChanges(true).catch(() => this.readAgainSoon());
+    }, AGAIN_MS);
+  }
+
+  /** Reads the machine's changes; one that cannot be read leaves what is
+   *  shown, and, with `told`, says so. */
+  private async readChanges(told = false): Promise<void> {
     const machine = this.machine;
     let changes: FileChange[];
     try {
       changes = await this.options.changes(machine);
-    } catch {
+    } catch (error) {
+      if (told) throw error;
       return;
     }
     if (this.left || machine !== this.machine) return;

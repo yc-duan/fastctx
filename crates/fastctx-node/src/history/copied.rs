@@ -68,7 +68,19 @@ fn answered(node: &Node, acting: &Acting, request: &HistoryCall, first: bool) ->
                 let prefix = format!("{resident}/");
                 fresh_records(node, &scope, ConversationHistory::STREAM, RECORD_KIND, &prefix)?
             };
-            let mut catalog = Catalog { documents: records.into_iter().filter_map(stored).map(|stored| stored.revision).collect() };
+            let mut catalog = Catalog::default();
+            for record in records {
+                // A note deleted for good is kept as where its name goes on.
+                if record.metadata.deleted
+                    && record.metadata.kind == RECORD_KIND
+                    && let Some((owner, name)) = record.metadata.key.split_once('/')
+                    && owner == resident.as_str()
+                {
+                    catalog.deleted.insert(name.to_owned(), record.metadata.version);
+                } else if let Some(stored) = stored(record) {
+                    catalog.documents.push(stored.revision);
+                }
+            }
             catalog.sort();
             HistoryReply::Catalog { catalog }
         }
@@ -78,7 +90,9 @@ fn answered(node: &Node, acting: &Acting, request: &HistoryCall, first: bool) ->
                 return None;
             }
             let versions = vec![stored.revision.clone()];
-            HistoryReply::Document { document: Box::new(Document { revision: stored.revision, text: stored.text, versions }) }
+            HistoryReply::Document {
+                document: Box::new(Document { revision: stored.revision, text: stored.text, versions }),
+            }
         }
         _ => return None,
     };
@@ -86,7 +100,8 @@ fn answered(node: &Node, acting: &Acting, request: &HistoryCall, first: bool) ->
     // may use by hand named, the rest not.
     let link = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())?;
     let (accounts, view) = (node.accounts_on(&link, acting), link.view());
-    let usable = |machine: &fastctx_types::MachineName| accounts.iter().any(|account| view.rights(account, machine).hands);
+    let usable =
+        |machine: &fastctx_types::MachineName| accounts.iter().any(|account| view.rights(account, machine).hands);
     match &mut reply {
         HistoryReply::Catalog { catalog } => catalog.for_reader(&usable),
         HistoryReply::Document { document } => document.for_reader(&usable),

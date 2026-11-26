@@ -69,8 +69,7 @@ pub(crate) fn recent(world: &WorldDir, since: jiff::Timestamp) -> io::Result<Vec
         paths.extend(found);
         paths.extend(started);
     }
-    let paths: Vec<PathBuf> =
-        index.lock().expect("never poisoned").paths.iter().flatten().cloned().collect();
+    let paths: Vec<PathBuf> = index.lock().expect("never poisoned").paths.iter().flatten().cloned().collect();
     let now = jiff::Timestamp::now();
     let kept_since = now - KEPT;
     let mut records = Vec::new();
@@ -85,7 +84,13 @@ pub(crate) fn recent(world: &WorldDir, since: jiff::Timestamp) -> io::Result<Vec
             }
             Err(error) => return Err(error),
         };
-        let ended = index.lock().expect("never poisoned").ended.get(&path).filter(|(was, _)| *was == written).map(|(_, at)| *at);
+        let ended = index
+            .lock()
+            .expect("never poisoned")
+            .ended
+            .get(&path)
+            .filter(|(was, _)| *was == written)
+            .map(|(_, at)| *at);
         match ended {
             Some(at) if at < kept_since => {
                 gone.push(path);

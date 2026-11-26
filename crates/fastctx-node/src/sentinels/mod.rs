@@ -37,6 +37,14 @@ pub(crate) struct Services {
     pub keys: tokio::sync::Mutex<()>,
     firings: timers::Firings,
     worker: worker::Worker,
+    /// What each home last said of each sentinel, with the number its
+    /// sentinels stood at then (`transport::Transport::inspect`).
+    pub(crate) inspected: std::sync::Mutex<std::collections::HashMap<transport::Asked, transport::Inspected>>,
+    /// The homes that said they keep sentinels, each with when it connected
+    /// then: asked again once it connected anew (`transport::Transport::send_to`).
+    pub(crate) able: std::sync::Mutex<
+        std::collections::HashMap<(fastctx_types::access::HubId, fastctx_types::MachineName), jiff::Timestamp>,
+    >,
 }
 impl Services {
     pub fn records(&self) -> Result<&dyn Records, Failure> {
@@ -50,7 +58,7 @@ impl Services {
 /// The services of a node, on its account records, key store and timer table.
 pub(crate) fn connected(node: std::sync::Weak<crate::Node>) -> Services {
     let services = Services::default();
-    let _ = services.records.set(Arc::new(records::AccountRecords(node.clone())));
+    let _ = services.records.set(Arc::new(records::AccountRecords::new(node.clone())));
     let _ = services.credentials.set(Arc::new(keys::Keystore(node.clone())));
     let _ = services.timers.set(Arc::new(timers::SentinelTimers(node)));
     services

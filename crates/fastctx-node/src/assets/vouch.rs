@@ -95,7 +95,9 @@ pub(super) fn start(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) {
     }
     {
         let mut vouching = assets.vouched.lock().expect("vouched");
-        if vouching.looking.contains(hub.as_str()) || vouching.looked.get(hub.as_str()).is_some_and(|at| at.elapsed() < LOOK_EVERY) {
+        if vouching.looking.contains(hub.as_str())
+            || vouching.looked.get(hub.as_str()).is_some_and(|at| at.elapsed() < LOOK_EVERY)
+        {
             return;
         }
         vouching.looked.insert(hub.to_string(), Instant::now());
@@ -136,7 +138,8 @@ async fn say(
     told: &mut usize,
     failed: &mut Option<String>,
 ) -> Said {
-    let batches: Vec<&[([u8; 32], Instant)]> = if whole.is_empty() { vec![&[]] } else { whole.chunks(wire::VOUCHED_A_TIME).collect() };
+    let batches: Vec<&[([u8; 32], Instant)]> =
+        if whole.is_empty() { vec![&[]] } else { whole.chunks(wire::VOUCHED_A_TIME).collect() };
     let mut said = Said::Whole;
     for (n, batch) in batches.into_iter().enumerate() {
         let read_ago = batch.iter().map(|(_, at)| at.elapsed().as_millis()).max().unwrap_or(0);
@@ -197,7 +200,8 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
     let still = || link.asset_version() >= wire::VOUCH && current(&assets.vouched.lock().expect("vouched"));
     let longest = fastctx_types::asset_peers::OBJECT_BYTES;
     let found =
-        blocking(&assets.library, move |library| library.vouchable(&hub_text, &device, after, STREAMS_A_LOOK, longest)).await?;
+        blocking(&assets.library, move |library| library.vouchable(&hub_text, &device, after, STREAMS_A_LOOK, longest))
+            .await?;
     let to_the_end = found.len() < STREAMS_A_LOOK;
     let (mut told, mut failed, mut budget) = (0, None, READ_A_LOOK);
     let mut through: Option<(String, String)> = None;
@@ -296,7 +300,10 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                     vouching.unread.insert(object.hash, (object.life, Instant::now()));
                 }
                 (all, lost) = (false, true);
-                failed.get_or_insert(format!("{} {}: an object of it is not here whole, and is not vouched for", one.scope, one.stream));
+                failed.get_or_insert(format!(
+                    "{} {}: an object of it is not here whole, and is not vouched for",
+                    one.scope, one.stream
+                ));
             }
         }
         // Cut short, it waits for the next look — but for one an object of
@@ -321,7 +328,8 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 // Something of it is counted at the hub now, whole or not.
                 let mut vouching = assets.vouched.lock().expect("vouched");
                 if current(&vouching) && !whole.is_empty() {
-                    let entry = vouching.told.entry(key).or_insert(Told { digest: [0; 32], at: Instant::now(), any: true });
+                    let entry =
+                        vouching.told.entry(key).or_insert(Told { digest: [0; 32], at: Instant::now(), any: true });
                     entry.any = true;
                 }
             }
@@ -342,7 +350,9 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 .told
                 .iter()
                 .filter(|((told_hub, scope, stream), told)| {
-                    told_hub == hub.as_str() && told.any && !passed.is_some_and(|passed| passed.contains(&(scope.clone(), stream.clone())))
+                    told_hub == hub.as_str()
+                        && told.any
+                        && !passed.is_some_and(|passed| passed.contains(&(scope.clone(), stream.clone())))
                 })
                 .map(|((_, scope, stream), _)| (scope.clone(), stream.clone()))
                 .collect()

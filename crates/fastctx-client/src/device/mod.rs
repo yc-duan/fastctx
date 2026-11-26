@@ -6,6 +6,8 @@ mod around;
 mod attachment_places;
 mod calls;
 mod connection_state;
+#[cfg(feature = "replica")]
+pub(crate) mod copy_reads;
 mod features;
 pub(crate) mod file_read;
 mod file_search;
@@ -13,8 +15,6 @@ mod history;
 mod lines;
 mod mcp;
 mod project_memory;
-#[cfg(feature = "replica")]
-pub(crate) mod copy_reads;
 #[cfg(feature = "replica")]
 pub mod replica;
 mod store;
@@ -64,6 +64,10 @@ pub struct Device {
     shown_changes: Arc<tokio::sync::watch::Sender<u64>>,
     /// New versions of Fastctx here (`updates`).
     updates: updates::Updates,
+    /// What each machine last answered of its agents and of its logins, as
+    /// it is written, with its logins number then (`around::Kept`).
+    agents_kept: around::Kept<fastctx_types::agents::MachineAgents>,
+    logins_kept: around::Kept<fastctx_types::logins::MachineLoginsHeard>,
     /// Its copy of what it may hold, once asked for (`replicate`).
     #[cfg(feature = "replica")]
     replica: std::sync::OnceLock<Arc<replica::Replica>>,
@@ -130,6 +134,8 @@ impl Device {
             shown: world_now::Shown::default(),
             shown_changes: Arc::new(tokio::sync::watch::channel(0).0),
             updates: updates::Updates::default(),
+            agents_kept: Default::default(),
+            logins_kept: Default::default(),
             #[cfg(feature = "replica")]
             replica: std::sync::OnceLock::new(),
         });
@@ -533,6 +539,12 @@ impl fastctx_net::link::Node for Handler {
         if change.metadata.kind == fastctx_types::history::RECORD_KIND {
             changed(&self.shown);
         }
+    }
+
+    /// A machine's numbers alone moved: what the device shows is told
+    /// again, and nothing of its accounts or projects is looked at.
+    fn numbers_changed(&self) {
+        changed(&self.shown);
     }
 
     fn directory_changed(&self) {

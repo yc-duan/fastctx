@@ -28,6 +28,8 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
     let (mut streams, mut logins, mut keys) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    // The scopes of the asking accounts' own records, by key.
+    let mut own = BTreeSet::new();
     for link in node.links() {
         if written.hub.as_ref().is_some_and(|hub| link.hub_name() != *hub) {
             continue;
@@ -35,6 +37,15 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         let view = link.view();
         let Some(member) = view.member(machine) else { continue };
         let accounts = node.accounts_on(&link, acting);
+        for account in &accounts {
+            if let Some(found) = view.directory.account(account) {
+                own.insert(fastctx_types::assets::records_key(
+                    link.membership().id.as_str(),
+                    account,
+                    found.opened.as_millisecond(),
+                ));
+            }
+        }
         let hub = link.membership().id.to_string();
         logins.extend(accounts.iter().map(|account| format!("{hub}/{account}")));
         let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
@@ -51,7 +62,14 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     let mut deeds: BTreeMap<String, Deed> = BTreeMap::new();
     let mut legacy: Vec<Hour> = Vec::new();
     let mut found = false;
+    let mut waiting = false;
     for scope in library.held_scopes().ok()? {
+        // An asking account's own records not pulled whole yet: what the
+        // others hold is not all of it.
+        if crate::timeline::copy::records_coming(node, &scope) {
+            waiting |= own.contains(&scope.key);
+            continue;
+        }
         if !crate::timeline::copy::records_here(node, &scope) {
             continue;
         }
@@ -61,6 +79,12 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         // (§29 2.5, `net-shared-machine-visibility` 2026-11-10). Only a
         // member holds them here (`records_here`).
         for (_, stream) in streams.iter().filter(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str())) {
+            // Taken only once read: asked for now where it is not here, and
+            // no whole answer till it is.
+            if !crate::assets::lazy::held(node, &scope, stream) {
+                waiting = true;
+                continue;
+            }
             let mut after = None;
             loop {
                 let page = library.page(&scope.key, stream, after.clone(), 500).ok()?;
@@ -86,7 +110,7 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
             }
         }
     }
-    if !found {
+    if !found || waiting {
         return None;
     }
     Some(match query {
@@ -104,16 +128,18 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
                 let began = deed.began.as_millisecond();
                 let at = began - began.rem_euclid(HOUR);
                 let agent = deed.agent.as_ref().map(|agent| agent.to_string()).unwrap_or_default();
-                let hour = hours.entry((at, deed.session.clone().unwrap_or_default(), agent, deed.held)).or_insert_with(|| Hour {
-                    at: jiff::Timestamp::from_millisecond(at).unwrap_or_default(),
-                    session: deed.session.clone(),
-                    agent: deed.agent.clone(),
-                    held: deed.held,
-                    runs: 0,
-                    failed: 0,
-                    busy: 0,
-                    files: 0,
-                });
+                let hour = hours
+                    .entry((at, deed.session.clone().unwrap_or_default(), agent, deed.held))
+                    .or_insert_with(|| Hour {
+                        at: jiff::Timestamp::from_millisecond(at).unwrap_or_default(),
+                        session: deed.session.clone(),
+                        agent: deed.agent.clone(),
+                        held: deed.held,
+                        runs: 0,
+                        failed: 0,
+                        busy: 0,
+                        files: 0,
+                    });
                 hour.runs += 1;
                 if matches!(deed.outcome, Outcome::Failed | Outcome::Lost) {
                     hour.failed += 1;
@@ -177,7 +203,9 @@ fn deed_of(value: &serde_json::Value) -> Option<Deed> {
         touched: value
             .get("touched")
             .and_then(serde_json::Value::as_array)
-            .map(|touched| touched.iter().filter_map(|one| serde_json::from_value::<Touched>(one.clone()).ok()).collect())
+            .map(|touched| {
+                touched.iter().filter_map(|one| serde_json::from_value::<Touched>(one.clone()).ok()).collect()
+            })
             .unwrap_or_default(),
         account: text("account").and_then(|key| key.split_once('/')).and_then(|(_, name)| name.parse().ok()),
     })

@@ -17,6 +17,9 @@ pub(crate) struct Measures {
     pub ran: &'static Timing,
     pub failed: &'static Counter,
     pub set_aside: &'static Counter,
+    /// How many times the kind's runner looked at its table: with nothing
+    /// asked of it, this stays still.
+    pub looked: &'static Counter,
     waiting: &'static Gauge,
     running: &'static Gauge,
     aside: &'static Gauge,
@@ -33,6 +36,7 @@ impl Measures {
             ran: timing(named("ran")),
             failed: counter(named("failed")),
             set_aside: counter(named("set_aside")),
+            looked: counter(named("looked")),
             waiting: gauge(named("waiting")),
             running: gauge(named("running")),
             aside: gauge(named("aside")),

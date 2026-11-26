@@ -7,11 +7,11 @@
 
 use super::scopes::{self, Scope};
 use super::{Assets, chain};
-use fastctx_content::v2::{
-    Cutoff, EpochKind, FrameKey, Head, Header, RawFrame, Received, Standing, Successor, Taking,
-    Verifier, applied_statement, parked_statement,
-};
 use fastctx_content::ObjectRef;
+use fastctx_content::v2::{
+    Cutoff, EpochKind, FrameKey, Head, Header, RawFrame, Received, Standing, Successor, Taking, Verifier,
+    applied_statement, parked_statement,
+};
 use fastctx_net::authorization::Lookup as _;
 use fastctx_net::directory_index::Indexed;
 use fastctx_net::sign::{Domain, PublicKey, Signature};
@@ -37,7 +37,9 @@ struct DeviceKeys;
 impl Verifier for DeviceKeys {
     fn verify(&self, header: &Header, header_bytes: &[u8], signature: &[u8]) -> bool {
         let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
-        PublicKey::from_bytes(header.key).verify(Domain::SyncSourceBatch, header_bytes, &Signature::from_bytes(signature)).is_ok()
+        PublicKey::from_bytes(header.key)
+            .verify(Domain::SyncSourceBatch, header_bytes, &Signature::from_bytes(signature))
+            .is_ok()
     }
 }
 
@@ -46,7 +48,14 @@ impl Verifier for DeviceKeys {
 /// conversation's timeline — where it lives now — or, before anything of it
 /// is ordered, the machine it was born on. Another reader of the scope
 /// cannot take a new stream first. Other scopes are not gated here.
-fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
+fn first_epoch_gate(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    kept: &Scope,
+    scope: &str,
+    stream: &str,
+    device: &[u8; 32],
+) -> Result<(), String> {
     // A sentinel's wakes, begun by the machine its stream names — which the
     // kind's own rule holds every frame to — where one of the conversation's
     // sentinels lives on it as the hub keeps them (§29, 2.7).
@@ -79,7 +88,11 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
                 return Ok(());
             }
             let hex: String = device[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-            return if named == hex { Ok(()) } else { Err(format!("{stream} of {scope} is begun by the machine it names")) };
+            return if named == hex {
+                Ok(())
+            } else {
+                Err(format!("{stream} of {scope} is begun by the machine it names"))
+            };
         }
         _ => return Ok(()),
     };
@@ -99,11 +112,16 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
     // stead: the account that opened it adopts it (§29, 2.3; codex-5c30d5e9
     // B07). A conversation born assisting an account names no machine, and
     // whichever of its readers orders it first begins it.
-    let source = match library.last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(|error| error.to_string())? {
+    let source = match library
+        .last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)
+        .map_err(|error| error.to_string())?
+    {
         Some((_, orderer)) => orderer,
         None => match born_on.as_ref().map(|machine| directory.all.find_member(machine)) {
             Some(Some(member)) if of_its_body(member) => *member.key.as_bytes(),
-            _ if of_body.is_some() => return Err(format!("{stream} of {scope} is begun by its body's machine, which is not here")),
+            _ if of_body.is_some() => {
+                return Err(format!("{stream} of {scope} is begun by its body's machine, which is not here"));
+            }
             Some(_) => {
                 return Err(format!(
                     "{stream} of {scope} is begun by the machine it was born on, which is not here: the account that opened it adopts it"
@@ -125,7 +143,14 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
 /// conversation's scope `scope`: one of the conversation's sentinels as the
 /// hub keeps them (the `sentinels` stream it orders into the scope) lives
 /// on it, or lived on it before it moved on (`sentinel_homes`).
-fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
+fn sentinel_runs_gate(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    kept: &Scope,
+    scope: &str,
+    stream: &str,
+    device: &[u8; 32],
+) -> Result<(), String> {
     let hex: String = device[..8].iter().map(|byte| format!("{byte:02x}")).collect();
     if stream.strip_prefix("sentinel-runs/") != Some(hex.as_str()) {
         return Err(format!("{stream} of {scope} is written by the machine it names"));
@@ -143,7 +168,10 @@ fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, sc
             let home = sentinel_record(&library, entry)
                 .and_then(|record| record["body"]["definition"]["home"].as_str().map(str::to_string))
                 .and_then(|home| fastctx_types::MachineName::try_from(home).ok());
-            if home.and_then(|home| directory.all.find_member(&home)).is_some_and(|member| member.key.as_bytes() == device) {
+            if home
+                .and_then(|home| directory.all.find_member(&home))
+                .is_some_and(|member| member.key.as_bytes() == device)
+            {
                 return Ok(());
             }
         }
@@ -154,7 +182,9 @@ fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, sc
     }
     // Or lived on: its home before it moved on (freeze spec §六, now or ever).
     for home in super::sentinel_homes::ever(assets, scope)? {
-        let found = fastctx_types::MachineName::try_from(home).ok().and_then(|home| directory.all.find_member(&home).map(|member| *member.key.as_bytes()));
+        let found = fastctx_types::MachineName::try_from(home)
+            .ok()
+            .and_then(|home| directory.all.find_member(&home).map(|member| *member.key.as_bytes()));
         if found.is_some_and(|key| key == *device) {
             return Ok(());
         }
@@ -164,7 +194,10 @@ fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, sc
 
 /// A sentinel's account record as the scope holds it: its body, or the one
 /// object it is in (`mirror::fitted`).
-fn sentinel_record(library: &fastctx_content::v2::Library, entry: &fastctx_content::v2::Entry) -> Option<serde_json::Value> {
+fn sentinel_record(
+    library: &fastctx_content::v2::Library,
+    entry: &fastctx_content::v2::Entry,
+) -> Option<serde_json::Value> {
     let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
     if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
         return Some(value);
@@ -252,7 +285,12 @@ fn received(received: Received) -> wire::Received {
 
 /// The scope `key`, through the read gate; the machine is told from now
 /// on when a stream of it moves.
-pub(super) fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str) -> Result<Scope, String> {
+pub(super) fn gated(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &str,
+) -> Result<Scope, String> {
     let scope = scopes::scope(assets, key)?.ok_or_else(|| format!("there is no scope {key}"))?;
     if !scopes::readable(directory, machine, &scope) {
         assets.gone(key, machine);
@@ -285,7 +323,13 @@ fn opened_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) ->
 
 /// The scope `key` and `stream` of it, through the read gate and the
 /// stream's class.
-fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str, stream: &str) -> Result<Scope, String> {
+fn held(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &str,
+    stream: &str,
+) -> Result<Scope, String> {
     let scope = gated(assets, directory, machine, key)?;
     if !scopes::holds(directory, machine, &scope, stream) {
         return Err(format!("this machine does not hold {stream} of the scope {key}"));
@@ -295,7 +339,13 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
 
 /// An answer of what `machine` may hold, judged again by the directory as
 /// it stands now (`holdings::recheck`).
-pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, now: &str, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+pub(crate) fn recheck_holdings(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    now: &str,
+    machine: &MachineName,
+    reply: Reply,
+) -> Result<Reply, String> {
     super::holdings::recheck(assets, directory, now, machine, reply)
 }
 
@@ -322,6 +372,7 @@ pub(crate) fn recheck(
     }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
     if !scopes::readable(directory, machine, &scope)
+        || super::retired::whole(&scope)
         || stream.is_some_and(|stream| !scopes::holds(directory, machine, &scope, stream))
     {
         assets.gone(key, machine);
@@ -330,12 +381,15 @@ pub(crate) fn recheck(
     // An answer about several streams, each judged again.
     Ok(match reply {
         Reply::Streams { streams, mut withheld } => {
-            let (held, gone): (Vec<_>, Vec<_>) = streams.into_iter().partition(|at| scopes::holds(directory, machine, &scope, &at.stream));
+            let (held, gone): (Vec<_>, Vec<_>) =
+                streams.into_iter().partition(|at| scopes::holds(directory, machine, &scope, &at.stream));
             withheld.extend(gone.into_iter().map(|at| at.stream));
             Reply::Streams { streams: held, withheld }
         }
         Reply::Standing { streams } => {
-            if let Some(gone) = streams.iter().find(|standing| !scopes::holds(directory, machine, &scope, &standing.stream)) {
+            if let Some(gone) =
+                streams.iter().find(|standing| !scopes::holds(directory, machine, &scope, &standing.stream))
+            {
                 return Err(format!("this machine does not hold {} of the scope {key}", gone.stream));
             }
             Reply::Standing { streams }
@@ -392,7 +446,13 @@ fn heard_seen(assets: &Assets, seen: &wire::Seen) -> Option<(u64, [u8; 32])> {
 /// hub's word on it.
 fn receipt_head(receipt: &wire::Reported) -> Result<(Vec<u8>, Head, Vec<u8>), String> {
     let digest = array(&receipt.digest, "a receipt's digest")?;
-    let frame = FrameKey { scope: &receipt.scope, stream: &receipt.stream, epoch: receipt.epoch, first: receipt.first, digest: &digest };
+    let frame = FrameKey {
+        scope: &receipt.scope,
+        stream: &receipt.stream,
+        epoch: receipt.epoch,
+        first: receipt.first,
+        digest: &digest,
+    };
     Ok(match &receipt.said {
         wire::Said::Applied { change, prefix } => {
             let prefix = array(prefix, "a receipt's prefix")?;
@@ -401,7 +461,8 @@ fn receipt_head(receipt: &wire::Reported) -> Result<(Vec<u8>, Head, Vec<u8>), St
         }
         wire::Said::Parked { sequence, accumulated } => {
             let accumulated = array(accumulated, "a receipt's accumulator")?;
-            let head = Head { scope: receipt.scope.clone(), change: 0, prefix: [0; 32], parked: *sequence, accumulated };
+            let head =
+                Head { scope: receipt.scope.clone(), change: 0, prefix: [0; 32], parked: *sequence, accumulated };
             (parked_statement(&frame, *sequence, &accumulated), head, receipt.word.0.clone())
         }
     })
@@ -445,7 +506,10 @@ fn put_back(
         if !library.holds(&wanted).map_err(|error| error.to_string())?
             && !assets.closed_receipt(&wanted).map_err(|error| error.to_string())?
         {
-            return Ok(Some(format!("{machine} holds the hub's receipt of {} that the hub's history no longer holds", receipt.scope)));
+            return Ok(Some(format!(
+                "{machine} holds the hub's receipt of {} that the hub's history no longer holds",
+                receipt.scope
+            )));
         }
     }
     Ok(None)
@@ -469,7 +533,10 @@ fn keyring_behind(
     if !keys.holds(&pinned) {
         // Only a key the keyring's own signed rotations lead to counts: a
         // key a machine made, signing for itself, shows nothing.
-        let lineage: Vec<_> = lineage.iter().map(|rotation| (rotation.old.0.clone(), rotation.new.0.clone(), rotation.word.0.clone())).collect();
+        let lineage: Vec<_> = lineage
+            .iter()
+            .map(|rotation| (rotation.old.0.clone(), rotation.new.0.clone(), rotation.word.0.clone()))
+            .collect();
         if !keys.descends(&pinned, &lineage) {
             return Err("this machine pinned a service key no rotation of this hub's keyring leads to".into());
         }
@@ -581,7 +648,9 @@ pub(crate) fn ask_in(
                     return super::handback::cursors(assets, directory, machine, key, &scope, holding, streams);
                 }
                 Request::HandBack { scope, stream, frame, objects } => {
-                    return super::handback::hand_back(assets, directory, machine, recovery, scope, stream, frame, objects);
+                    return super::handback::hand_back(
+                        assets, directory, machine, recovery, scope, stream, frame, objects,
+                    );
                 }
                 _ => {}
             }
@@ -590,7 +659,12 @@ pub(crate) fn ask_in(
         // behind it, is kept for the recovery.
         if let Request::Open { seen, reported, pinned, lineage, .. } = &request {
             let heard = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
-            let receipts: Vec<_> = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
+            let receipts: Vec<_> = reported
+                .iter()
+                .filter_map(|receipt| receipt_head(receipt).ok())
+                .filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some())
+                .map(|(_, head, _)| head)
+                .collect();
             let _kept_at = assets.brought(machine, heard, receipts.clone());
             // Sealed only as it started when the machine came, the hub that
             // is shown it was put back seals for its recovery instead: the
@@ -625,16 +699,19 @@ pub(crate) fn ask_in(
         return Ok(Reply::Revoked { scope: scope.clone() });
     }
     // A scope this machine reads no more is answered so, whatever was asked
-    // of it: its device stops using what it holds (§4.5, §6.3).
+    // of it: its device stops using what it holds (§4.5, §6.3). So is one the
+    // hub gives no device any more (`retired`).
     if let Some(key) = scope_of(&request)
         && let Some(scope) = scopes::scope(assets, key)?
-        && !scopes::readable(directory, machine, &scope)
+        && (!scopes::readable(directory, machine, &scope) || super::retired::whole(&scope))
     {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
     match request {
-        Request::Open { version, seen, reported, pinned, lineage } => open(assets, directory, machine, key, version, seen, reported, pinned, lineage),
+        Request::Open { version, seen, reported, pinned, lineage } => {
+            open(assets, directory, machine, key, version, seen, reported, pinned, lineage)
+        }
         Request::Describe { scope, readers, classes, born, begun } => Ok(Reply::Described {
             descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes, (&born, begun))?,
         }),
@@ -714,7 +791,8 @@ pub(crate) fn ask_in(
             }
             let _untake = Untake(&assets.objects.apart, staged, *key.as_bytes(), take);
             let library = scopes::library(assets, &kept)?;
-            let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
+            let period =
+                library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             // Only what this device sent every byte of lately, under its key
             // (§6.5), whether the request names it again or not: looked up
             // for each object the frame refers to (AC06).
@@ -738,7 +816,9 @@ pub(crate) fn ask_in(
                     records
                         .iter()
                         .flat_map(|record| match &record.record.state {
-                            fastctx_content::State::Is { objects, .. } => objects.iter().map(|object| object.hash).collect(),
+                            fastctx_content::State::Is { objects, .. } => {
+                                objects.iter().map(|object| object.hash).collect()
+                            }
                             fastctx_content::State::Gone => Vec::new(),
                         })
                         .collect()
@@ -785,7 +865,9 @@ pub(crate) fn ask_in(
         }
         Request::TakeMany { scope, frames } => take_many(assets, directory, machine, key, scope, frames, room),
         Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
-        Request::HandBack { .. } => Ok(Reply::HandedBack { kept: false, why: Some("the hub is not sealed for a recovery".into()) }),
+        Request::HandBack { .. } => {
+            Ok(Reply::HandedBack { kept: false, why: Some("the hub is not sealed for a recovery".into()) })
+        }
         Request::Put { scope, object, prove, .. } => {
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::put(assets, machine, key, kept, &object, prove)
@@ -819,6 +901,9 @@ pub(crate) fn ask_in(
         }
         Request::Frames { scope, stream, from, limit } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
+            if super::retired::stream(&kept, &stream) {
+                return Err(format!("the hub gives no device {stream} of the scope {scope} any more"));
+            }
             let library = scopes::library(assets, &kept)?;
             let (most, most_bytes) = match room {
                 Room::Control => (FRAMES_AT_ONCE as usize, FRAME_BYTES_AT_ONCE),
@@ -864,15 +949,26 @@ pub(crate) fn ask_in(
         }
         Request::Changes { owner, after, before, class, limit } => {
             // Only a library that is there is opened: asking never makes one.
-            let Some(owned) = super::owners::Owner::from_key(&owner) else { return Err(format!("{owner} is not an owner's library")) };
+            let Some(owned) = super::owners::Owner::from_key(&owner) else {
+                return Err(format!("{owner} is not an owner's library"));
+            };
             if !assets.has_library(&owned) {
-                return Ok(Reply::Changes { generation: String::new(), streams: Vec::new(), top: 0, top_at: 0, through: after, more: false });
+                return Ok(Reply::Changes {
+                    generation: String::new(),
+                    streams: Vec::new(),
+                    top: 0,
+                    top_at: 0,
+                    through: after,
+                    more: false,
+                });
             }
             // A library shut since it stood no further than where the device
             // asks from holds nothing after it: the page an opening would read
             // is answered without one, as the devices that follow every
             // library ask each of them every pass (`Owners::latest`).
-            if let Some(latest) = assets.shut_at(&owned).map_err(|error| error.to_string())?.filter(|latest| after >= latest.change) {
+            if let Some(latest) =
+                assets.shut_at(&owned).map_err(|error| error.to_string())?.filter(|latest| after >= latest.change)
+            {
                 assets.follows(&owned, machine);
                 return Ok(Reply::Changes {
                     generation: latest.generation,
@@ -884,14 +980,18 @@ pub(crate) fn ask_in(
                 });
             }
             let library = assets.library(&owned).map_err(|error| error.to_string())?;
-            let page = library.changes(class, after, before, (limit as usize).clamp(1, CHANGES_AT_ONCE)).map_err(|error| error.to_string())?;
+            let page = library
+                .changes(class, after, before, (limit as usize).clamp(1, CHANGES_AT_ONCE))
+                .map_err(|error| error.to_string())?;
             assets.follows(&owned, machine);
             // Each row through the read gate: one this machine may not hold
             // is stepped past, the page's place going on all the same.
             let mut streams = Vec::new();
             for row in page.rows {
                 let Some(scope) = scopes::scope(assets, &row.scope)? else { continue };
-                if !scopes::readable(directory, machine, &scope) || !scopes::holds(directory, machine, &scope, &row.stream) {
+                if !scopes::readable(directory, machine, &scope)
+                    || !scopes::serves(directory, machine, &scope, &row.stream)
+                {
                     continue;
                 }
                 streams.push(wire::ChangedStream {
@@ -905,7 +1005,14 @@ pub(crate) fn ask_in(
                     epoch: row.epoch,
                 });
             }
-            Ok(Reply::Changes { generation: page.generation, streams, top: page.top, top_at: page.top_at, through: page.through, more: page.more })
+            Ok(Reply::Changes {
+                generation: page.generation,
+                streams,
+                top: page.top,
+                top_at: page.top_at,
+                through: page.through,
+                more: page.more,
+            })
         }
         Request::Report { report } => super::standing::keep(assets, directory, machine, key.as_bytes(), report),
         // Answered beside the hub's sessions, where who is online is known.
@@ -919,11 +1026,14 @@ pub(crate) fn ask_in(
                 .streams(&scope)
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .partition(|(stream, _)| scopes::holds(directory, machine, &kept, stream));
+                .partition(|(stream, _)| scopes::serves(directory, machine, &kept, stream));
             let mut streams = Vec::with_capacity(held.len());
             let remade = library.remade_of(&scope).map_err(|error| error.to_string())?;
             for (stream, next) in held {
-                let epoch = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?.map_or(0, |(epoch, _)| epoch);
+                let epoch = library
+                    .last_epoch(&scope, &stream)
+                    .map_err(|error| error.to_string())?
+                    .map_or(0, |(epoch, _)| epoch);
                 let remade = remade.get(&stream).copied().unwrap_or(0);
                 streams.push(wire::StreamAt { stream, next, epoch, remade });
             }
@@ -950,7 +1060,9 @@ pub(crate) fn ask_in(
             // In the hub's chain and outside its directory before the device
             // hears of it (design §6.1, §17).
             let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
-            assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+            assets
+                .opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact)
+                .map_err(|error| error.to_string())?;
             // The word given is bound to the head the epoch went into.
             let word = assets.signer().sign(&signed.fact);
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
@@ -964,13 +1076,18 @@ pub(crate) fn ask_in(
             let library = scopes::library(assets, &kept)?;
             let device = *key.as_bytes();
             let signer = assets.signer();
-            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact { fact: signed.fact.clone().into(), word: signer.sign(&signed.fact).into() };
+            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact {
+                fact: signed.fact.clone().into(),
+                word: signer.sign(&signed.fact).into(),
+            };
             // Ordering it already: the epoch it orders in is the answer.
             let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
             if last.is_some_and(|(_, orderer)| orderer == device) {
                 let (epochs, _) = library.succession(&scope, &stream).map_err(|error| error.to_string())?;
                 let current = epochs.into_iter().last().ok_or("the stream's epochs are not here")?;
-                assets.witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[]).map_err(|error| error.to_string())?;
+                assets
+                    .witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[])
+                    .map_err(|error| error.to_string())?;
                 return Ok(Reply::Epoch { descriptor: word_of(&current) });
             }
             // Only the device that orders it lets it go, to the machine its
@@ -994,7 +1111,9 @@ pub(crate) fn ask_in(
                 )),
                 (None, true) => {
                     if !opened_here(directory, machine, &kept) {
-                        return Err(format!("{scope} was opened by no account logged in on {me}: it is not this machine's to adopt"));
+                        return Err(format!(
+                            "{scope} was opened by no account logged in on {me}: it is not this machine's to adopt"
+                        ));
                     }
                     // What a machine orders of a conversation stays on that
                     // machine (`Request::Begin`): the hub holds too little
@@ -1010,40 +1129,59 @@ pub(crate) fn ask_in(
                     // opened it begins it on its own machine (§29, 2.3, NN14).
                     if last.is_none() {
                         let successor = Successor { device, key: device, kind: EpochKind::Source };
-                        let signed = library.open_epoch(&scope, &stream, successor, assets.signer()).map_err(|error| error.to_string())?;
+                        let signed = library
+                            .open_epoch(&scope, &stream, successor, assets.signer())
+                            .map_err(|error| error.to_string())?;
                         assets.changed(kept.owner.clone(), &scope);
                         let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
-                        assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+                        assets
+                            .opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact)
+                            .map_err(|error| error.to_string())?;
                         return Ok(Reply::Epoch { descriptor: word_of(&signed) });
                     }
                     None
                 }
                 (None, false) => {
-                    return Err(format!("{stream} of {scope} is ordered by another device: taking it over needs that device's release, or the account that opened it adopting it here"));
+                    return Err(format!(
+                        "{stream} of {scope} is ordered by another device: taking it over needs that device's release, or the account that opened it adopting it here"
+                    ));
                 }
             };
             let verify = |key: &[u8; 32], statement: &[u8], signature: &[u8]| {
                 let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
                 fastctx_net::sign::PublicKey::from_bytes(*key)
-                    .verify(fastctx_net::sign::Domain::AssetRelease, statement, &fastctx_net::sign::Signature::from_bytes(signature))
+                    .verify(
+                        fastctx_net::sign::Domain::AssetRelease,
+                        statement,
+                        &fastctx_net::sign::Signature::from_bytes(signature),
+                    )
                     .is_ok()
             };
             let authority = match &released {
-                Some((release, signature)) => fastctx_content::v2::Authority::Release { release, signature, verify: &verify },
+                Some((release, signature)) => {
+                    fastctx_content::v2::Authority::Release { release, signature, verify: &verify }
+                }
                 None => fastctx_content::v2::Authority::Adopt { from: last.map_or(0, |(epoch, _)| epoch) },
             };
             let successor = Successor { device, key: device, kind: EpochKind::Source };
-            match library.move_stream(&scope, &stream, &me, successor, authority, kinds(), assets.signer()).map_err(|error| error.to_string())? {
+            match library
+                .move_stream(&scope, &stream, &me, successor, authority, kinds(), assets.signer())
+                .map_err(|error| error.to_string())?
+            {
                 fastctx_content::v2::Moved::Handed { descriptor, .. } => {
                     assets.changed(kept.owner.clone(), &scope);
                     let epoch = fastctx_content::v2::EpochFact::decode(&descriptor.fact)?.epoch;
-                    assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &descriptor.fact).map_err(|error| error.to_string())?;
+                    assets
+                        .opened_epoch(&kept.owner, &scope, &stream, epoch, &descriptor.fact)
+                        .map_err(|error| error.to_string())?;
                     Ok(Reply::Epoch { descriptor: word_of(&descriptor) })
                 }
                 fastctx_content::v2::Moved::Superseded { epochs } => {
                     // Outside the hub's directory before the device hears of
                     // them, as every other answer's (AP05).
-                    assets.witness_facts(&kept.owner, &scope, &stream, &epochs, &[]).map_err(|error| error.to_string())?;
+                    assets
+                        .witness_facts(&kept.owner, &scope, &stream, &epochs, &[])
+                        .map_err(|error| error.to_string())?;
                     Ok(Reply::HandedOn { epochs: epochs.iter().map(word_of).collect() })
                 }
             }
@@ -1098,7 +1236,10 @@ pub(crate) fn ask_in(
                 let word = signer.sign(&signed.fact);
                 wire::Fact { fact: signed.fact.into(), word: word.into() }
             };
-            Ok(Reply::Succession { epochs: epochs.into_iter().map(fact).collect(), gaps: gaps.into_iter().map(fact).collect() })
+            Ok(Reply::Succession {
+                epochs: epochs.into_iter().map(fact).collect(),
+                gaps: gaps.into_iter().map(fact).collect(),
+            })
         }
         Request::Begin { scope, stream } => {
             if fastctx_content::v2::hub_orders(&stream) {
@@ -1111,14 +1252,19 @@ pub(crate) fn ask_in(
             let library = scopes::library(assets, &kept)?;
             let device = *key.as_bytes();
             let signer = assets.signer();
-            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact { fact: signed.fact.clone().into(), word: signer.sign(&signed.fact).into() };
+            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact {
+                fact: signed.fact.clone().into(),
+                word: signer.sign(&signed.fact).into(),
+            };
             match library.last_epoch(&scope, &stream).map_err(|error| error.to_string())? {
                 // Begun already by this device: the epoch it orders in is the
                 // answer, however often it asks.
                 Some((_, orderer)) if orderer == device => {
                     let (epochs, _) = library.succession(&scope, &stream).map_err(|error| error.to_string())?;
                     let current = epochs.into_iter().last().ok_or("the stream's epochs are not here")?;
-                    assets.witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[]).map_err(|error| error.to_string())?;
+                    assets
+                        .witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[])
+                        .map_err(|error| error.to_string())?;
                     Ok(Reply::Epoch { descriptor: word_of(&current) })
                 }
                 Some(_) => Err(format!("{stream} of {scope} is ordered by another device")),
@@ -1127,10 +1273,14 @@ pub(crate) fn ask_in(
                 None => {
                     first_epoch_gate(assets, directory, &kept, &scope, &stream, &device)?;
                     let successor = Successor { device, key: device, kind: EpochKind::Source };
-                    let signed = library.open_epoch(&scope, &stream, successor, assets.signer()).map_err(|error| error.to_string())?;
+                    let signed = library
+                        .open_epoch(&scope, &stream, successor, assets.signer())
+                        .map_err(|error| error.to_string())?;
                     assets.changed(kept.owner.clone(), &scope);
                     let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
-                    assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+                    assets
+                        .opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact)
+                        .map_err(|error| error.to_string())?;
                     Ok(Reply::Epoch { descriptor: word_of(&signed) })
                 }
             }
@@ -1173,14 +1323,17 @@ pub(crate) fn ask_in(
             }
             let hashes: Vec<[u8; 32]> = hashes
                 .iter()
-                .map(|hash| <[u8; 32]>::try_from(hash.0.as_slice()).map_err(|_| "an object's hash is 32 bytes".to_string()))
+                .map(|hash| {
+                    <[u8; 32]>::try_from(hash.0.as_slice()).map_err(|_| "an object's hash is 32 bytes".to_string())
+                })
                 .collect::<Result<_, _>>()?;
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             // Only the device ordering the stream, in its epoch now, vouches
             // for what its frames refer to: judged as it is kept.
-            let kept =
-                library.vouch(&scope, &stream, epoch, key.as_bytes(), &hashes, read_ago, anew).map_err(|error| error.to_string())?;
+            let kept = library
+                .vouch(&scope, &stream, epoch, key.as_bytes(), &hashes, read_ago, anew)
+                .map_err(|error| error.to_string())?;
             let Some(kept) = kept else {
                 return Err("only the device ordering the stream, in its epoch now, vouches for its objects".into());
             };
@@ -1188,16 +1341,25 @@ pub(crate) fn ask_in(
         }
         Request::Permits { scopes } => {
             if scopes.len() > fastctx_types::asset_peers::SCOPES {
-                return Err(format!("the hub's word is asked for {} scopes at a time at most", fastctx_types::asset_peers::SCOPES));
+                return Err(format!(
+                    "the hub's word is asked for {} scopes at a time at most",
+                    fastctx_types::asset_peers::SCOPES
+                ));
             }
             // Held as a frame of its timeline is given: every stream a machine
             // orders of a conversation is of that stream's class.
             let timeline = <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM;
             let granted: Vec<String> = scopes
                 .into_iter()
-                .filter(|scope| wire::of_conversation(scope) && !assets.was_deleted(scope) && held(assets, directory, machine, scope, timeline).is_ok())
+                .filter(|scope| {
+                    wire::of_conversation(scope)
+                        && !assets.was_deleted(scope)
+                        && held(assets, directory, machine, scope, timeline).is_ok()
+                })
                 .collect();
-            let until = jiff::Timestamp::now().as_millisecond().saturating_add(i64::try_from(PERMIT_FOR.as_millis()).unwrap_or(i64::MAX));
+            let until = jiff::Timestamp::now()
+                .as_millisecond()
+                .saturating_add(i64::try_from(PERMIT_FOR.as_millis()).unwrap_or(i64::MAX));
             let word = assets.signer().sign(&wire::permit_statement(key.as_bytes(), until, &granted));
             Ok(Reply::Permits { until, granted, word: word.into() })
         }
@@ -1255,7 +1417,8 @@ fn open(
         // Only a head the hub's own word carried counts, under any key of
         // its keyring.
         if assets.keys().heard(&seen.statement.0, &seen.word.0) == Some((seen.seq, seen_head)) {
-            let kept = assets.control.read_now(move |c| chain::head_at(c, seen.seq)).map_err(|error| error.to_string())?;
+            let kept =
+                assets.control.read_now(move |c| chain::head_at(c, seen.seq)).map_err(|error| error.to_string())?;
             if kept != Some(seen_head) {
                 if assets.closed_head(seen.seq, &seen_head).map_err(|error| error.to_string())? {
                     closed = true;
@@ -1289,7 +1452,10 @@ fn open(
                 closed = true;
                 continue;
             }
-            let why = format!("{machine} holds the hub's receipt of {} that the hub's history no longer holds", receipt.scope);
+            let why = format!(
+                "{machine} holds the hub's receipt of {} that the hub's history no longer holds",
+                receipt.scope
+            );
             assets.seal(&why);
             return Ok(assets.sealed_reply(why));
         }
@@ -1301,7 +1467,11 @@ fn open(
         .keys()
         .rotations()
         .iter()
-        .map(|rotation| wire::Rotation { old: rotation.old.into(), new: rotation.new.into(), word: rotation.signature.clone().into() })
+        .map(|rotation| wire::Rotation {
+            old: rotation.old.into(),
+            new: rotation.new.into(),
+            word: rotation.signature.clone().into(),
+        })
         .collect();
     Ok(Reply::Ready {
         key: public.as_bytes().to_vec().into(),
@@ -1332,7 +1502,9 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
         .map_err(|error| error.to_string())?;
     let Some((seq, change, parked)) = found else { return Ok(None) };
     let at = seq as u64;
-    let Some(chain_head) = assets.control.read_now(move |c| chain::head_at(c, at)).map_err(|error| error.to_string())? else {
+    let Some(chain_head) =
+        assets.control.read_now(move |c| chain::head_at(c, at)).map_err(|error| error.to_string())?
+    else {
         return Ok(None);
     };
     let statement = wire::checkpoint_statement(&head.scope, change as u64, parked as u64, at, &chain_head);
@@ -1367,7 +1539,11 @@ fn take_many(
     // A line carries each frame whole, however long its body may be.
     let (most, most_bytes, longest) = match room {
         Room::Control => (wire::FRAMES_A_TAKE, wire::MANY_BYTES, wire::INLINE_FRAME_BYTES),
-        Room::Line => (fastctx_types::asset_lines::FRAMES, fastctx_types::asset_lines::FRAME_BYTES, wire::APART_FRAME_BYTES as usize),
+        Room::Line => (
+            fastctx_types::asset_lines::FRAMES,
+            fastctx_types::asset_lines::FRAME_BYTES,
+            wire::APART_FRAME_BYTES as usize,
+        ),
     };
     if frames.is_empty() || frames.len() > most {
         return Err(format!("a take of several frames carries 1 to {most} of them"));
@@ -1411,7 +1587,9 @@ fn take_many(
                     records
                         .iter()
                         .flat_map(|record| match &record.record.state {
-                            fastctx_content::State::Is { objects, .. } => objects.iter().map(|object| object.hash).collect(),
+                            fastctx_content::State::Is { objects, .. } => {
+                                objects.iter().map(|object| object.hash).collect()
+                            }
                             fastctx_content::State::Gone => Vec::new(),
                         })
                         .collect()
@@ -1419,7 +1597,12 @@ fn take_many(
                 .unwrap_or_default(),
         );
         stream = Some(header.stream);
-        raws.push(RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() });
+        raws.push(RawFrame {
+            header: frame.header.0,
+            signature: frame.signature.0,
+            body: frame.body.0,
+            objects: Vec::new(),
+        });
     }
     let stream = stream.expect("a frame or more");
     let library = scopes::library(assets, &kept)?;
@@ -1431,7 +1614,9 @@ fn take_many(
             .is_ok_and(|streams| streams.iter().any(|stream| scopes::holds(directory, machine, &kept, stream)))
     };
     let taking = Taking { period, readable: &readable, proven: &proven };
-    let words = library.take_many(&scope, raws, &DeviceKeys, &taking, kinds(), assets.signer()).map_err(|error| error.to_string())?;
+    let words = library
+        .take_many(&scope, raws, &DeviceKeys, &taking, kinds(), assets.signer())
+        .map_err(|error| error.to_string())?;
     fastctx_platform::lab::die_at("take", &scope);
     for (word, referred) in words.iter().zip(&referred) {
         match word {
@@ -1446,7 +1631,10 @@ fn take_many(
             _ => {}
         }
     }
-    if words.iter().any(|word| matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. })) {
+    if words
+        .iter()
+        .any(|word| matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. }))
+    {
         assets.changed(kept.owner.clone(), &scope);
         assets.receipted(&scope, machine);
     }
@@ -1466,7 +1654,13 @@ fn take_many(
 /// it lately to prove for a frame it sent, of a scope it still reads and the
 /// hub still holds the object of (design §28.45). Asking keeps what it
 /// proved lately and the bodies it staged, as sending an object does.
-fn challenge(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &PublicKey, object: &wire::ObjectRef) -> Result<Reply, String> {
+fn challenge(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &PublicKey,
+    object: &wire::ObjectRef,
+) -> Result<Reply, String> {
     let device = *key.as_bytes();
     assets.objects.keep_alive(&device);
     let hash = object.hash.array().ok_or("an object's hash is 32 bytes")?;
@@ -1481,7 +1675,8 @@ fn challenge(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, ke
     }
     let (nonce, until) = assets.objects.proving.issue(&device, &hash, object.size, &scope)?;
     let left = until.saturating_duration_since(std::time::Instant::now());
-    let until = jiff::Timestamp::now().as_millisecond().saturating_add(i64::try_from(left.as_millis()).unwrap_or(i64::MAX));
+    let until =
+        jiff::Timestamp::now().as_millisecond().saturating_add(i64::try_from(left.as_millis()).unwrap_or(i64::MAX));
     Ok(Reply::Challenge { nonce: Bytes(nonce.to_vec()), until })
 }
 
@@ -1512,7 +1707,8 @@ fn proof(assets: &Assets, key: &PublicKey, nonce: &Bytes, answer: &Bytes) -> Res
 #[cfg(test)]
 mod tests {
     use fastctx_content::v2::{
-        ConversationAttachment, ConversationHistory, ConversationMeta, ConversationPlan, ConversationWords, JobFacts, JobOutput, Kind, Timeline,
+        ConversationAttachment, ConversationHistory, ConversationMeta, ConversationPlan, ConversationWords, JobFacts,
+        JobOutput, Kind, Timeline,
     };
 
     /// A kind's number is its place in the registry, which only grows.

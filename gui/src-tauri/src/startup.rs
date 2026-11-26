@@ -56,6 +56,20 @@ pub fn persist(step: &str, error: &str) {
     }
 }
 
+/// A startup that reached the node leaves no failure of an earlier one on
+/// record: `startup-error.json` says only what went wrong last.
+fn cleared() {
+    #[cfg(desktop)]
+    if let Ok(root) = fastctx_platform::fastctx_root() {
+        let path = root.join("updates/startup-error.json");
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("removing {}: {error}", path.display()),
+        }
+    }
+}
+
 /// Records a page startup failure without requiring an open World connection.
 #[tauri::command]
 pub async fn startup_frontend_failed(error: String) -> Result<(), String> {
@@ -123,8 +137,11 @@ pub fn open(app: tauri::AppHandle) {
                 crate::updates::after_update(&app);
                 // The installer carries no other machine's program since
                 // beta.18: a remote install brings it (`remote_world::ssh`).
-                if let Err(error) = crate::updates::introduce(&app.state::<crate::Shell>(), None).await {
-                    warning(&app, "introduce_application", error);
+                match crate::updates::introduce(&app.state::<crate::Shell>(), None).await {
+                    Ok(_) => {
+                        let _ = tauri::async_runtime::spawn_blocking(cleared).await;
+                    }
+                    Err(error) => warning(&app, "introduce_application", error),
                 }
             }
             Err(error) => {

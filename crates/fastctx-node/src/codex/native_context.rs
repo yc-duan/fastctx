@@ -89,7 +89,8 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
                 // as one, so the context is told again rather than thought
                 // unchanged (design §28.49).
                 Found::Unread { at } => {
-                    observer.last = Some(crate::profile::session::hash(&format!("unread line at {at} of {}", path.display())));
+                    observer.last =
+                        Some(crate::profile::session::hash(&format!("unread line at {at} of {}", path.display())));
                 }
                 _ => {}
             }

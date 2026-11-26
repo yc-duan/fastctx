@@ -1627,7 +1627,9 @@ pub(crate) fn talk_id(
             let directory = &view.directory;
             directory.member(directory.canonical(typed_on)).map(|member| member.key.to_string())
         }),
-        None if node.is_me(typed_on) => node.assets.as_ref().map(|assets| PublicKey::from_bytes(assets.device()).to_string()),
+        None if node.is_me(typed_on) => {
+            node.assets.as_ref().map(|assets| PublicKey::from_bytes(assets.device()).to_string())
+        }
         None => None,
     };
     match key {

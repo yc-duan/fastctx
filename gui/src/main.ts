@@ -7,7 +7,8 @@
 import { projectWho, mergeFormer } from "./project/who";
 import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
-import { configureTopics, followState, mapTopic } from "./world/topics";
+import { BOOK, configureTopics, followState, mapTopic, SENTINELS } from "./world/topics";
+import { followAll, followMachine, followNumbers, numbersOf } from "./app/numbers";
 import { followSwitches, grabSwitches } from "./app/segment-slide";
 import { followTabs } from "./app/arrive";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -675,7 +676,8 @@ function agentsPage(next: Place): Page {
       store,
       words: english ? enAgentLogins : zhAgentLogins,
       changeWords: english ? enAgentChange : zhAgentChange,
-      read: readAllLogins,
+      // Every machine's at once: the page follows the logins topic.
+      read: (machine) => readAllLogins(machine, machine === null),
       scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen!.now)),
       add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent as "claude" | "codex", dir, specimen!.now)),
       folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen!.now)),
@@ -716,15 +718,15 @@ function agentsPage(next: Place): Page {
   return agentsShown;
 }
 
-function readAllLogins(machine: string | null): Promise<WorldLogins> {
-  return live ? agentLogins(machine) : specimenLoginsRead(machine);
+function readAllLogins(machine: string | null, atOnce = false): Promise<WorldLogins> {
+  return live ? agentLogins(machine, atOnce) : specimenLoginsRead(machine);
 }
 
 /** What a machine's own programs say of its agents, or with null every
  *  machine's this computer reaches, as a live World or the specimen
  *  answers. */
-function agentsOn(machine: string | null) {
-  if (live) return agents(machine);
+function agentsOn(machine: string | null, atOnce = false) {
+  if (live) return agents(machine, atOnce);
   const names = machine
     ? [machine]
     : [...new Set([...machinesOf(specimen!.world).filter((one) => one.here || one.online).map((one) => one.name), ...assistantsOf(specimen!.world).map((one) => one.machine)])];
@@ -769,7 +771,8 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   defaults: profileDefaults,
   homeWords: agentHomeWords,
   modelWords: english ? enModelPanel : zhModelPanel,
-  agents: (machine) => agentsOn(machine),
+  // Every machine's at once: the picker follows the logins topic.
+  agents: (machine) => agentsOn(machine, machine === null),
   folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn, mcpOff }) {
     if (!live) return specimenBegin(params.get("start")).then((to) => ({ to, delivery: null }));
@@ -1766,6 +1769,7 @@ function sentinelsPage(): Page {
       talkWords: words,
       english,
       head,
+      ...(live ? { follow: (read: () => Promise<void>) => followAll(store.world, "sentinels", SENTINELS, read, 60_000) } : {}),
       read: () =>
         live
           ? sentinelOverview().then((overview) => {
@@ -2443,11 +2447,13 @@ function liveTalk(address: Address): DeskTalk {
   // The sentinels it left, as rows beside its jobs; the goal's own sentinel
   // goes with the goal and is not withdrawn by hand.
   const sentinelRows = signal<PanelJob[]>([]);
-  // One question at a time: a reading still on its way is the one that
-  // answers.
+  // One question at a time: one asked for while a reading is on its way,
+  // which may have read before what moved it, is asked once that one
+  // answers, and the later answers both.
   let sentinelReading: Promise<boolean> | null = null;
-  const readSentinels = (): Promise<boolean> =>
-    (sentinelReading ??= (accountFeatures.talk(store.whole.peek(), address).sentinels
+  let sentinelAgain = false;
+  const readSentinelsOnce = (): Promise<boolean> =>
+    (accountFeatures.talk(store.whole.peek(), address).sentinels
       ? sentinelList(address, (() => { const account = featureAccount(store.whole.peek(), address); return account ? { hub: account.hubName, account: account.account } : undefined; })())
       : Promise.resolve([]))
       .then(
@@ -2457,10 +2463,30 @@ function liveTalk(address: Address): DeskTalk {
         },
         // A home that cannot be asked now keeps the rows last seen.
         () => false,
-      )
-      .finally(() => {
+      );
+  const readSentinels = (): Promise<boolean> => {
+    if (sentinelReading) {
+      sentinelAgain = true;
+      return sentinelReading;
+    }
+    // Begun after it is kept, so even one that fails at once lets go.
+    const reading = Promise.resolve().then(async () => {
+      let read = false;
+      try {
+        do {
+          sentinelAgain = false;
+          read = await readSentinelsOnce();
+        } while (sentinelAgain && !left);
+      } finally {
+        // Let go as the last look at `sentinelAgain` is taken, so a question
+        // after it begins a reading of its own.
         sentinelReading = null;
-      }));
+      }
+      return read;
+    });
+    sentinelReading = reading;
+    return reading;
+  };
   // What it started that still runs, as the World last answered, and the
   // sentinels it left.
   const running = effect(() => {
@@ -2472,9 +2498,10 @@ function liveTalk(address: Address): DeskTalk {
     });
     page.running([...jobs, ...sentinelRows.get()], now);
   });
-  // The sentinels' homes are asked, not followed: as the page opens, every
-  // half minute while it is open, and after one is withdrawn.
-  const stopSentinels = features.sentinels ? followState(null, async () => { if (!await readSentinels()) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
+  // The sentinels are read as the page opens, after one is withdrawn, and
+  // as they change: their records here, or what a home's number tells of
+  // them there (`app/numbers.ts`); a home that tells none, every half minute.
+  const stopSentinels = features.sentinels ? followAll(store.world, "sentinels", SENTINELS, async () => { if (!await readSentinels()) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2521,6 +2548,11 @@ function liveTalk(address: Address): DeskTalk {
     asked: (event) => {
       heardAt = Date.now();
       conversation.asked(event);
+      page.update();
+    },
+    live: (event) => {
+      heardAt = Date.now();
+      conversation.ahead(event);
       page.update();
     },
     happened: (at, event) => {
@@ -2818,7 +2850,7 @@ function projectPage(town: string): Page {
     }
 
   };
-  const stopSenses = followState(null, readSenses, 30_000);
+  const stopSenses = followAll(store.world, "sentinels", SENTINELS, readSenses, 30_000);
   let map: import("./world/world").MapView | null = null;
   let former: WorldWho | null = null;
   const showProject = () => {
@@ -2905,6 +2937,17 @@ function historyPage(scope: HistoryScope, name: string): Page {
         done,
       }),
     restore: (version) => (live ? historySeam.restore(scope, name, version) : notHere()),
+    // Deleted, it is read no more: the way back is taken.
+    remove: (expected) =>
+      historyConfirm.ask({
+        title: historyWords.removeTitle(name),
+        what: historyWords.removeWhat,
+        go: historyWords.remove,
+        act: () => (live ? historySeam.remove(scope, name, expected).then(() => undefined) : notHere()),
+        done: () => {
+          location.hash = back.href.replace(/^#/, "");
+        },
+      }),
     writer: (author) => historyWriter(author).name,
     ago: (at) => homeWords.ago((live ? Date.now() : specimen!.now.getTime()) - at.getTime()),
   });
@@ -2962,6 +3005,20 @@ const specimenRowsOf: RowsOf = (_machine, deed, touched) => () => specimenRows(t
 const FILES_DAYS = 30;
 
 /** A machine's changes of late, as its activity book tells them. */
+/** How often a machine's changes are read on the files page where nothing
+ *  tells when they move. */
+const FILES_AGAIN_MS = 8000;
+
+/** Calls `read` whenever `machine`'s book may have changed: this
+ *  computer's as it changes; another's once the number its hub tells of it
+ *  moved, or every `every` where it tells none (`app/numbers.ts`). Returns
+ *  what stops it. */
+function followBook(machine: string, read: () => void, every: number): () => void {
+  const asked = bookMachines(store.world.peek()).find((one) => one.name === machine);
+  if (asked && asked.written === null) return followState(BOOK, read, every);
+  return followMachine(store.world, "book", asked?.written ?? machine, read, every);
+}
+
 function machineChanges(machine: string): Promise<FileChange[]> {
   const now = live ? Date.now() : specimen!.now.getTime();
   const from = now - FILES_DAYS * 86_400_000;
@@ -3398,6 +3455,7 @@ function show(next: Place): void {
         read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
         named: sessionNamed,
         link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
+        ...(live ? { books: { told: () => new Set(numbersOf(store.world.peek(), "book").keys()), follow: (moved: (machines: string[]) => void) => followNumbers(store.world, "book", moved) } } : {}),
         ...(live && workbenchShown.on.peek() ? { bringIn: (resident: string) => bringIn(resident).then(() => store.refresh()) } : {}),
         ...(live ? {} : { now: () => specimen!.now.getTime(), rows: specimenRowsOf }),
       });
@@ -3425,6 +3483,7 @@ function show(next: Place): void {
           // changed, which the changes themselves tell.
           list: live ? null : specimenList,
           changes: machineChanges,
+          ...(live ? { follow: (machine: string, read: () => void) => followBook(machine, read, FILES_AGAIN_MS) } : {}),
           seams: fileSeams(),
           link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
           moved: (to) => {

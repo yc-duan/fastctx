@@ -245,7 +245,9 @@ pub(crate) fn finished_for_test(world: &Path, source: &Path, target: &Path) {
         source: source.to_path_buf(),
         source_identity: finished(world)
             .ok()
-            .and_then(|done| done.into_iter().find(|move_| move_.target == source).and_then(|move_| move_.target_identity))
+            .and_then(|done| {
+                done.into_iter().find(|move_| move_.target == source).and_then(|move_| move_.target_identity)
+            })
             .unwrap_or(Identity { device: 0, inode: 0 }),
         target: fastctx_platform::disk::canonicalize(target).expect("a target"),
         target_identity: Some(identity_of(target).expect("a target")),

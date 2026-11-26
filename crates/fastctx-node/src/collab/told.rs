@@ -39,9 +39,11 @@ impl Texts {
     pub(super) fn told(self) -> String {
         match self.told.as_slice() {
             [(text, names)] if names.len() == self.callees => text.clone(),
-            told => {
-                told.iter().map(|(text, names)| format!("{}:\n{text}", names.join(", "))).collect::<Vec<_>>().join("\n\n")
-            }
+            told => told
+                .iter()
+                .map(|(text, names)| format!("{}:\n{text}", names.join(", ")))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
         }
     }
 }

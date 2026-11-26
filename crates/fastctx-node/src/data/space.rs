@@ -204,9 +204,10 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
     }
     let everyone: HashMap<ResidentId, crate::residents::OnRecord> =
         node.residents.everyone().map(|resident| (resident.id.clone(), resident)).collect();
+    let deleted = deleted_here(node)?;
     let mut listed = Vec::new();
     for (name, one) in measured.iter_mut() {
-        listed.push(describe(node, name, one, &everyone)?);
+        listed.extend(describe(node, name, one, &everyone, &deleted)?);
     }
     listed.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
     Ok(Space {
@@ -513,12 +514,26 @@ fn add_jobs(one: &mut Measured, jobs: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The directories of the conversations deleted here, by name.
+fn deleted_here(node: &Node) -> io::Result<std::collections::HashSet<String>> {
+    node.database
+        .read_now(|db| {
+            let mut statement = db.prepare("SELECT name FROM node_conversation_deletions")?;
+            let names = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<_, _>>()?;
+            Ok(names)
+        })
+        .map_err(io::Error::other)
+}
+
+/// How one conversation's directory is shown; none for what a copy made
+/// again of a conversation deleted here, with nothing of it in it (issue #58).
 fn describe(
     node: &Node,
     name: &str,
     one: &mut Measured,
     everyone: &HashMap<ResidentId, crate::residents::OnRecord>,
-) -> io::Result<ConversationSpace> {
+    deleted: &std::collections::HashSet<String>,
+) -> io::Result<Option<ConversationSpace>> {
     let kind = Kind::of(name).expect("only conversation directories are measured");
     let directory = ConversationDir::at(&node.world.conversations().join(name));
     let mut last = one.records.latest.max(one.output.latest).max(one.host.latest);
@@ -566,7 +581,7 @@ fn describe(
                     let about = crate::residents::read_about(&directory)?;
                     let now = crate::residents::read_now(&directory)?;
                     let places = crate::residents::read_places(&directory, &about)?;
-                    return Ok(ConversationSpace {
+                    return Ok(Some(ConversationSpace {
                         name: name.to_string(),
                         group: Group::Removed,
                         agent: about.host.agent,
@@ -582,20 +597,30 @@ fn describe(
                         },
                         unopened: false,
                         held: running,
-                    });
+                    }));
                 }
-                let town = fastctx_platform::disk::read(directory.draft())
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                    .and_then(|draft| draft.get("town")?.as_str()?.parse().ok());
-                let held = if fastctx_platform::disk::exists(directory.draft_lock())?
-                    && fastctx_platform::FileLock::try_acquire(&directory.draft_lock())?.is_none()
-                {
-                    Some("it is being opened; wait for it to finish".into())
+                // Deleted here: what copies made again of it is not listed,
+                // and what else is left of it shows with the removed.
+                if deleted.contains(name) || node.residents.ever_deleted(id) {
+                    if crate::replicas::deleted::left_of_copies(&node.world, id)? {
+                        return Ok(None);
+                    }
+                    let town = one.job_town.take().and_then(|(_, town)| town);
+                    (Group::Removed, id.agent(), None, town, Some(node.machine()), false, running)
                 } else {
-                    running
-                };
-                (Group::Listed, id.agent(), None, town, Some(node.machine()), true, held)
+                    let town = fastctx_platform::disk::read(directory.draft())
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                        .and_then(|draft| draft.get("town")?.as_str()?.parse().ok());
+                    let held = if fastctx_platform::disk::exists(directory.draft_lock())?
+                        && fastctx_platform::FileLock::try_acquire(&directory.draft_lock())?.is_none()
+                    {
+                        Some("it is being opened; wait for it to finish".into())
+                    } else {
+                        running
+                    };
+                    (Group::Listed, id.agent(), None, town, Some(node.machine()), true, held)
+                }
             }
         },
         Kind::Guest(owner) => {
@@ -610,7 +635,7 @@ fn describe(
         Kind::Unplaced(id) => (Group::Elsewhere, id.agent(), None, None, None::<MachineName>, false, running),
     };
     let host = std::mem::take(&mut one.host_record);
-    Ok(ConversationSpace {
+    Ok(Some(ConversationSpace {
         name: name.to_string(),
         group,
         agent,
@@ -622,7 +647,7 @@ fn describe(
         parts: Parts { records: one.records.bytes, command_output: one.output.bytes, host },
         unopened,
         held,
-    })
+    }))
 }
 
 fn host_name(agent: &AgentName) -> &'static str {

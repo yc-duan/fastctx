@@ -159,6 +159,14 @@ pub(crate) async fn changed_here(node: &Arc<Node>) -> Result<MachineLogins, Fail
     own(node, snapshot::read(node)?)
 }
 
+/// What this machine answers of its agents and logins changed: its readers
+/// here read again (`topics::LOGINS`), and the other machines are told by
+/// their hubs, which ask again then and not before (`crate::elsewhere`).
+pub(crate) fn changed(node: &Node) {
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    crate::elsewhere::changed_here(node);
+}
+
 /// The same projection in the shape older clients read.
 pub(crate) async fn agents(node: &Arc<Node>) -> Result<fastctx_types::agents::AgentsReply, Failure> {
     snapshot::before_reading(node).await;
@@ -393,13 +401,14 @@ pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Opt
 }
 
 /// The record of `machine`, or of this one and every machine the asker may
-/// use, each as it keeps it.
+/// use, each as it keeps it; `at_once`, as `Call::AgentLogins` says.
 pub(crate) async fn query(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
     machine: Option<Written>,
+    at_once: bool,
 ) -> Result<fastctx_types::logins::WorldLogins, Failure> {
-    remote::query(node, acting, machine).await
+    remote::query(node, acting, machine, at_once).await
 }
 
 /// Takes up `dir` as a candidate login of `agent`: a folder the user chose

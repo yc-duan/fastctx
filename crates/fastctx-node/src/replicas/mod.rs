@@ -3,6 +3,7 @@
 pub(crate) mod backend;
 pub(crate) mod bodies;
 pub(crate) mod cleanup;
+pub(crate) mod deleted;
 pub(crate) mod files;
 mod legacy;
 pub(crate) mod location;

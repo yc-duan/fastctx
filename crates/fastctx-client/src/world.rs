@@ -295,7 +295,17 @@ impl World {
     /// Queries one machine, or fans out to every online machine. Offline
     /// and unanswered machines remain explicit in the result.
     pub async fn agents(&self, machine: Option<Written>) -> Result<fastctx_types::agents::WorldAgents, Error> {
-        match self.ask(Call::Agents { machine }).await? {
+        match self.ask(Call::Agents { machine, at_once: false }).await? {
+            Reply::Agents(agents) => Ok(agents),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// `agents`, what is known of each machine at once: one not heard from
+    /// lately is told as being asked, and the logins topic moves once it
+    /// answered (`Call::Agents::at_once`).
+    pub async fn agents_at_once(&self, machine: Option<Written>) -> Result<fastctx_types::agents::WorldAgents, Error> {
+        match self.ask(Call::Agents { machine, at_once: true }).await? {
             Reply::Agents(agents) => Ok(agents),
             other => Err(unexpected(other)),
         }
@@ -304,7 +314,19 @@ impl World {
     /// What the nodes of one machine, or of every machine this user may
     /// look at, keep of their agents' logins; no program is started.
     pub async fn agent_logins(&self, machine: Option<Written>) -> Result<fastctx_types::logins::WorldLogins, Error> {
-        match self.ask(Call::AgentLogins { machine }).await? {
+        match self.ask(Call::AgentLogins { machine, at_once: false }).await? {
+            Reply::AgentLogins(logins) => Ok(logins),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// `agent_logins`, what is known of each machine at once
+    /// (`Call::AgentLogins::at_once`).
+    pub async fn agent_logins_at_once(
+        &self,
+        machine: Option<Written>,
+    ) -> Result<fastctx_types::logins::WorldLogins, Error> {
+        match self.ask(Call::AgentLogins { machine, at_once: true }).await? {
             Reply::AgentLogins(logins) => Ok(logins),
             other => Err(unexpected(other)),
         }
@@ -900,7 +922,12 @@ impl World {
         self.folders_page(machine, path, None).await
     }
 
-    pub async fn folders_page(&self, machine: Option<Written>, path: Option<String>, cursor: Option<String>) -> Result<fastctx_types::focus::Folders, Error> {
+    pub async fn folders_page(
+        &self,
+        machine: Option<Written>,
+        path: Option<String>,
+        cursor: Option<String>,
+    ) -> Result<fastctx_types::focus::Folders, Error> {
         match self.ask(Call::Folders { machine, path, cursor }).await? {
             Reply::Folders(folders) => Ok(folders),
             other => Err(unexpected(other)),

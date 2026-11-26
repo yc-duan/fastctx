@@ -119,13 +119,15 @@ type Stored = (Vec<u8>, Vec<fastctx_content::ObjectRef>, Vec<fastctx_content::v2
 
 fn stored(library: &Library, state: &str, delivery: &Delivery, why: Option<String>) -> fastctx_content::Result<Stored> {
     let invalid = |error: serde_json::Error| fastctx_content::Error::Invalid(error.to_string());
-    let whole = serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why: why.clone() }).map_err(invalid)?;
+    let whole = serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why: why.clone() })
+        .map_err(invalid)?;
     if whole.len() <= BODY_MOST {
         return Ok((whole, Vec::new(), Vec::new()));
     }
     let delivered = serde_json::to_vec(delivery).map_err(invalid)?;
     let lease = library.put(&mut delivered.as_slice(), "words", fastctx_content::v2::LEASE)?;
-    let said = serde_json::json!({ "state": state, "why": why, "in_object": true, "id": delivery.id, "at": delivery.at });
+    let said =
+        serde_json::json!({ "state": state, "why": why, "in_object": true, "id": delivery.id, "at": delivery.at });
     Ok((serde_json::to_vec(&said).map_err(invalid)?, vec![lease.object], vec![lease]))
 }
 
@@ -237,7 +239,8 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     // Let go to another machine with its export: the inbox keeps them
     // alone (J08), once what is held here of this number was looked at
     // (PP03).
-    let released = crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device());
+    let released =
+        crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device());
     // Come from another machine, its scope is begun here by the hub's
     // description alone (AG10), and nothing is written to it before every
     // stream of it was pulled here once: what orders each is known (MM02).
@@ -416,7 +419,9 @@ pub(super) async fn produce(
     let mut writes = Vec::new();
     let mut ways = Vec::new();
     for ((entry, said, ours), stood) in open.iter().zip(stood) {
-        let Some(said) = said else { return Err(failure(format!("{resident}'s words {} cannot be read", String::from_utf8_lossy(&entry.item)))) };
+        let Some(said) = said else {
+            return Err(failure(format!("{resident}'s words {} cannot be read", String::from_utf8_lossy(&entry.item))));
+        };
         // Nothing of them in the inbox yet is not their being let go: kept
         // here just now, the inbox keeps them next (MM03, K02). Only long
         // after this node first saw them missing, they are taken as let go;
@@ -424,7 +429,8 @@ pub(super) async fn produce(
         // meanwhile, and said again they are on their way again (NN03).
         let id = said.delivery.id.to_string();
         if stood == Stood::Gone {
-            let first = *MISSING.lock().expect("missing words").entry(id.clone()).or_insert_with(std::time::Instant::now);
+            let first =
+                *MISSING.lock().expect("missing words").entry(id.clone()).or_insert_with(std::time::Instant::now);
             if first.elapsed() < GONE_AFTER {
                 continue;
             }

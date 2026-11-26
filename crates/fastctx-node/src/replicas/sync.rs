@@ -6,12 +6,12 @@ use super::{
 };
 use crate::Node;
 use fastctx_net::link::Link;
+use fastctx_types::ResidentId;
 use fastctx_types::{
     access::HubAccount,
     owned_records::{Request, Response},
     replicas::{Document, Head, Scope},
 };
-use fastctx_types::ResidentId;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -112,6 +112,9 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
     // left as it is until they are asked again.
     let mut unasked = std::collections::HashSet::new();
     let mut here = std::collections::HashSet::new();
+    // Refused for a new reason, by reason: one line each, however many
+    // conversations, as when the hub went away during the pass.
+    let mut newly_refused: std::collections::BTreeMap<String, (usize, ResidentId)> = Default::default();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         here.insert(resident.id.clone());
         if refused_lately(&resident.id) {
@@ -124,9 +127,15 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
             }
             Err(error) => {
                 if refused(&resident.id, &error.message) {
-                    node.log.line(format_args!("registering the records of {}: {error}", resident.id));
+                    newly_refused.entry(error.message.clone()).or_insert((0, resident.id.clone())).0 += 1;
                 }
             }
+        }
+    }
+    for (why, (count, first)) in newly_refused {
+        match count {
+            1 => node.log.line(format_args!("registering the records of {first}: {why}")),
+            _ => node.log.line(format_args!("registering the records of {count} conversations, {first} first: {why}")),
         }
     }
     // What was refused to a conversation no longer here is kept no longer.
@@ -156,9 +165,11 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         .cloned()
         .collect();
     let catalog_view = crate::authorization::current_view(link).map_err(failure)?;
-    let Response::Replicas { catalog } = link.owned_records(&account, Request::Replicas).await? else {
+    let Response::Replicas { mut catalog } = link.owned_records(&account, Request::Replicas).await? else {
         return Err("the hub did not return the replica catalog".into());
     };
+    // A conversation deleted here is made again by no copy (issue #58).
+    let left = super::deleted::leave_out(node, &mut catalog).await?;
     let account = HubAccount { hub: link.membership().id, account };
     super::publication::prune(node).await?;
     for scope in catalog.scopes.iter().cloned() {
@@ -204,6 +215,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
     }
     super::publication::catalog(node, catalog_view, catalog, known, known_folders).await?;
     super::publication::prune(node).await?;
+    super::deleted::settle(node, link, left).await;
     node.memory_changed();
     if let Some(error) = super::updates::retry_later(node, &account, failed) {
         node.log.line(format_args!("synchronizing document replicas: {error}"));
@@ -216,12 +228,21 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     if !enabled(node, account, &head.document) {
         return Ok(());
     }
+    // Nor is a copy of a conversation deleted here made again.
+    if super::deleted::document(node, &head.document) {
+        return Ok(());
+    }
     if let Document::Plan { owner } = &head.document {
         crate::placement::copies::upgrade::take(node, link, &head.owner, owner).await.map_err(failure)?;
     }
     let path = path(node, link, &head.document)?;
     let id = state::identity(account, &head);
     let existing = node.replicas.state.get(&id);
+    // A document deleted for good leaves nothing to withdraw where no copy
+    // of it was kept.
+    if head.deleted && existing.is_none() {
+        return Ok(());
+    }
     let known = existing.is_some();
     let slot = existing.unwrap_or_else(|| {
         node.replicas.state.insert(Copy {
@@ -261,6 +282,10 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     // Flush reads its own base, including the absence of a new history topic.
     if copy.pending.is_empty() {
         if !stale && head.retired {
+            // What was seen of one deleted for good is of no later life.
+            if head.deleted {
+                copy.observed.clear();
+            }
             copy.head = head;
             copy.body = Text::default();
         } else if copy.head.version != head.version || copy.head.retired != head.retired {
@@ -312,7 +337,10 @@ pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Res
     if !enabled(node, &copy.account, &copy.head.document) {
         return Err("notes synchronization is paused for this document".into());
     }
-    let (text, version, retired, history) = match &copy.head.document {
+    // A document deleted for good is read no more: the copy takes the
+    // version it was deleted at, as a retired one, and is withdrawn.
+    let deletion = |version: u64| (String::new(), Some(version), true, None, true);
+    let (text, version, retired, history, deleted) = match &copy.head.document {
         Document::Plan { owner } => {
             let page = link.owned_plan_read(&copy.account.account, owner).await?;
             (
@@ -320,20 +348,40 @@ pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Res
                 page.version(),
                 page.deleted(),
                 None,
+                false,
             )
         }
         Document::History { scope: Scope::Project { town, .. }, name } => {
-            let document = link.history_current(&copy.account.account, town, name).await?;
-            (document.text, Some(document.revision.version), document.revision.retired, Some(document.revision))
+            match link.history_current(&copy.account.account, town, name).await {
+                Ok(document) => (
+                    document.text,
+                    Some(document.revision.version),
+                    document.revision.retired,
+                    Some(document.revision),
+                    false,
+                ),
+                Err(error) => match link.history_catalog(&copy.account.account, town).await?.deleted.get(name) {
+                    Some(version) => deletion(*version),
+                    None => return Err(error),
+                },
+            }
         }
         Document::History { scope: Scope::Conversation { conversation }, name } => {
             let stored =
                 link.conversation_history_stored(&copy.account.account, &conversation.address, name, None).await?;
             match stored {
                 Some(stored) => {
-                    (stored.text, Some(stored.revision.version), stored.revision.retired, Some(stored.revision))
+                    (stored.text, Some(stored.revision.version), stored.revision.retired, Some(stored.revision), false)
                 }
-                None => (String::new(), None, false, None),
+                None => match link
+                    .conversation_history_catalog(&copy.account.account, &conversation.address)
+                    .await?
+                    .deleted
+                    .get(name)
+                {
+                    Some(version) => deletion(*version),
+                    None => (String::new(), None, false, None, false),
+                },
             }
         }
     };
@@ -344,7 +392,11 @@ pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Res
     copy.body = if retired && copy.pending.is_empty() { Text::default() } else { keep(node, copy, &text).await? };
     copy.head.version = version;
     copy.head.retired = retired;
+    copy.head.deleted = deleted;
     copy.head.history = history;
+    if deleted {
+        copy.observed.clear();
+    }
     Ok(())
 }
 
@@ -416,15 +468,7 @@ pub(crate) async fn project(
         let opened = view.account(&owner).ok_or("the project's account is unavailable")?.opened;
         let catalog = link.history_catalog(&folder.account.account, town).await?;
         let mut failed = Vec::new();
-        for revision in catalog.documents {
-            let head = Head {
-                owner: owner.clone(),
-                opened,
-                document: Document::History { scope: folder.scope.clone(), name: revision.name.clone() },
-                version: Some(revision.version),
-                retired: revision.retired,
-                history: Some(revision),
-            };
+        for head in heads(&owner, opened, &folder.scope, catalog) {
             if let Err(error) = apply(node, link, &folder.account, head.clone()).await {
                 failed.push((head, error));
             }
@@ -468,12 +512,16 @@ pub(crate) async fn record(
                 name: change.metadata.key.split_once('/').expect("checked key").1.into(),
             }
         };
+        // A history record is deleted only for good; a plan's deletion
+        // retires it.
+        let deleted = change.metadata.deleted && matches!(document, Document::History { .. });
         let head = Head {
             owner: conversation.account.clone(),
             opened: owner.opened,
             document,
             version: Some(change.metadata.version),
             retired: change.metadata.deleted,
+            deleted,
             history: None,
         };
         apply(node, link, &folder.account, head).await?;
@@ -509,6 +557,9 @@ pub(crate) async fn conversation(
     conversation: fastctx_types::owned_records::Conversation,
 ) -> Result<(), String> {
     super::state::loaded(node).await.map_err(failure)?;
+    if super::deleted::here(node, &conversation.address).await? {
+        return Ok(());
+    }
     let view = crate::authorization::current_view(link).map_err(failure)?;
     let account = HubAccount {
         hub: link.membership().id,
@@ -536,6 +587,7 @@ pub(crate) async fn conversation(
             document: Document::Plan { owner: conversation.address.clone() },
             version: page.version(),
             retired: page.deleted(),
+            deleted: false,
             history: None,
         },
     )
@@ -544,23 +596,36 @@ pub(crate) async fn conversation(
         return Ok(());
     }
     let catalog = link.conversation_history_catalog(&account.account, &conversation.address).await?;
-    for revision in catalog.documents {
-        apply(
-            node,
-            link,
-            &account,
-            Head {
-                owner: conversation.account.clone(),
-                opened,
-                document: Document::History { scope: scope.clone(), name: revision.name.clone() },
-                version: Some(revision.version),
-                retired: revision.retired,
-                history: Some(revision),
-            },
-        )
-        .await?;
+    for head in heads(&conversation.account, opened, &scope, catalog) {
+        apply(node, link, &account, head).await?;
     }
     Ok(())
+}
+
+/// The heads of a history catalog's documents in `scope`, those deleted for
+/// good among them.
+fn heads(
+    owner: &fastctx_types::AccountName,
+    opened: jiff::Timestamp,
+    scope: &Scope,
+    catalog: fastctx_types::history::Catalog,
+) -> Vec<Head> {
+    let head = |name: String, version: u64, retired: bool, deleted: bool, history| Head {
+        owner: owner.clone(),
+        opened,
+        document: Document::History { scope: scope.clone(), name },
+        version: Some(version),
+        retired,
+        deleted,
+        history,
+    };
+    let deleted = catalog.deleted.into_iter().map(|(name, version)| head(name, version, true, true, None));
+    catalog
+        .documents
+        .into_iter()
+        .map(|revision| head(revision.name.clone(), revision.version, revision.retired, false, Some(revision)))
+        .chain(deleted)
+        .collect()
 }
 
 /// A topic invalidation carries only its identity and revision, never the whole catalog.
@@ -594,6 +659,7 @@ pub(crate) async fn topic(
             document: Document::History { scope, name: name.into() },
             version: Some(version),
             retired: false,
+            deleted: false,
             history: None,
         },
     )

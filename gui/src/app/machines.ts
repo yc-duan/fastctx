@@ -66,6 +66,7 @@ import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import { WaysSheet } from "./machine-ways";
 import type { Store } from "./store";
+import { morph } from "./morph";
 
 export interface MachinesOptions {
   store: Store;
@@ -1376,7 +1377,7 @@ export class MachinesPage implements Page {
         // they were after each drawing.
         const scrolled = this.list.querySelector<HTMLElement>(".uv-rows, .tv-rows")?.scrollTop ?? 0;
         redrawKeepingFocus(this.list, () => {
-          this.list.innerHTML = html;
+          morph(this.list, html);
           const rows = this.list.querySelector<HTMLElement>(".uv-rows, .tv-rows");
           if (rows) rows.scrollTop = scrolled;
         });

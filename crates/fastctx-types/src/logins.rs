@@ -96,6 +96,14 @@ pub enum MachineLoginsHeard {
         machine: MachineName,
         reason: String,
     },
+    /// Not heard from lately and asked now, told so to a reader that takes
+    /// what is known at once (`crate::calls::Call::AgentLogins::at_once`),
+    /// which reads again once the machine answered (`crate::topics::LOGINS`).
+    Asking {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+        machine: MachineName,
+    },
 }
 
 /// One machine's record of its agents' logins.

@@ -9,20 +9,45 @@ use fastctx_types::session::{Content, Happened, Part, SessionChange, SessionEven
 pub struct Live {
     items: Vec<SessionEvent>,
     deltas: HashMap<(String, String), HashSet<[u8; 32]>>,
+    /// The messages that ended lately, as they ended: a watcher joining just
+    /// after a turn told its end, before the conversation's record holds its
+    /// last words, is shown them from here until that record does — a
+    /// reader drops one its record holds (codex-d0397b85).
+    finished: Vec<(std::time::Instant, SessionEvent)>,
 }
+
+/// How long a message that ended is kept for a watcher joining after it.
+const FINISHED_KEPT: std::time::Duration = std::time::Duration::from_secs(120);
+/// How many such messages are kept at most: the last words of a turn or two.
+const FINISHED_MOST: usize = 4;
 
 impl Live {
     pub fn unwatched(&mut self) {
         self.items.retain(|snapshot| {
             !matches!(&snapshot.happened, Happened::Changed { change: SessionChange::Composer { .. }, .. })
         });
+        self.finished.clear();
     }
 
     pub fn snapshots(&self) -> impl Iterator<Item = &SessionEvent> {
-        self.items.iter()
+        self.items
+            .iter()
+            .chain(self.finished.iter().filter(|(at, _)| at.elapsed() < FINISHED_KEPT).map(|(_, event)| event))
     }
 
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
+        self.finished.retain(|(at, _)| at.elapsed() < FINISHED_KEPT);
+        if let Happened::Finished { turn, item } = &event.happened
+            && matches!(item.what, What::Message { .. })
+        {
+            self.finished.retain(|(_, held)| {
+                !matches!(&held.happened, Happened::Finished { turn: t, item: i } if t == turn && i.id == item.id)
+            });
+            self.finished.push((std::time::Instant::now(), event.clone()));
+            if self.finished.len() > FINISHED_MOST {
+                self.finished.remove(0);
+            }
+        }
         match &event.happened {
             Happened::Changed { change: SessionChange::Composer { composer }, .. } => {
                 if self.items.iter().any(|snapshot| {
@@ -40,6 +65,7 @@ impl Live {
             Happened::Changed { change: SessionChange::HistoryChanged, .. } => {
                 self.items.clear();
                 self.deltas.clear();
+                self.finished.clear();
             }
             Happened::Changed { change: SessionChange::Request { id, .. }, .. } => {
                 self.items.retain(|snapshot| {
@@ -225,7 +251,13 @@ mod tests {
             live.observe(&SessionEvent { at, happened: Happened::Finished { turn, item } });
             live.observe(&delta);
             assert!(live.deltas.is_empty());
-            assert_eq!(live.snapshots().count(), 1);
+            // Nothing of the running item is kept; of the messages that
+            // ended, the last few, for a watcher joining after them.
+            assert_eq!(
+                live.snapshots().filter(|event| !matches!(event.happened, Happened::Finished { .. })).count(),
+                1
+            );
+            assert!(live.snapshots().count() <= 1 + FINISHED_MOST);
         }
         live.unwatched();
         assert_eq!(live.snapshots().count(), 0);

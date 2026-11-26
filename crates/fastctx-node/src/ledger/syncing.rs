@@ -8,8 +8,22 @@ use tokio::sync::Notify;
 
 use crate::Node;
 
+/// What waits to be taken from each hub, and how many changes of its
+/// ledgers each hub told so far (`told`).
 #[derive(Default)]
-pub(crate) struct Updates(Mutex<HashMap<HubId, Pending>>);
+pub(crate) struct Updates(Mutex<HashMap<HubId, Pending>>, Mutex<HashMap<HubId, u64>>);
+
+/// How many changes of its projects' ledgers `hub` told this computer:
+/// while it stands, nothing of them changed that was not told before.
+pub(crate) fn told(node: &Node, hub: &HubId) -> u64 {
+    node.ledger_updates.1.lock().expect("never poisoned").get(hub).copied().unwrap_or(0)
+}
+
+/// Whether nothing told of `hub`'s ledgers waits to be taken, nor is being
+/// taken now.
+pub(crate) fn idle(node: &Node, hub: &HubId) -> bool {
+    !node.ledger_updates.0.lock().expect("never poisoned").contains_key(hub)
+}
 
 #[derive(Default)]
 struct Pending {
@@ -19,6 +33,7 @@ struct Pending {
 }
 
 pub(crate) fn changed(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) {
+    *node.ledger_updates.1.lock().expect("never poisoned").entry(hub.clone()).or_default() += 1;
     let wake = {
         let mut updates = node.ledger_updates.0.lock().expect("never poisoned");
         let running = updates.contains_key(hub);

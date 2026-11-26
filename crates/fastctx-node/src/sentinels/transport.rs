@@ -10,6 +10,45 @@ use fastctx_types::{
 use std::sync::Arc;
 
 pub(crate) struct Transport(pub Arc<Node>);
+
+/// A sentinel as asked of its home: its account, its home, its name.
+pub(crate) type Asked = (HubAccount, fastctx_types::MachineName, fastctx_types::SentinelId);
+
+/// What a home said of a sentinel, and the number its sentinels stood at
+/// when it said it (`fastctx_types::numbers::Numbers::sentinels`).
+#[derive(Clone)]
+pub(crate) struct Inspected {
+    number: u64,
+    summary: Summary,
+}
+
+/// The most inspections kept: past it they are let go, all at once.
+const INSPECTED_AT_MOST: usize = 4096;
+
+impl Transport {
+    /// The number the sentinels of `registration`'s home stand at, as its
+    /// hub last told it, where it tells it, is online, and the sentinel's
+    /// account may use it still (as `send_to` asks); none for this
+    /// computer, which is asked at no cost, and none for another account a
+    /// conversation is shared with, whom the home judges itself.
+    fn standing(&self, registration: &Registration) -> Option<u64> {
+        if crate::record_access::current().is_some_and(|access| access.actor != registration.scope) {
+            return None;
+        }
+        let link = self.0.link_of(&registration.scope.hub)?;
+        // Judged on a view the connection up now gave, as `send_to` judges.
+        if !link.view_current() {
+            return None;
+        }
+        let view = link.view();
+        let home = &registration.definition.home;
+        if view.is_me(home) || !view.call_rights(&view.me, &registration.scope.account, home).hands {
+            return None;
+        }
+        view.member(home).filter(|member| member.online).and_then(|member| member.numbers?.sentinels)
+    }
+}
+
 impl Homes for Transport {
     fn begin<'a>(&'a self, registration: &'a Registration, version: u64) -> FutureResult<'a, Summary> {
         Box::pin(async move {
@@ -29,16 +68,43 @@ impl Homes for Transport {
             }
         })
     }
+    /// What its home says of the sentinel: as it said last, while the number
+    /// its sentinels stand at has not moved since (`standing`).
     fn inspect<'a>(&'a self, registration: &'a Registration) -> FutureResult<'a, Summary> {
         Box::pin(async move {
-            match self.send(registration, HomeRequest::Inspect { id: registration.definition.id.clone() }).await? {
-                HomeReply::Summary { sentinel } if sentinel.definition == registration.definition => Ok(*sentinel),
-                _ => Err("the sentinel home answered a different assignment".into()),
+            let asked: Asked =
+                (registration.scope.clone(), registration.definition.home.clone(), registration.definition.id.clone());
+            let standing = self.standing(registration);
+            if let Some(number) = standing {
+                let kept = self.0.sentinels.inspected.lock().expect("never poisoned").get(&asked).cloned();
+                if let Some(kept) =
+                    kept.filter(|kept| kept.number == number && kept.summary.definition == registration.definition)
+                {
+                    return Ok(kept.summary);
+                }
             }
+            let summary =
+                match self.send(registration, HomeRequest::Inspect { id: registration.definition.id.clone() }).await? {
+                    HomeReply::Summary { sentinel } if sentinel.definition == registration.definition => *sentinel,
+                    _ => return Err("the sentinel home answered a different assignment".into()),
+                };
+            if let Some(number) = standing {
+                let mut inspected = self.0.sentinels.inspected.lock().expect("never poisoned");
+                if inspected.len() >= INSPECTED_AT_MOST {
+                    inspected.clear();
+                }
+                inspected.insert(asked, Inspected { number, summary: summary.clone() });
+            }
+            Ok(summary)
         })
     }
     fn withdraw<'a>(&'a self, registration: &'a Registration) -> FutureResult<'a, ()> {
         Box::pin(async move {
+            self.0.sentinels.inspected.lock().expect("never poisoned").remove(&(
+                registration.scope.clone(),
+                registration.definition.home.clone(),
+                registration.definition.id.clone(),
+            ));
             match self.send(registration, HomeRequest::Withdraw { id: registration.definition.id.clone() }).await? {
                 HomeReply::Withdrawn => Ok(()),
                 _ => Err("the sentinel home did not confirm withdrawal".into()),
@@ -88,17 +154,28 @@ impl Transport {
         if view.is_me(home) {
             return home_call_for(&self.0, scope, &self.0.machine(), &request).await.map_err(|failure| failure.message);
         }
-        if !view.member(home).is_some_and(|member| member.online) {
+        let Some(member) = view.member(home).filter(|member| member.online) else {
             return Err("the sentinel home is offline".into());
-        }
-        match link
-            .call(home, &scope.account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.message)?
-        {
-            RemoteReply::Facts(facts) if facts.sentinels => {}
-            _ => return Err("upgrade the sentinel home to use sentinels".into()),
+        };
+        // Whether it keeps sentinels is asked once for each time it connects.
+        let since = member.since;
+        let able = (scope.hub.clone(), home.clone());
+        let known =
+            since.is_some() && self.0.sentinels.able.lock().expect("never poisoned").get(&able) == since.as_ref();
+        if !known {
+            match link
+                .call(home, &scope.account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.message)?
+            {
+                RemoteReply::Facts(facts) if facts.sentinels => {
+                    if let Some(since) = since {
+                        self.0.sentinels.able.lock().expect("never poisoned").insert(able, since);
+                    }
+                }
+                _ => return Err("upgrade the sentinel home to use sentinels".into()),
+            }
         }
         let call = RemoteCall::SentinelHome { request };
         let asking = crate::submitted::Asking::begin();

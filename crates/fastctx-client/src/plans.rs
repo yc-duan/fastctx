@@ -24,7 +24,8 @@ impl World {
         if let Err(error) = &read
             && !error.is_refusal()
             && let Some(device) = self.device()
-            && let Some(page) = crate::device::copy_reads::plan(device, copy.0.as_ref(), copy.1.as_ref(), &copy.2, copy.3.as_ref())
+            && let Some(page) =
+                crate::device::copy_reads::plan(device, copy.0.as_ref(), copy.1.as_ref(), &copy.2, copy.3.as_ref())
         {
             return Ok(page);
         }

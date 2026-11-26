@@ -29,11 +29,33 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
-/// `resident`'s composer changed: its draft is written again.
+/// `resident`'s composer changed: its draft is written again. Asked for
+/// once until it is written: what is typed meanwhile goes in the same
+/// writing, which reads the composer as it stands then, and nothing else
+/// kept beside the timeline is made again for it (codex-1c5d39f1).
 pub(crate) fn changed(node: &Node, resident: &ResidentId) {
-    CHANGED.lock().expect("changed drafts").insert(resident.clone());
-    super::tail::wanted(node, resident);
+    let first = CHANGED.lock().expect("changed drafts").insert(resident.clone());
+    // Asked again now and then all the same: a writing set aside after its
+    // failures is taken up again only when asked (codex-580b4d87).
+    let now = std::time::Instant::now();
+    let due = {
+        let mut asked = ASKED.lock().expect("drafts asked");
+        let due = first || asked.get(resident).is_none_or(|at| now.duration_since(*at) >= ASKED_AGAIN);
+        if due {
+            asked.insert(resident.clone(), now);
+        }
+        due
+    };
+    if due {
+        super::tail::wanted_draft(node, resident);
+    }
 }
+
+/// When each conversation's draft was last asked to be written, and how long
+/// after a draft still waiting to be written is asked for again.
+static ASKED: LazyLock<Mutex<std::collections::HashMap<ResidentId, std::time::Instant>>> =
+    LazyLock::new(Mutex::default);
+const ASKED_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Brings `resident`'s draft in the asset library to its composer here;
 /// how many items were written.
@@ -88,13 +110,15 @@ pub(super) async fn produce(
         }
     };
     let held = producing.hold(resident).await;
-    let Some(Beside { library, scope, holding }) = (match writable(node, resident, ConversationDraft::STREAM, &held).await {
-        Ok(beside) => beside,
-        Err(error) => {
-            CHANGED.lock().expect("changed drafts").insert(resident.clone());
-            return Err(error);
-        }
-    }) else {
+    let Some(Beside { library, scope, holding }) =
+        (match writable(node, resident, ConversationDraft::STREAM, &held).await {
+            Ok(beside) => beside,
+            Err(error) => {
+                CHANGED.lock().expect("changed drafts").insert(resident.clone());
+                return Err(error);
+            }
+        })
+    else {
         CHANGED.lock().expect("changed drafts").insert(resident.clone());
         return Ok(0);
     };
@@ -114,9 +138,11 @@ pub(super) async fn produce(
         let _held = held;
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(&body).into();
-        let same = library.item(&scope, ConversationDraft::STREAM, ITEM).map_err(failure)?.is_some_and(|entry| match entry.objects.first() {
-            None => entry.body == body,
-            Some(object) => object.hash == digest && object.size == body.len() as u64,
+        let same = library.item(&scope, ConversationDraft::STREAM, ITEM).map_err(failure)?.is_some_and(|entry| {
+            match entry.objects.first() {
+                None => entry.body == body,
+                Some(object) => object.hash == digest && object.size == body.len() as u64,
+            }
         });
         if same {
             return Ok(0);
@@ -124,7 +150,8 @@ pub(super) async fn produce(
         // A draft larger than a body holds is its one object (AS16).
         let (value, objects, leases) = if body.len() > BODY_MOST {
             let lease = library.put(&mut body.as_slice(), "draft", fastctx_content::v2::LEASE).map_err(failure)?;
-            let said = serde_json::json!({ "in_object": true, "epoch": epoch, "revision": revision, "bytes": body.len() });
+            let said =
+                serde_json::json!({ "in_object": true, "epoch": epoch, "revision": revision, "bytes": body.len() });
             (serde_json::to_vec(&said).map_err(failure)?, vec![lease.object], vec![lease])
         } else {
             (body, Vec::new(), Vec::new())

@@ -722,6 +722,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
+        hooks_skipped: crate::claude::hooks::skipped().map(Box::new),
     }
 }
 
@@ -800,6 +801,9 @@ impl fastctx_net::link::Node for Handler {
     }
     fn workbench(&self) -> Option<bool> {
         self.node.upgrade().and_then(|node| crate::logins::workbench::told(&node))
+    }
+    fn numbers(&self) -> Option<fastctx_types::numbers::Numbers> {
+        self.node.upgrade().map(|node| crate::elsewhere::told_numbers(&node))
     }
     fn acquire(
         &self,
@@ -919,7 +923,8 @@ impl fastctx_net::link::Node for Handler {
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
                     RemoteCall::Assets => {
-                        let stream = stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
+                        let stream =
+                            stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
                         crate::assets::served::serve(&node, &hub, &caller, stream).await.map(|()| RemoteReply::Set)
                     }
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
@@ -1408,10 +1413,10 @@ impl fastctx_net::link::Node for Handler {
                         fastctx_platform::task::spawn_blocking(move || {
                             crate::assets::copies::asked(&asking, ask, Some((&through, &owner)))
                         })
-                            .await
-                            .map_err(|error| Failure::new(error.to_string()))?
-                            .map(RemoteReply::Copies)
-                            .map_err(Failure::not_run)
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(RemoteReply::Copies)
+                        .map_err(Failure::not_run)
                     }
                     RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                         let update = match call {
@@ -1803,12 +1808,27 @@ impl fastctx_net::link::Node for Handler {
     fn presence_changed(&self) {
         if let Some(node) = self.node.upgrade() {
             node.tools_changed(None);
+            if let Some(link) = node.link_of(&self.hub) {
+                crate::elsewhere::view_changed(&node, &link);
+            }
+        }
+    }
+
+    /// A machine's numbers alone moved: the answers kept of it hear it, and
+    /// so does an interface showing it; no way, tool or right moved.
+    fn numbers_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            if let Some(link) = node.link_of(&self.hub) {
+                crate::elsewhere::view_changed(&node, &link);
+            }
+            node.shown_changed();
         }
     }
 
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         let Some(link) = node.link_of(&self.hub) else { return };
+        crate::elsewhere::directory_changed(&node, &link);
         // An account made again is seen so before anything is asked here
         // for it (`incarnations`).
         node.incarnations.saw(&node, &self.hub, &link.view().directory);

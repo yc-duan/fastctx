@@ -5,10 +5,10 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
-#[cfg(desktop)]
-mod board;
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(desktop)]
+mod board;
 mod book;
 mod collab;
 mod collaboration;
@@ -30,6 +30,8 @@ mod kept;
 mod layers;
 #[cfg(desktop)]
 mod local_repair;
+#[cfg(desktop)]
+mod local_service;
 mod plan;
 mod profile;
 mod projects;
@@ -605,8 +607,14 @@ async fn since(
 async fn agents(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
+    at_once: Option<bool>,
 ) -> Result<fastctx_types::agents::WorldAgents, String> {
-    shell.world().agents(machine(machine_name)?).await.map_err(|error| error.to_string())
+    let machine = machine(machine_name)?;
+    // What is known of each machine at once, for a page that follows the
+    // logins topic for the rest (`Call::Agents::at_once`); else each waited on.
+    let world = shell.world();
+    if at_once.unwrap_or(false) { world.agents_at_once(machine).await } else { world.agents(machine).await }
+        .map_err(|error| error.to_string())
 }
 
 /// Stops the turn a resident is running; says whether one was. Seeing no
@@ -1226,6 +1234,8 @@ pub fn run() {
             local_repair::repair_here,
             #[cfg(desktop)]
             local_repair::repair_state,
+            #[cfg(desktop)]
+            local_service::restart_local_service,
             updates::update_state,
             updates::update_repair,
             updates::update_progress,
@@ -1309,6 +1319,7 @@ pub fn run() {
             history::history_save,
             history::history_retire,
             history::history_restore,
+            history::history_delete,
             history::history_watch,
             layers::bring_in,
             book::book,

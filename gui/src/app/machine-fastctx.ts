@@ -2,7 +2,9 @@
 // 机器的详情; `world-upgrade.md`, 别的机器的更新): what it runs, and the
 // application's version where one carries it; whether a boot service keeps
 // it; what it can take and how an update of it goes, as the machine itself
-// says, asked every few seconds while it is shown. Updating it and its
+// says, asked again while it is shown once the number its hub tells of its
+// updates moved (`app/numbers.ts`), every second while a package comes,
+// and every few seconds where its hub tells no such number. Updating it and its
 // choices are the machines' update view's, which 「更新…」 opens with it
 // ticked; this device's own opens its update card. A machine whose Fastctx
 // is older updates to the newest on its line alone, from here.
@@ -19,10 +21,12 @@ import { setRow } from "./machine-set";
 import type { Machine } from "./reach";
 import type { Signal } from "./signals";
 
-/** How often a machine is asked how its updates stand, and while a package
- *  comes or it changes its World program. */
+/** How often a machine is asked how its updates stand where its hub tells
+ *  no number of them; while a package comes or it changes its World
+ *  program; and where it tells one, however still that stands. */
 const EVERY_MS = 5_000;
 const MOVING_MS = 1_000;
+const QUIET_MS = 5 * 60_000;
 
 export interface FastctxOptions {
   words: ManageWords;
@@ -69,6 +73,9 @@ export class FastctxBlock {
   private saidWhy = "";
   private timer = 0;
   private asking = false;
+  /** The number of its updates its hub told when it was last asked, where
+   *  it told one. */
+  private askedAt: number | undefined = undefined;
   /** The machine was away when last asked: it is asked as soon as it is back. */
   private away = false;
   private shown = false;
@@ -84,13 +91,16 @@ export class FastctxBlock {
       this.state = null;
       this.problem = null;
       this.said = null;
-    this.saidWhy = "";
       this.saidWhy = "";
+      this.askedAt = undefined;
     }
     const was = this.shown;
     this.shown = shown;
-    // Shown again, or back online after it was not asked while away.
-    if (shown && (!was || (this.away && subject?.machine.online !== false))) void this.ask(subject);
+    // Its updates moved since it was last asked, as its hub tells.
+    const number = subject?.machine.numbers?.updates;
+    const moved = number !== undefined && this.askedAt !== undefined && number !== this.askedAt;
+    // Shown again, moved, or back online after it was not asked while away.
+    if (shown && (!was || moved || (this.away && subject?.machine.online !== false))) void this.ask(subject);
     if (!shown) clearTimeout(this.timer);
   }
 
@@ -109,6 +119,7 @@ export class FastctxBlock {
     this.away = machine.online === false;
     if (machine.here || !manages || this.away || older) return;
     this.asking = true;
+    this.askedAt = machine.numbers?.updates;
     try {
       this.state = await this.options.remote(machine.written, { do: "state" });
       this.problem = null;
@@ -119,8 +130,18 @@ export class FastctxBlock {
     }
     if (subject.machine.name !== this.name) return;
     this.options.changed();
+    // Drawing it again may have asked again already.
+    if (!this.shown || this.asking) return;
     const moving = !!this.state?.fetching || (!!this.state?.renewing && this.state.renewing.phase !== "failed");
-    if (this.shown) this.timer = window.setTimeout(() => void this.ask(), moving ? MOVING_MS : EVERY_MS);
+    const latest = this.subject?.machine.numbers?.updates;
+    // Its number moved while it was asked: what it said may be behind.
+    if (!moving && latest !== undefined && latest !== this.askedAt) {
+      void this.ask();
+      return;
+    }
+    clearTimeout(this.timer);
+    // One that did not answer is asked again soon, its number told or not.
+    this.timer = window.setTimeout(() => void this.ask(), moving ? MOVING_MS : this.askedAt !== undefined && this.problem === null ? QUIET_MS : EVERY_MS);
   }
 
   /** Whether the machine's Fastctx is of a release before it answers about

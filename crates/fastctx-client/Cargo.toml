@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = { version = "0.3", features = ["std"] }
 fastctx-content = { path = "../fastctx-content", optional = true }
 fastctx-net = { path = "../fastctx-net" }

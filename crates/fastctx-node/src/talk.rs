@@ -1069,11 +1069,26 @@ impl Told {
         }
         self.due = true;
         self.others = None;
-        let (busy, turn) = node.residents.now(&self.resident).map_or((false, None), |now| {
-            (now.activity == fastctx_types::residents::Activity::Busy || now.turn.is_some(), now.turn)
-        });
-        let (reading, resident) = (node.clone(), self.resident.clone());
-        let kept = fastctx_platform::task::blocking(move || kept(&reading, &resident)).await;
+        let now_of = |node: &Arc<Node>, resident: &ResidentId| {
+            node.residents.now(resident).map_or((false, None), |now| {
+                (now.activity == fastctx_types::residents::Activity::Busy || now.turn.is_some(), now.turn)
+            })
+        };
+        // Busy and turn read again after the words kept, which take a while
+        // to read: a turn that began meanwhile is told, never an idle state
+        // read before it (codex-fb2e1cc5, codex-8cc17361). Read once more
+        // while they move, a few times at most.
+        let mut tries = 0;
+        let (busy, turn, kept) = loop {
+            let before = now_of(node, &self.resident);
+            let (reading, resident) = (node.clone(), self.resident.clone());
+            let kept = fastctx_platform::task::blocking(move || kept(&reading, &resident)).await;
+            let after = now_of(node, &self.resident);
+            tries += 1;
+            if after == before || tries >= 3 {
+                break (after.0, after.1, kept);
+            }
+        };
         let halted = crate::composer::stopped_turn(node, &self.resident).filter(|halted| turn.as_ref() == Some(halted));
         let state = (busy, turn, kept, halted);
         self.due = false;

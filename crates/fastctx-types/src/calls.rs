@@ -109,6 +109,11 @@ pub enum Call {
         paths: Vec<std::path::PathBuf>,
     },
     History(crate::history::HistoryCall),
+    /// `fastctx history delete`: the history document whose file is at
+    /// `path` here, deleted for good by the conversation running the command.
+    HistoryDelete {
+        path: std::path::PathBuf,
+    },
     /// A conversation's installed timeline, read without its host's record
     /// (`crate::timeline_pages`).
     Timeline {
@@ -569,6 +574,13 @@ pub enum Call {
     /// Agent programs on one machine, or every online machine in the World.
     Agents {
         machine: Option<Written>,
+        /// The reader takes what is known of each machine at once: one not
+        /// heard from lately that is slow to answer is told as being asked
+        /// (`crate::agents::MachineAgents::Asking`), and the reader reads
+        /// again once it answered (`crate::topics::LOGINS`). Without it,
+        /// each machine is waited on.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        at_once: bool,
     },
     /// The user's word, from one of the user's devices, on whether Claude
     /// Code on `machine` may run the World's sessions without approvals: its
@@ -591,6 +603,9 @@ pub enum Call {
     /// to ask again a login whose sign-in changed since it was asked.
     AgentLogins {
         machine: Option<Written>,
+        /// As `Agents::at_once` (`crate::logins::MachineLoginsHeard::Asking`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        at_once: bool,
     },
     /// Scans `machine`, one of the user's own, for its agents: answered
     /// once the usual places are done, while the folders the user chose are
@@ -1649,15 +1664,17 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } | Self::TimelinePreview { .. } => {
-                Some(Purpose::Observation)
-            }
+            Self::Topics { .. }
+            | Self::RemoteTopics { .. }
+            | Self::SyncStatus { .. }
+            | Self::TimelinePreview { .. } => Some(Purpose::Observation),
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
             // What a machine's owner asks of the copies its library holds.
             Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets when a machine deletes its conversations idle long enough.
             Self::ConversationRetention { .. } => Some(Purpose::ExecutionControl),
+            Self::HistoryDelete { .. } => Some(Purpose::ExecutionControl),
             // Sets what a login's assistances and its Fable line are held to.
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
                 Some(Purpose::ExecutionControl)

@@ -436,7 +436,7 @@ pub(crate) fn register(node: &Arc<Node>) {
         })
     };
     jobs.register(
-        Kind { name: HANDING, at_once: HANDED_AT_ONCE, within: HANDS_WITHIN, tries: HAND_TRIES },
+        Kind { name: HANDING, at_once: HANDED_AT_ONCE, within: HANDS_WITHIN, tries: HAND_TRIES, ready: None },
         Arc::new(run),
     );
 }

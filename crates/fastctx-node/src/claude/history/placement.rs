@@ -43,7 +43,10 @@ enum Heard<'a> {
 impl<'a> Turns<'a> {
     /// As `of` makes them, of the starts of turns (`turns`, in the order the
     /// record tells them, each with its end) and the words asked of `heard`.
-    pub(crate) fn kept(turns: Vec<(Timestamp, Option<Timestamp>, String)>, heard: &'a dyn Fn(&str, &str) -> bool) -> Self {
+    pub(crate) fn kept(
+        turns: Vec<(Timestamp, Option<Timestamp>, String)>,
+        heard: &'a dyn Fn(&str, &str) -> bool,
+    ) -> Self {
         let mut turns: Vec<_> = turns.into_iter().map(|(start, end, turn)| (start, end, Cow::Owned(turn))).collect();
         turns.sort_by_key(|(start, ..)| *start);
         Self { turns, heard: Heard::Kept(heard) }
@@ -71,7 +74,9 @@ impl<'a> Turns<'a> {
                 Happened::TurnEnded { turn, .. } => {
                     ends.insert(turn, event.at);
                 }
-                Happened::Heard { turn: Some(turn), text, .. } => heard.entry(turn.as_str()).or_default().push(text.as_str()),
+                Happened::Heard { turn: Some(turn), text, .. } => {
+                    heard.entry(turn.as_str()).or_default().push(text.as_str())
+                }
                 _ => {}
             }
         }
@@ -201,9 +206,9 @@ pub(crate) fn decide<'a>(spots: &'a Spots, turns: &'a Turns<'_>) -> impl Iterato
 pub(crate) fn finish(mut event: SessionEvent, turn: Option<&str>, turns: &Turns<'_>) -> Option<SessionEvent> {
     if let Some(turn) = turn {
         match &mut event.happened {
-            Happened::Heard { turn: slot, .. } | Happened::Health { turn: slot, .. } | Happened::Changed { turn: slot, .. } => {
-                *slot = Some(turn.to_string())
-            }
+            Happened::Heard { turn: slot, .. }
+            | Happened::Health { turn: slot, .. }
+            | Happened::Changed { turn: slot, .. } => *slot = Some(turn.to_string()),
             Happened::Began { turn: slot, .. }
             | Happened::Grew { turn: slot, .. }
             | Happened::Finished { turn: slot, .. }
@@ -239,7 +244,9 @@ pub(crate) fn place(events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec
     }
     let mut events: Vec<Option<SessionEvent>> = events.into_iter().map(Some).collect();
     decide(&spots, &turns)
-        .filter_map(|(index, turn)| finish(events[index].take().expect("each event placed once"), turn.map(|turn| turns.name(turn)), &turns))
+        .filter_map(|(index, turn)| {
+            finish(events[index].take().expect("each event placed once"), turn.map(|turn| turns.name(turn)), &turns)
+        })
         .collect()
 }
 
@@ -302,7 +309,9 @@ mod tests {
             });
             if let Some(turn) = turn {
                 match &mut event.happened {
-                    Happened::Heard { turn: slot, .. } | Happened::Health { turn: slot, .. } | Happened::Changed { turn: slot, .. } => *slot = Some(turn),
+                    Happened::Heard { turn: slot, .. }
+                    | Happened::Health { turn: slot, .. }
+                    | Happened::Changed { turn: slot, .. } => *slot = Some(turn),
                     Happened::Began { turn: slot, .. }
                     | Happened::Grew { turn: slot, .. }
                     | Happened::Finished { turn: slot, .. }
@@ -317,7 +326,10 @@ mod tests {
             }
             if let Happened::Heard { turn, text, message, .. } = &event.happened {
                 let told = claude::is_framed(text)
-                    || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));
+                    || turn
+                        .as_deref()
+                        .and_then(|turn| heard.get(turn))
+                        .is_some_and(|said| said.contains(&text.as_str()));
                 if told
                     && fastctx_types::session::attachments::Envelope::read(text).is_none()
                     && message.as_ref().is_none_or(|message| message.images.is_empty())
@@ -359,7 +371,11 @@ mod tests {
             draft: None,
             started_at: None,
             detail: None,
-            what: if hidden { What::Hidden { host_kind: "attachment".into() } } else { What::Message { text: "m".into() } },
+            what: if hidden {
+                What::Hidden { host_kind: "attachment".into() }
+            } else {
+                What::Message { text: "m".into() }
+            },
         }
     }
 
@@ -404,9 +420,23 @@ mod tests {
             0 => Happened::TurnStarted { turn },
             1 => Happened::TurnEnded {
                 turn,
-                end: TurnEnd { how: TurnHow::Completed, reason: None, error: None, duration_ms: None, facts: None, last_message: None },
+                end: TurnEnd {
+                    how: TurnHow::Completed,
+                    reason: None,
+                    error: None,
+                    duration_ms: None,
+                    facts: None,
+                    last_message: None,
+                },
             },
-            _ => Happened::Heard { delivery: None, turn: Some(turn), from: None, text: WORDS[choices.pick(2) as usize].into(), message: None, notice: None },
+            _ => Happened::Heard {
+                delivery: None,
+                turn: Some(turn),
+                from: None,
+                text: WORDS[choices.pick(2) as usize].into(),
+                message: None,
+                notice: None,
+            },
         };
         SessionEvent { at, happened }
     }
@@ -419,7 +449,11 @@ mod tests {
         for round in 0..20_000 {
             let events: Vec<SessionEvent> = (0..choices.pick(12)).map(|_| hosted(&mut choices)).collect();
             let world: Vec<SessionEvent> = (0..choices.pick(8)).map(|_| recorded(&mut choices)).collect();
-            assert_eq!(place(events.clone(), &world), placed_before(events.clone(), &world), "round {round}: {events:?}\n{world:?}");
+            assert_eq!(
+                place(events.clone(), &world),
+                placed_before(events.clone(), &world),
+                "round {round}: {events:?}\n{world:?}"
+            );
         }
     }
 }

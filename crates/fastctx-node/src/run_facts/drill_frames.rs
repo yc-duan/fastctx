@@ -52,7 +52,10 @@ pub(super) fn run(file: &Path, path: &Path) -> Result<(), Box<dyn std::error::Er
     assert!(original > 16 * 1024 * 1024, "the fixture must reproduce the transport rejection");
     let job = Job::open(path)?;
     let mut emitted = Emitted::default();
-    crate::storage_drill::outside(file, "CREATE TRIGGER fact_queue_fault BEFORE INSERT ON conversation_records WHEN NEW.family LIKE '%/facts-queue' BEGIN SELECT RAISE(ABORT,'injected manifest failure'); END;")?;
+    crate::storage_drill::outside(
+        file,
+        "CREATE TRIGGER fact_queue_fault BEFORE INSERT ON conversation_records WHEN NEW.family LIKE '%/facts-queue' BEGIN SELECT RAISE(ABORT,'injected manifest failure'); END;",
+    )?;
     assert!(frame_queue::publish(&job, update.clone(), &mut emitted).is_err());
     assert!(job.get::<Emitted>("facts-state")?.is_none(), "failed publication advanced the source cursor");
     crate::storage_drill::outside(file, "DROP TRIGGER fact_queue_fault")?;

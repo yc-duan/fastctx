@@ -54,6 +54,20 @@ impl Library {
         Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.is_some()))?)
     }
 
+    /// Whether `scope` is one a hub described that is not held here now:
+    /// held again only once a hub's listing installs it (`propose_on`),
+    /// nothing is written to it before.
+    pub fn awaits_listing(&self, scope: &str) -> Result<bool> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT 1 FROM scopes WHERE key = ?1 AND holding IS NULL AND described = 1")?
+                .query_row([&scope], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })?)
+    }
+
     pub fn holding(&self, scope: &str) -> Result<Option<i64>> {
         let scope = scope.to_string();
         Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.and_then(|(_, _, holding)| holding)))?)

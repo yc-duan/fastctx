@@ -35,6 +35,12 @@ fn event() -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
 
+/// What the pipe holds for its reader. A pipe that holds nothing reads as
+/// writable to the MSYS runtime of Git for Windows, whose small non-blocking
+/// writes then fail with EAGAIN forever: its OpenSSH keeps its last output
+/// and never exits. Checkpoints count what is queued (`checkpoint`).
+const QUEUED_AT_MOST: u32 = 64 * 1024;
+
 pub(super) fn pipe() -> io::Result<(Reader, io::PipeWriter)> {
     // Anonymous Win32 pipes cannot perform overlapped reads. A single-instance
     // local byte pipe keeps the ordinary writer semantics while allowing the
@@ -50,7 +56,7 @@ pub(super) fn pipe() -> io::Result<(Reader, io::PipeWriter)> {
             PIPE_REJECT_REMOTE_CLIENTS,
             1,
             0,
-            0,
+            QUEUED_AT_MOST,
             0,
             ptr::null(),
         )
@@ -177,3 +183,4 @@ impl Reader {
         Ok(queued as usize)
     }
 }
+

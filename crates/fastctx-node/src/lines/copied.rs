@@ -41,8 +41,12 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
             .filter(|(scope, _, _, _)| hub.as_ref().is_none_or(|hub| scope.hub.as_deref() == Some(hub.as_str())))
             .collect();
         let [(scope, facts, named, entry)] = held.try_into().ok()?;
-        let scope = scope.key;
         let output = format!("{}{}", JobOutput::STREAM, facts.strip_prefix(JobFacts::STREAM).unwrap_or_default());
+        // Taken only once read: asked for now where it is not here.
+        if !crate::assets::lazy::held(&asking, &scope, &output) {
+            return None;
+        }
+        let scope = scope.key;
         let record: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
         if record.get("machine").and_then(serde_json::Value::as_str) != Some(machine.as_str()) {
             return None;

@@ -17,7 +17,10 @@ export interface WorldLogins {
 export type MachineLoginsHeard =
   | { kind: "answered"; logins: MachineLogins }
   | { kind: "offline"; machine: MachineName; since: Timestamp | null }
-  | { kind: "no_answer"; machine: MachineName; reason: string };
+  | { kind: "no_answer"; machine: MachineName; reason: string }
+  /** Not heard from lately and asked now, told so to a reader that takes
+   *  what is known at once: the logins topic moves once it answered. */
+  | { kind: "asking"; machine: MachineName };
 
 /** One machine's record. */
 export interface MachineLogins {

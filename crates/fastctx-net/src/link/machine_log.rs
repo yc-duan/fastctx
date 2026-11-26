@@ -9,7 +9,7 @@ use crate::wire::{Question, Told};
 impl Link {
     pub async fn machine_log(&self, account: &AccountName, before: Option<u64>) -> Result<Page, String> {
         // Refresh before checking support: a cached view may predate a hub upgrade.
-        self.refresh().await?;
+        self.refresh_unless_current().await?;
         if !self.view().machine_log {
             return Err("this hub does not support the machine change log".to_string());
         }

@@ -78,7 +78,8 @@ pub fn ask_description(any_host: bool) -> String {
 }
 
 /// How the description begins where every callee is Codex's.
-pub const ASK_OPENING: &str = "Ask a colleague to take a piece of work: a GPT agent, run by Codex, that does it on its own while you carry on.";
+pub const ASK_OPENING: &str =
+    "Ask a colleague to take a piece of work: a GPT agent, run by Codex, that does it on its own while you carry on.";
 
 /// How it begins where some callee is Claude Code's.
 pub const ASK_OPENING_ANY_HOST: &str = "Ask a colleague to take a piece of work: an agent that does it on its own while you carry on, GPT run by Codex or Claude run by Claude Code, as each callee below says.";

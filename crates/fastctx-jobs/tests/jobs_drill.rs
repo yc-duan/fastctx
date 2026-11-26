@@ -96,7 +96,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "count", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3 }, count);
+    jobs.register(
+        Kind { name: "count", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None },
+        count,
+    );
 
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     let merged = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
@@ -109,7 +112,7 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "merge", at_once: 1, within: Duration::from_secs(30), tries: 3 }, merge);
+    jobs.register(Kind { name: "merge", at_once: 1, within: Duration::from_secs(30), tries: 3, ready: None }, merge);
 
     let attempts = Arc::new(Mutex::new(Vec::<u32>::new()));
     let tried = attempts.clone();
@@ -117,7 +120,7 @@ async fn drill(database: Database) -> Outcome_<()> {
         tried.lock().expect("attempts").push(taken.attempt);
         Box::pin(async { Outcome::Failed("it cannot be done".into()) })
     });
-    jobs.register(Kind { name: "fail", at_once: 1, within: Duration::from_secs(5), tries: 3 }, fail);
+    jobs.register(Kind { name: "fail", at_once: 1, within: Duration::from_secs(5), tries: 3, ready: None }, fail);
 
     let waited = Arc::new(AtomicUsize::new(0));
     let waiting_runs = waited.clone();
@@ -126,7 +129,7 @@ async fn drill(database: Database) -> Outcome_<()> {
         let first = waiting_runs.fetch_add(1, Ordering::AcqRel) == 0;
         Box::pin(async move { if first { Outcome::Again { after: Duration::from_secs(3600) } } else { Outcome::Done } })
     });
-    jobs.register(Kind { name: "wait", at_once: 1, within: Duration::from_secs(5), tries: 3 }, wait);
+    jobs.register(Kind { name: "wait", at_once: 1, within: Duration::from_secs(5), tries: 3, ready: None }, wait);
 
     let operating = Arc::new(tokio::sync::Semaphore::new(0));
     let operated = Arc::new(AtomicUsize::new(0));
@@ -148,7 +151,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             if wrote.is_ok() { Outcome::Done } else { Outcome::Failed("its settling was not written".into()) }
         })
     });
-    jobs.register(Kind { name: "operate", at_once: 1, within: Duration::from_secs(30), tries: 3 }, operate);
+    jobs.register(
+        Kind { name: "operate", at_once: 1, within: Duration::from_secs(30), tries: 3, ready: None },
+        operate,
+    );
 
     let slow: Run = Arc::new(|_| {
         Box::pin(async {
@@ -156,7 +162,7 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "slow", at_once: 1, within: Duration::from_millis(100), tries: 1 }, slow);
+    jobs.register(Kind { name: "slow", at_once: 1, within: Duration::from_millis(100), tries: 1, ready: None }, slow);
 
     // What a stopped process left running runs again.
     database
@@ -223,7 +229,7 @@ async fn drill(database: Database) -> Outcome_<()> {
         ran_late.fetch_add(1, Ordering::AcqRel);
         Box::pin(async { Outcome::Done })
     });
-    jobs.register(Kind { name: "late", at_once: 1, within: Duration::from_secs(5), tries: 3 }, named_late);
+    jobs.register(Kind { name: "late", at_once: 1, within: Duration::from_secs(5), tries: 3, ready: None }, named_late);
     database.write(256, |db| submit(db, &job("late", "one", "unit", b""))).await?;
     jobs.stir("late");
     emptied(&database, "late", Duration::from_secs(10)).await?;
@@ -244,7 +250,10 @@ async fn drill(database: Database) -> Outcome_<()> {
             Outcome::Done
         })
     });
-    jobs.register(Kind { name: "order", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3 }, order);
+    jobs.register(
+        Kind { name: "order", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3, ready: None },
+        order,
+    );
     database
         .write(64 * 1024, |db| {
             for number in 0..300u32 {

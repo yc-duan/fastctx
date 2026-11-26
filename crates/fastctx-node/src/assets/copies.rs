@@ -567,7 +567,9 @@ pub(crate) fn stays_cleared(node: &Node, hub: &str, scope: &str, readers: &[Stri
             let view = link.view();
             node.accounts_on(&link, &fastctx_types::access::Acting::Here)
                 .into_iter()
-                .filter_map(|account| Some((account.to_string(), view.directory.account(&account)?.opened.as_millisecond())))
+                .filter_map(|account| {
+                    Some((account.to_string(), view.directory.account(&account)?.opened.as_millisecond()))
+                })
                 .collect()
         };
         let kind = crate::updates::install_kind(node);
@@ -613,10 +615,22 @@ pub(crate) fn hold_listed(
         return Ok(false);
     }
     let here = assets.library.held_listing(scope).map_err(|error| error.to_string())?;
-    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice())
-        && assets.library.install_listed(network, scope, description, revision).map_err(|error| error.to_string())?.is_none()
-    {
-        return Ok(false);
+    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice()) {
+        if assets
+            .library
+            .install_listed(network, scope, description, revision)
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        // Held again: a timeline that waited for it is brought now
+        // (`timeline::tail::Produced::waits_listing`).
+        if here.is_none()
+            && let Some(id) = conversation_of(scope)
+        {
+            crate::timeline::described(node, &id);
+        }
     }
     let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
     if listed != Some((Some(holds), Some(said))) {
@@ -638,7 +652,11 @@ fn born_here(node: &Node, scope: &str) -> bool {
     node.links().into_iter().filter(|link| link.hub().as_str() == hub).any(|link| {
         let me = link.membership().name.clone();
         me.as_str() == machine
-            || link.view().directory.member(&me).is_some_and(|member| member.was.iter().any(|was| was.as_str() == machine))
+            || link
+                .view()
+                .directory
+                .member(&me)
+                .is_some_and(|member| member.was.iter().any(|was| was.as_str() == machine))
     })
 }
 
@@ -690,8 +708,14 @@ pub(crate) fn clear(
         .account(&name)
         .map(|found| found.opened.as_millisecond())
         .ok_or_else(|| format!("there is no account {account} on {hub}"))?;
-    let mut cleared =
-        fastctx_types::data::Cleared { applied: apply, scopes: 0, bytes: 0, kept: Vec::new(), keys: Vec::new(), failed: None };
+    let mut cleared = fastctx_types::data::Cleared {
+        applied: apply,
+        scopes: 0,
+        bytes: 0,
+        kept: Vec::new(),
+        keys: Vec::new(),
+        failed: None,
+    };
     {
         // One at a time; none while what is paused is worked out, an account
         // is taken in again or a listing holds anew what was let go.
@@ -720,7 +744,8 @@ pub(crate) fn clear(
                 None => chosen.push(scope),
             }
         }
-        let held = |scope: &HeldScope| fastctx_types::data::CopyHeld { scope: scope.key.clone(), holding: scope.holding };
+        let held =
+            |scope: &HeldScope| fastctx_types::data::CopyHeld { scope: scope.key.clone(), holding: scope.holding };
         // The room letting them go gives back: their frames, and the objects
         // nothing else here refers to, holds or leases.
         let freed = |size: fastctx_content::v2::CopySize| size.frames + size.objects;
@@ -768,7 +793,9 @@ pub(crate) fn clear(
                     .map_err(|error| (format!("keeping what is let go: {error}"), false))?;
                 let unmark = |why: String| match assets.copies.mark_cleared(&scope.key, None) {
                     Ok(()) => (why, false),
-                    Err(error) => (format!("{why}; and it stays kept as let go here, though it was not: {error}"), true),
+                    Err(error) => {
+                        (format!("{why}; and it stays kept as let go here, though it was not: {error}"), true)
+                    }
                 };
                 match assets.library.drop_copy(&scope.key, scope.holding, &device) {
                     Ok(fastctx_content::v2::Dropped::Gone) => Ok(None),
@@ -846,7 +873,8 @@ pub(crate) fn asked(
         }
         CopiesAsk::Clear { hub, account, apply, only } => {
             within(&hub)?;
-            let only: Option<BTreeSet<(String, i64)>> = only.map(|held| held.into_iter().map(|one| (one.scope, one.holding)).collect());
+            let only: Option<BTreeSet<(String, i64)>> =
+                only.map(|held| held.into_iter().map(|one| (one.scope, one.holding)).collect());
             clear(node, &hub, &account, apply, only.as_ref(), Some(&still)).map(CopiesAnswer::Cleared)
         }
     }
@@ -855,7 +883,11 @@ pub(crate) fn asked(
 /// Whether this machine is `caller`'s on the network of `hub`, as its
 /// directory says now, and why not: a view from before the link was last
 /// made again is no word on it.
-fn owned_by(node: &Node, hub: &fastctx_types::access::HubId, caller: &fastctx_types::AccountName) -> Result<(), String> {
+fn owned_by(
+    node: &Node,
+    hub: &fastctx_types::access::HubId,
+    caller: &fastctx_types::AccountName,
+) -> Result<(), String> {
     let Some(link) = node.links().into_iter().find(|link| link.hub() == hub) else {
         return Err("this machine is not on that network now".into());
     };
@@ -1065,7 +1097,11 @@ mod tests {
     #[test]
     fn what_is_owed_is_paused_as_the_node_starts() {
         let dir = dir("owed");
-        let kept = Kept { accounts: Vec::new(), owed: ["c/h/m/r".to_string()].into_iter().collect(), cleared: BTreeMap::new() };
+        let kept = Kept {
+            accounts: Vec::new(),
+            owed: ["c/h/m/r".to_string()].into_iter().collect(),
+            cleared: BTreeMap::new(),
+        };
         fastctx_platform::disk::write(dir.join(FILE), serde_json::to_vec(&kept).unwrap()).unwrap();
         let copies = Copies::open(&dir);
         assert!(copies.paused_now().contains("c/h/m/r"));

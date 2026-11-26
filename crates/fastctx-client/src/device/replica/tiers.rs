@@ -60,33 +60,33 @@ pub(super) fn hold(tier: Tier, stream: &str) -> Hold {
     }
     // The registry's kind for each stream name, in brackets.
     const KINDS: &[(&str, Hold)] = &[
-        ("meta", Hold::Complete),           // conversation.metadata
-        ("words", Hold::Complete),          // conversation.words
-        ("plan", Hold::Complete),           // conversation.plan
-        ("history", Hold::Complete),        // conversation.history
-        ("goals", Hold::Complete),          // conversation.goal
-        ("sentinels", Hold::Complete),      // conversation.sentinel
-        ("timers", Hold::Complete),         // conversation.timer
-        ("draft", Hold::Complete),          // conversation.draft
-        ("files", Hold::Complete),          // conversation.files
-        ("settings", Hold::Complete),       // account.settings
-        ("profile", Hold::Complete),        // account.profile
-        ("collaboration", Hold::Complete),  // account.collaboration
-        ("notices", Hold::Complete),        // account.notice
-        ("timeline", Hold::Recent),         // conversation.timeline
-        ("jobs", Hold::Recent),             // job.facts
-        ("audit", Hold::Recent),            // machine.audit
-        ("activity", Hold::Recent),         // account.activity
-        ("usage", Hold::Recent),            // account.usage
-        ("node", Hold::Recent),             // machine.log
-        ("mcp", Hold::Recent),              // mcp.log
-        ("hub", Hold::Recent),              // hub.log
-        ("sentinel-runs", Hold::Recent),    // conversation.sentinel-run
-        ("attachments", Hold::Metadata),    // conversation.attachment
-        ("artifacts", Hold::Metadata),      // conversation.artifact
-        ("output", Hold::Metadata),         // job.output
-        ("skills", Hold::Metadata),         // account.skill
-        ("ledger", Hold::Metadata),         // project.ledger
+        ("meta", Hold::Complete),          // conversation.metadata
+        ("words", Hold::Complete),         // conversation.words
+        ("plan", Hold::Complete),          // conversation.plan
+        ("history", Hold::Complete),       // conversation.history
+        ("goals", Hold::Complete),         // conversation.goal
+        ("sentinels", Hold::Complete),     // conversation.sentinel
+        ("timers", Hold::Complete),        // conversation.timer
+        ("draft", Hold::Complete),         // conversation.draft
+        ("files", Hold::Complete),         // conversation.files
+        ("settings", Hold::Complete),      // account.settings
+        ("profile", Hold::Complete),       // account.profile
+        ("collaboration", Hold::Complete), // account.collaboration
+        ("notices", Hold::Complete),       // account.notice
+        ("timeline", Hold::Recent),        // conversation.timeline
+        ("jobs", Hold::Recent),            // job.facts
+        ("audit", Hold::Recent),           // machine.audit
+        ("activity", Hold::Recent),        // account.activity
+        ("usage", Hold::Recent),           // account.usage
+        ("node", Hold::Recent),            // machine.log
+        ("mcp", Hold::Recent),             // mcp.log
+        ("hub", Hold::Recent),             // hub.log
+        ("sentinel-runs", Hold::Recent),   // conversation.sentinel-run
+        ("attachments", Hold::Metadata),   // conversation.attachment
+        ("artifacts", Hold::Metadata),     // conversation.artifact
+        ("output", Hold::Metadata),        // job.output
+        ("skills", Hold::Metadata),        // account.skill
+        ("ledger", Hold::Metadata),        // project.ledger
     ];
     // The longest name the stream's begins with: `ledger/<project>`,
     // `usage/<machine>` and the like go by their kind's.

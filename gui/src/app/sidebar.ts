@@ -29,7 +29,8 @@ import { workbenchShown } from "./workbench-shown";
 import { networksOf, shownNetwork } from "./network";
 import { redrawKeepingFocus } from "./focus";
 import { loginsOf, type Login } from "../world/accounts";
-import type { WorldNow } from "../world/bridge";
+import { inShell, restartLocalService, retryNow, type WorldNow } from "../world/bridge";
+import { onPhone } from "./phone";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
@@ -46,6 +47,7 @@ import type { ShellWords } from "./words";
 import type { Offered } from "./updates";
 import type { UpdateWords } from "./update-words";
 import { onHeld } from "./press";
+import { morph } from "./morph";
 
 export interface SidebarOptions {
   store: Store;
@@ -119,6 +121,9 @@ export class Sidebar {
   private readonly networks: HTMLElement;
   private readonly popover: Popover;
   private drawn = "";
+  /** The local service being started anew: `""` while asked, why it failed
+   *  after, `null` otherwise. */
+  private restarting: string | null = null;
   /** The conversations' menus, presses and renaming. */
   private readonly talkList: TalkList;
   /** A project's "⋯". */
@@ -167,7 +172,12 @@ export class Sidebar {
     });
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
     this.list.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest("[data-new-talk]")) options.newTalk();
+      const clicked = event.target as HTMLElement;
+      if (clicked.closest("[data-new-talk]")) options.newTalk();
+      if (clicked.closest("[data-reconnect]")) {
+        void retryNow().catch((error: unknown) => console.error("reconnecting to the local service", error));
+      }
+      if (clicked.closest("[data-restart-service]") && this.restarting !== "") this.restartService();
     });
     const updates = options.updates;
     if (updates) {
@@ -260,9 +270,48 @@ export class Sidebar {
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {
-      this.list.innerHTML = html;
+      morph(this.list, html);
     });
     keepWriting(this.list);
+  }
+
+  /** What the sidebar says while the local service cannot be followed, with
+   *  the ways to try again: on a computer, starting its node anew too. */
+  private serviceTrouble(): string {
+    const { store, words } = this.options;
+    const trouble = store.trouble.peek();
+    const slow = store.unanswered.peek() >= SLOW;
+    if (!trouble && !slow && !this.restarting) return "";
+    const asked = this.restarting === "";
+    const restart = inShell() && !onPhone()
+      ? `<button type="button" class="sidebar-trouble-act" data-restart-service${asked ? " disabled" : ""}>${escape(asked ? words.restartingService : words.restartService)}</button>`
+      : "";
+    return `${trouble ? `<p class="sidebar-trouble" title="${escape(trouble)}">${escape(words.unreachable)}</p>` : ""}
+      ${slow ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}
+      ${this.restarting ? `<p class="sidebar-trouble" role="alert">${escape(words.restartServiceFailed(this.restarting))}</p>` : ""}
+      <div class="sidebar-trouble-acts"><button type="button" class="sidebar-trouble-act" data-reconnect>${escape(words.reconnect)}</button>${restart}</div>`;
+  }
+
+  /** Asks the local service to start its node anew, then follows the World
+   *  again as soon as it answers. */
+  private restartService(): void {
+    this.restarting = "";
+    this.drawn = "";
+    this.draw();
+    restartLocalService()
+      .then(
+        () => {
+          this.restarting = null;
+          void retryNow().catch(() => {});
+        },
+        (error: unknown) => {
+          this.restarting = String(error);
+        },
+      )
+      .finally(() => {
+        this.drawn = "";
+        this.draw();
+      });
   }
 
   /** The list as things now stand, and everything around it brought up to
@@ -311,8 +360,7 @@ export class Sidebar {
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
       </div>
       ${bench}
-      ${store.trouble.peek() ? `<p class="sidebar-trouble" title="${escape(store.trouble.peek() ?? "")}">${escape(words.unreachable)}</p>` : ""}
-      ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
+      ${this.serviceTrouble()}`;
 
     // A project's document read from one of its conversations keeps that
     // conversation marked, as the way back leads there.

@@ -1302,6 +1302,9 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     };
     if let Some(facts) = &reply.facts {
         text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
+        if let Some(skipped) = &facts.hooks_skipped {
+            text.push_str(&hooks_skipped_line(skipped));
+        }
     }
     if reply.hubs.is_empty() {
         text.push_str("in no network: this computer is the only machine\n");
@@ -1405,8 +1408,24 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
         {
             text.push_str(&format!("  {warning}\n"));
         }
+        if let Ok(facts) = &node.facts
+            && let Some(skipped) = &facts.hooks_skipped
+        {
+            text.push_str(&hooks_skipped_line(skipped));
+        }
     }
     text
+}
+
+/// Claude Code passing the World's hooks over on a machine, and what to add
+/// there.
+fn hooks_skipped_line(skipped: &fastctx_types::world::HooksSkipped) -> String {
+    format!(
+        "  Claude Code skips the World's hooks here ({}): \"{}\" runs first, and its sessions work without the World; {}\n",
+        skipped.hooks.join(", "),
+        skipped.by,
+        skipped.remedy()
+    )
 }
 
 fn facts_line(facts: &fastctx_types::world::MachineFacts) -> String {

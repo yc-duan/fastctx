@@ -27,6 +27,10 @@ use std::time::Duration;
 /// hub is pushed, what is committed here wakes it, so this only catches a
 /// push lost on the way (design §28.1).
 const AGAIN: Duration = Duration::from_secs(30);
+/// How often, with a hub that tells where its listing stands and pushes
+/// each scope described for this machine (`Push::Fact`): only new scopes
+/// were left to the timer before, and those are pushed now.
+const AGAIN_TOLD: Duration = Duration::from_secs(5 * 60);
 /// How long the hub's answer to one request is waited for before the node
 /// says it waits, and a pass with the hub goes on before the node says so.
 const ANSWERED_WITHIN: Duration = Duration::from_secs(30);
@@ -205,7 +209,19 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
             && shared_elsewhere(&node, &hub).is_none()
             && !assets.copies.paused_now().contains(&scope)
         {
-            let left = match taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await {
+            let mut taken = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await;
+            // A turn of its scope that does not end soon held it: taken as
+            // soon as that turn ends, by one waiter for the stream, not at
+            // the driver's next round, a pass that may go on for minutes
+            // (codex-d0397b85).
+            if taken.as_ref().is_err_and(|why| why == BUSY)
+                && assets.moves_waiting.lock().expect("moves waiting").insert((scope.clone(), stream.clone()))
+            {
+                drop(assets.turn_of(&scope).lock().await);
+                assets.moves_waiting.lock().expect("moves waiting").remove(&(scope.clone(), stream.clone()));
+                taken = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await;
+            }
+            let left = match taken {
                 // Left to the pass, which says why should it fail there too.
                 Err(why) => !why.starts_with(REVOKED),
                 // Taken as far as its machine stood when it was asked, a
@@ -221,16 +237,38 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
     });
 }
 
+/// Why frames told moved were not taken at once: a turn of their scope was
+/// under way, and did not end within `TURN_WAITED`.
+const BUSY: &str = "a turn of the scope is under way";
+
+/// How long what moved waits for a turn of its scope under way to end.
+const TURN_WAITED: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Takes the frames of the replica `stream` of `scope` up to `next`, where
 /// the scope is held and pulled whole here and no turn of it is under way.
-async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, next: u64) -> Result<(), String> {
+async fn taken_at_once(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    next: u64,
+) -> Result<(), String> {
     let library = &assets.library;
     let turning = assets.turn_of(scope);
     // Gone through now, it is brought there to where the hub stands; a
     // stream its machine keeps (`direct`) is brought no further than that
     // machine said as the going through asked it, and is left to the pass.
-    let Ok(_turn) = turning.try_lock() else {
-        return if super::direct::stays(link, scope, stream) { Err("left to the pass".into()) } else { Ok(()) };
+    // A turn that ends soon is waited for: one takes a stream or two, and
+    // what moved meanwhile need not wait for the driver's next round to be
+    // shown (codex-79f63b53); one taken further meanwhile asks for nothing.
+    let Ok(_turn) = tokio::time::timeout(TURN_WAITED, turning.lock()).await else {
+        return if super::direct::stays(link, scope, stream) {
+            Err("left to the pass".into())
+        } else {
+            Err(BUSY.into())
+        };
     };
     let (key_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
     let held = blocking(library, move |library| {
@@ -238,10 +276,14 @@ async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Pub
         // Not pulled whole yet, a scope is pulled by itself (I01); a stream
         // this machine orders goes up, never down; one whose epochs are not
         // all here has them taken by the pass first.
-        if !library.is_pulled(&key_text)? || library.orderer(&key_text, &stream_text)? == Some(device) || library.known_last_epoch(&key_text, &stream_text)?.is_none() {
+        if !library.is_pulled(&key_text)?
+            || library.orderer(&key_text, &stream_text)? == Some(device)
+            || library.known_last_epoch(&key_text, &stream_text)?.is_none()
+        {
             return Ok(None);
         }
-        let at = library.streams(&key_text)?.into_iter().find(|(name, _)| *name == stream_text).map_or(0, |(_, next)| next);
+        let at =
+            library.streams(&key_text)?.into_iter().find(|(name, _)| *name == stream_text).map_or(0, |(_, next)| next);
         Ok(Some((holding, at)))
     })
     .await?;
@@ -291,7 +333,8 @@ pub(crate) fn committed(node: &Arc<Node>, hub: &HubId, scope: &str) {
     let Some(assets) = node.assets.as_ref() else { return };
     assets.lively(scope);
     let session = assets.current.lock().expect("sessions").get(hub).copied();
-    let (Some(link), Some((session, key))) = (node.link_of(hub).filter(|link| link.keeps_asset_lines()), session) else {
+    let (Some(link), Some((session, key))) = (node.link_of(hub).filter(|link| link.keeps_asset_lines()), session)
+    else {
         return wake(node, hub);
     };
     let (node, hub, scope) = (node.clone(), hub.clone(), scope.to_string());
@@ -357,7 +400,16 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
             None => {
                 again = crate::again::Again::default();
                 previous = None;
-                if more { Duration::ZERO } else { AGAIN }
+                let told = node.assets.as_ref().is_some_and(|assets| {
+                    assets.listed.lock().expect("listed").get(&hub).is_some_and(|listed| !listed.epoch.is_empty())
+                });
+                if more {
+                    Duration::ZERO
+                } else if told {
+                    AGAIN_TOLD
+                } else {
+                    AGAIN
+                }
             }
         };
         let mut ways = node.ways.subscribe();
@@ -387,7 +439,8 @@ const UNREACHED_NOW: &str = "its machine gave nothing now: ";
 /// the scope no more, its holding here ends (design §4.5, §6.3).
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
     // Waited for past its time, the node says which (`stuck`).
-    let _waiting = fastctx_platform::doing::waiting_outside(format!("the hub's answer to {}", request.name()), ANSWERED_WITHIN);
+    let _waiting =
+        fastctx_platform::doing::waiting_outside(format!("the hub's answer to {}", request.name()), ANSWERED_WITHIN);
     let reply = link.assets(request).await?;
     heard(assets, link, reply).await
 }
@@ -422,7 +475,8 @@ pub(super) async fn heard(assets: &Assets, link: &Arc<Link>, reply: Reply) -> Re
 }
 
 async fn drop_viewed_page(root: std::path::PathBuf, scope: String) -> std::io::Result<()> {
-    fastctx_platform::task::blocking(move || fastctx_client::cache::Cache::under(&root)?.forget_last_page_scope(&scope)).await
+    fastctx_platform::task::blocking(move || fastctx_client::cache::Cache::under(&root)?.forget_last_page_scope(&scope))
+        .await
 }
 
 /// Runs `work` on the library off the async threads.
@@ -538,7 +592,8 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         // Held, yet not among all a whole listing says this machine may
         // hold: asked after by itself, the hub says whether it may hold it
         // still — access taken away shows so, and nowhere else (§28.1).
-        let unlisted = listed.as_ref().is_some_and(|listed: &std::collections::BTreeSet<String>| !listed.contains(&scope));
+        let unlisted =
+            listed.as_ref().is_some_and(|listed: &std::collections::BTreeSet<String>| !listed.contains(&scope));
         let again = assets.relook.lock().expect("relook").contains(&scope);
         if whole || fresh || unlisted || again || pending.contains(&scope) || taken_over.contains(&scope) {
             scopes.push((scope, holding, fresh));
@@ -577,8 +632,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let alone = isolated.is_some();
     let mut turning = Vec::with_capacity(scopes.len());
     for (scope, holding, first) in scopes {
-        let untold = untold
-            && owner_of.get(&scope).is_none_or(|owner| fresh.contains(owner) && !told.contains(owner));
+        let untold = untold && owner_of.get(&scope).is_none_or(|owner| fresh.contains(owner) && !told.contains(owner));
         let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
         turning.push(fastctx_platform::task::spawn(async move {
             let _room = room.acquire_owned().await;
@@ -864,10 +918,14 @@ async fn turn(
     // nothing failed: its machine did not give it just now.
     let owed = owes(assets, scope).await;
     // Not gone through whole, it is looked at by itself again next pass
-    // until it is (HH03, HH06).
+    // until it is (HH03, HH06); nor is one with a stream asked for by a
+    // reader while this pass went on, which it passed over (`lazy::held`):
+    // looked for under the lock a reader asks under, so one asking as this
+    // decides keeps it looked at.
     {
         let mut relook = assets.relook.lock().expect("relook");
-        if whole_here && !owed {
+        let asked = assets.lazy.of(scope).iter().any(|stream| !assets.lazy.whole(scope, stream, holding));
+        if whole_here && !owed && !asked {
             relook.remove(scope);
         } else {
             relook.insert(scope.clone());
@@ -956,7 +1014,9 @@ async fn cleared(
     match fastctx_platform::task::spawn_blocking(move || crate::cut_history::cleared(&world)).await {
         Ok(Ok(true)) => {}
         Ok(Ok(false)) => {
-            node.log.line(format_args!("whole access to this machine through {hub} waits: a history cut for a viewer is still read"));
+            node.log.line(format_args!(
+                "whole access to this machine through {hub} waits: a history cut for a viewer is still read"
+            ));
             return Ok(());
         }
         Ok(Err(error)) => {
@@ -976,7 +1036,8 @@ async fn cleared(
     crate::replicas::publication::prune(node).await?;
     let root = node.root.clone();
     fastctx_platform::task::blocking(move || fastctx_client::cache::Cache::under(&root)?.clear_last_pages())
-        .await.map_err(|error| format!("clearing cached timeline pages: {error}"))?;
+        .await
+        .map_err(|error| format!("clearing cached timeline pages: {error}"))?;
     // No object fetched off the passes is put from here until this ends, and
     // none asked for before it is kept after it (`objects::asked`): what
     // was cleared does not come back behind the word that it is.
@@ -1260,6 +1321,20 @@ async fn catch_up(
             if unpulled.contains(&changed.scope) {
                 return Ok(());
             }
+            // Taken only once read, a stream not asked for and not taken
+            // before is passed over (`lazy`): no other look of it is owed.
+            if super::lazy::lazy(&changed.scope, &changed.stream) && !assets.lazy.asked(&changed.scope, &changed.stream)
+            {
+                let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
+                let at = blocking(library, move |library| library.streams(&scope))
+                    .await?
+                    .into_iter()
+                    .find(|(name, _)| *name == stream)
+                    .map_or(0, |(_, next)| next);
+                if at == 0 {
+                    return Ok(());
+                }
+            }
             // Handed over and not written in yet, the stream moved no head:
             // its new epoch is taken all the same, this machine's own
             // stream handed away included (I09).
@@ -1289,7 +1364,20 @@ async fn catch_up(
                 .into_iter()
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
-            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(counted), None).await
+            pull_stream(
+                assets,
+                hub,
+                link,
+                key,
+                &changed.scope,
+                &changed.stream,
+                holding,
+                at,
+                changed.next,
+                Some(counted),
+                None,
+            )
+            .await
         }
         .await;
         // Paused part way, it owes a whole pull already (`copies`): passed
@@ -1369,7 +1457,9 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
             if let Some(recovery) = recovery
                 && let Err(error) = super::hand_back::hand_back(assets, hub, link, recovery).await
             {
-                return Err(format!("the hub keeps every asset sealed: {why}; handing back what it lost stopped: {error}"));
+                return Err(format!(
+                    "the hub keeps every asset sealed: {why}; handing back what it lost stopped: {error}"
+                ));
             }
             return Err(format!("the hub keeps every asset sealed: {why}"));
         }
@@ -1422,7 +1512,8 @@ async fn describe(
     // Each account logged in here keeps its records' scope on this hub: the
     // hub writes its skills and settings there (design §28.17). Begun here
     // once, described as any scope begun here is.
-    let logins: Vec<fastctx_types::AccountName> = link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+    let logins: Vec<fastctx_types::AccountName> =
+        link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
     for account in logins {
         // By when it was opened: one made again under the name has its own
         // (AR04, NN05).
@@ -1494,9 +1585,13 @@ async fn describe(
             if !deleting && node.residents.about(&id).is_none() {
                 if node.residents.deleted(&id).is_some() {
                     let key = scope.clone();
-                    if blocking(library, move |library| library.revoke_proposed(&key)).await? && never.contains_key(&scope) {
+                    if blocking(library, move |library| library.revoke_proposed(&key)).await?
+                        && never.contains_key(&scope)
+                    {
                         let (dir, key) = (dir.clone(), scope.clone());
-                        if let Err(error) = fastctx_platform::task::blocking(move || super::undescribed::forget(&dir, &key)).await {
+                        if let Err(error) =
+                            fastctx_platform::task::blocking(move || super::undescribed::forget(&dir, &key)).await
+                        {
                             node.log.line(format_args!("forgetting {scope}, let go with its conversation: {error}"));
                         }
                     }
@@ -1522,8 +1617,13 @@ async fn describe(
                 Readers::Body { opener, .. } => vec![opener.clone()],
                 _ => Vec::new(),
             };
-            let borns: Vec<(fastctx_types::AccountName, Option<i64>)> =
-                openers.into_iter().map(|opener| { let born = born.or_else(|| born_under(node, &scope, hub, &opener)); (opener, born) }).collect();
+            let borns: Vec<(fastctx_types::AccountName, Option<i64>)> = openers
+                .into_iter()
+                .map(|opener| {
+                    let born = born.or_else(|| born_under(node, &scope, hub, &opener));
+                    (opener, born)
+                })
+                .collect();
             // When it was begun: an opener who it was begun for is not known
             // of is judged by it (`BEGUN_CLOCKS`) — the earlier of when its
             // conversation was born and when its scope was first held here.
@@ -1578,8 +1678,13 @@ async fn describe(
             let conversation = scope.starts_with("c/");
             // The hub's own words for an opener it has not, or not as it was.
             let never_to_be = |why: &str| why.contains("there is no account:") || why.contains(wire::BEGUN_FOR_ANOTHER);
-            let asked =
-                Request::Describe { scope: scope.clone(), readers, classes, born: said, begun: if judged { begun } else { None } };
+            let asked = Request::Describe {
+                scope: scope.clone(),
+                readers,
+                classes,
+                born: said,
+                begun: if judged { begun } else { None },
+            };
             let described = match ask(assets, link, asked).await {
                 Ok(described) => described,
                 // Revoked: its holding here ended (`heard`).
@@ -1599,19 +1704,23 @@ async fn describe(
             if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
                 return Err(format!("the descriptor of {scope} is not the hub's"));
             }
-            let read: wire::Descriptor = serde_json::from_slice(&descriptor.fact.0).map_err(|error| error.to_string())?;
+            let read: wire::Descriptor =
+                serde_json::from_slice(&descriptor.fact.0).map_err(|error| error.to_string())?;
             if read.scope != scope || read.hub != hub.as_str() {
                 return Err(format!("the hub described another scope than {scope}"));
             }
             // Described for a later account of an opener's name than the one
             // it was begun for: not installed, so never that one's.
             for (opener, born) in &borns {
-                let described = read.born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok());
+                let described =
+                    read.born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok());
                 let later = match (born, described) {
                     (Some(born), Some(described)) => *born != described,
                     // Who it was begun for not known: an account opened after
                     // it was begun here did not begin it.
-                    (None, Some(described)) => begun.is_some_and(|begun| described > begun.saturating_add(wire::BEGUN_CLOCKS)),
+                    (None, Some(described)) => {
+                        begun.is_some_and(|begun| described > begun.saturating_add(wire::BEGUN_CLOCKS))
+                    }
                     _ => false,
                 };
                 if later {
@@ -1619,9 +1728,10 @@ async fn describe(
                 }
             }
             let (network, key) = (network.clone(), scope.clone());
-            let installed =
-                blocking(library, move |library| library.install_proposed(&network, &key, descriptor.fact.0, read.seq as i64))
-                    .await?;
+            let installed = blocking(library, move |library| {
+                library.install_proposed(&network, &key, descriptor.fact.0, read.seq as i64)
+            })
+            .await?;
             // Let go meanwhile, its conversation deleted: not held anew.
             if installed.is_some() && never.contains_key(&scope) {
                 let (dir, key) = (dir.clone(), scope.clone());
@@ -1637,7 +1747,9 @@ async fn describe(
             Some(why) => {
                 let (dir, kept, said) = (node.world.assets(), scope.clone(), why.to_string());
                 match fastctx_platform::task::blocking(move || super::undescribed::keep(&dir, &kept, &said)).await {
-                    Ok(()) => node.log.line(format_args!("{scope} will never be described by {hub}: {why}; it is asked no more")),
+                    Ok(()) => node
+                        .log
+                        .line(format_args!("{scope} will never be described by {hub}: {why}; it is asked no more")),
                     Err(error) => {
                         failed.get_or_insert(format!("keeping that {scope} will never be described: {error}"));
                     }
@@ -1657,12 +1769,21 @@ async fn describe(
 fn born_under(node: &Node, scope: &str, hub: &HubId, opener: &fastctx_types::AccountName) -> Option<i64> {
     let id = fastctx_types::ResidentId::try_from(scope.rsplit('/').next()?).ok()?;
     let (about, _) = node.residents.about(&id)?;
-    about.born_as?.into_iter().find(|born| born.hub == *hub && born.account == *opener).map(|born| born.generation.as_millisecond())
+    about
+        .born_as?
+        .into_iter()
+        .find(|born| born.hub == *hub && born.account == *opener)
+        .map(|born| born.generation.as_millisecond())
 }
 
 /// How often the scopes a hub lists for this machine are listed whole: a
 /// change of the directory may let it hold one described long before.
 const RELIST: Duration = Duration::from_secs(300);
+/// How often they are, from a hub that tells where its listing stands
+/// (`Reply::Holdings::epoch`): a change of the directory changes the basis,
+/// a scope removed or signed anew the epoch, and either lists all at once;
+/// this is a safety net only.
+const RELIST_TOLD: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Installs each scope the hub says this machine may hold that it does not
 /// hold yet, or holds under another descriptor (design §6.6), the
@@ -1684,11 +1805,16 @@ async fn discover(
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
     // No basis kept — the last listing unsettled, or told none — lists all.
     let (mut after, mut whole, heard) = match known {
-        Some(listed) if listed.whole.elapsed() < RELIST && !listed.basis.is_empty() => {
-            (listed.through, None, Some(listed.basis))
+        Some(listed)
+            if listed.whole.elapsed() < if listed.epoch.is_empty() { RELIST } else { RELIST_TOLD }
+                && !listed.basis.is_empty() =>
+        {
+            (listed.through, None, Some((listed.basis, listed.epoch)))
         }
         _ => (None, Some(std::time::Instant::now()), None),
     };
+    // Where the hub's listing stood as this one began, besides new scopes.
+    let mut epoch: Option<String> = None;
     // What the listing went by. Changed before it began, all is listed
     // from the first. Changed while it goes on, the listing goes on to its
     // end — it never starts over, however often what decides holding
@@ -1697,7 +1823,7 @@ async fn discover(
     let mut basis: Option<String> = None;
     let mut unsettled = false;
     loop {
-        let Reply::Holdings { scopes, next, through, basis: said } =
+        let Reply::Holdings { scopes, next, through, basis: said, epoch: said_epoch } =
             ask(assets, link, Request::Holdings { after: after.clone() }).await?
         else {
             return Err("the hub did not list what this machine may hold".into());
@@ -1707,19 +1833,30 @@ async fn discover(
         if said.is_empty() {
             unsettled = true;
         }
+        // A scope removed or signed anew while the listing goes on: the next
+        // pass lists all again.
+        if epoch.as_ref().is_some_and(|epoch| *epoch != said_epoch) {
+            unsettled = true;
+        }
         match &basis {
             Some(basis) if *basis != said => unsettled = true,
             Some(_) => {}
-            None if whole.is_none() && heard.as_deref() != Some(said.as_str()) => {
+            None if whole.is_none()
+                && heard.as_ref().is_none_or(|(basis, epoch)| *basis != said || *epoch != said_epoch) =>
+            {
                 whole = Some(std::time::Instant::now());
                 after = None;
                 basis = Some(said);
+                epoch = Some(said_epoch);
                 continue;
             }
             None => {}
         }
         if basis.is_none() {
             basis = Some(said);
+        }
+        if epoch.is_none() {
+            epoch = Some(said_epoch);
         }
         for held in scopes {
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
@@ -1738,10 +1875,18 @@ async fn discover(
             // describes it itself, or its conversation is deleted here.
             let holds = held.holds.join("\n");
             let said = serde_json::json!({ "of": held.readers, "frozen": held.frozen }).to_string();
-            let (asker, scope, readers, hub_text) = (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
+            let (asker, scope, readers, hub_text) =
+                (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
             let (network, fact, revision) = (network.clone(), held.descriptor.fact.0, read.seq as i64);
             fastctx_platform::task::blocking(move || {
-                super::copies::hold_listed(&asker, &hub_text, &scope, &readers, (&network, fact, revision), (&holds, &said))
+                super::copies::hold_listed(
+                    &asker,
+                    &hub_text,
+                    &scope,
+                    &readers,
+                    (&network, fact, revision),
+                    (&holds, &said),
+                )
             })
             .await?;
         }
@@ -1764,7 +1909,8 @@ async fn discover(
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
     // Unsettled, no basis is kept: the next pass lists all.
     let basis = if unsettled { String::new() } else { basis.unwrap_or_default() };
-    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis });
+    let epoch = if unsettled { String::new() } else { epoch.unwrap_or_default() };
+    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis, epoch });
     Ok((whole.is_some() && !unsettled).then_some(listed_all))
 }
 
@@ -2253,12 +2399,13 @@ async fn pull(
     // stream from another machine all along — a conversation come from it,
     // begun here in vain — goes: it is made again once the stream is handed
     // over here, and followed as a replica's till then (AH01, LL11).
-    let mut local: std::collections::BTreeMap<String, u64> = if discard_unaccepted(assets, hub, link, key, scope, &theirs).await? {
-        let scope_text = scope.to_string();
-        blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect()
-    } else {
-        local
-    };
+    let mut local: std::collections::BTreeMap<String, u64> =
+        if discard_unaccepted(assets, hub, link, key, scope, &theirs).await? {
+            let scope_text = scope.to_string();
+            blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect()
+        } else {
+            local
+        };
     let (scope_text, device) = (scope.to_string(), assets.device());
     let own: std::collections::BTreeSet<String> =
         blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
@@ -2293,7 +2440,12 @@ async fn pull(
             // one of its own frames' ends (AT03).
             let (scope_text, stream_text, from) = (scope.to_string(), stream.clone(), hub_at.unwrap_or(0));
             let next = blocking(library, move |library| {
-                library.set_aside(&scope_text, &stream_text, from, "the hub, put back, holds the stream only before this")
+                library.set_aside(
+                    &scope_text,
+                    &stream_text,
+                    from,
+                    "the hub, put back, holds the stream only before this",
+                )
             })
             .await?;
             // Pulled on from where it was cut back to, this very pass (QQ04).
@@ -2313,11 +2465,17 @@ async fn pull(
         }
     }
     local.extend(cut_back);
+    // Taken only once read: a stream not asked for and not taken before is
+    // passed over (`lazy`).
+    let wanted = assets.lazy.of(scope);
+    let followed = |stream: &str, local: &std::collections::BTreeMap<String, u64>| {
+        !super::lazy::lazy(scope, stream) || local.get(stream).is_some_and(|at| *at > 0) || wanted.contains(stream)
+    };
     let mut failed: Option<String> = gave_back;
     // A stream handed on since — this machine's own among them — though no
     // frame of it moved: its descriptors are taken, as the change numbers
     // would have (I09); a look whole begins where they leave off (LL05).
-    for at in &streams {
+    for at in streams.iter().filter(|at| followed(&at.stream, &local)) {
         let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
         let known = blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?;
         if at.epoch > known.unwrap_or(0)
@@ -2331,7 +2489,12 @@ async fn pull(
     // Where each machine that orders streams of the scope says they stand
     // (`direct`), asked once a pull; none for one that did not answer.
     let mut kept: Kept = Kept::new();
+    // The streams asked for that did not come whole this pass.
+    let mut short = std::collections::BTreeSet::new();
     for wire::StreamAt { stream, next, .. } in streams {
+        if !followed(&stream, &local) {
+            continue;
+        }
         let at = local.get(&stream).copied().unwrap_or(0);
         let pulled = if super::direct::stays(link, scope, &stream) {
             // Its own, a stream kept here comes from nowhere.
@@ -2350,6 +2513,7 @@ async fn pull(
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
+            short.insert(stream.clone());
             // Paused part way, or its machine away just now: said as it is,
             // so it is not taken whole.
             if why.starts_with(PAUSED) || why.starts_with(UNREACHED_NOW) {
@@ -2365,6 +2529,14 @@ async fn pull(
     let scope_text = scope.to_string();
     let now: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
+    // What was asked for and is here whole now, or that the hub has none of,
+    // is read from here from now on (`lazy::held`).
+    for stream in wanted.iter().filter(|stream| !short.contains(*stream)) {
+        let whole = theirs.get(stream).is_none_or(|next| now.get(stream).copied().unwrap_or(0) >= *next);
+        if whole {
+            assets.lazy.taken(scope, stream, holding);
+        }
+    }
     let caught_up: Vec<String> = theirs
         .iter()
         .filter(|(stream, next)| now.get(*stream).copied().unwrap_or(0) >= **next)
@@ -2422,7 +2594,9 @@ async fn pull_kept(
             // Of this scope alone: a machine's word on another is not heard.
             kept.insert(
                 machine.clone(),
-                heads.ok().map(|heads| heads.into_iter().filter(|head| head.scope == scope).map(|head| (head.stream, head.next)).collect()),
+                heads.ok().map(|heads| {
+                    heads.into_iter().filter(|head| head.scope == scope).map(|head| (head.stream, head.next)).collect()
+                }),
             );
         }
         // Not heard, or heard without a word of this stream: where it stands
@@ -2445,7 +2619,9 @@ async fn pull_kept(
                 // What the hub holds past where its machine stands — a
                 // machine set back, a stream handed on — is taken below.
                 Ok(()) => {}
-                Err(why) if why.starts_with(REVOKED) || why.starts_with(PAUSED) || why.starts_with(GOES_ON) => return Err(why),
+                Err(why) if why.starts_with(REVOKED) || why.starts_with(PAUSED) || why.starts_with(GOES_ON) => {
+                    return Err(why);
+                }
                 // Its machine gave nothing now: taken from the hub below as
                 // far as the hub holds it; the rest waits for its machine.
                 Err(why) if why.starts_with(super::direct::UNREACHED) => reached = false,
@@ -2468,7 +2644,14 @@ async fn pull_kept(
 }
 
 /// Takes the hub's signed epochs and gap facts of `stream` of `scope`.
-async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str) -> Result<(), String> {
+async fn succession(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+) -> Result<(), String> {
     let library = &assets.library;
     let Reply::Succession { epochs, gaps } =
         ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.to_string() }).await?
@@ -2490,7 +2673,9 @@ async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Public
         // and the stream is followed as a replica's (AP03).
         if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
             match blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await? {
-                fastctx_content::v2::Taken::Opened => assets.taken_over.lock().expect("taken over").push(scope.to_string()),
+                fastctx_content::v2::Taken::Opened => {
+                    assets.taken_over.lock().expect("taken over").push(scope.to_string())
+                }
                 fastctx_content::v2::Taken::History | fastctx_content::v2::Taken::Behind => {}
                 // Written here by another history than the epoch follows:
                 // said, and asked again the next pass.
@@ -2597,12 +2782,16 @@ async fn pull_stream(
         // stream nowhere from here lately is not asked for again yet: the
         // same frames would come, and go nowhere again.
         if source.is_some() && assets.direct.stalled(scope, &stream, at) {
-            return Err(format!("{}{stream} of {scope}: what its machine gave from {at} took it no further lately", super::direct::UNREACHED));
+            return Err(format!(
+                "{}{stream} of {scope}: what its machine gave from {at} took it no further lately",
+                super::direct::UNREACHED
+            ));
         }
         let frames = if let Some(machine) = source {
             // Frames that took it nowhere from here before come one at a
             // time when asked for again, not a line's worth to no end.
-            let most = if assets.direct.stalled_before(scope, &stream, at) { 1 } else { fastctx_types::asset_lines::FRAMES };
+            let most =
+                if assets.direct.stalled_before(scope, &stream, at) { 1 } else { fastctx_types::asset_lines::FRAMES };
             super::direct::frames(assets, hub, link, machine, scope, &stream, at, most).await?
         } else if lines {
             super::lines::frames(assets, link, scope, &stream, at).await?
@@ -2623,7 +2812,10 @@ async fn pull_stream(
             // The machine that keeps it said it stands further than it gave.
             if source.is_some() {
                 assets.direct.stall(scope, &stream, at);
-                return Err(format!("{}{stream} of {scope}: its machine gave nothing from {at} of {next}", super::direct::UNREACHED));
+                return Err(format!(
+                    "{}{stream} of {scope}: its machine gave nothing from {at} of {next}",
+                    super::direct::UNREACHED
+                ));
             }
             break;
         }
@@ -2841,7 +3033,13 @@ async fn cursors(
         let (scope_text, stream_text) = (scope.to_string(), standing.stream);
         blocking(library, move |library| {
             let from = shared.map_or(0, |through| through + 1);
-            if library.set_aside(&scope_text, &stream_text, from, "differs from the hub's history past where both agree")? > from {
+            if library.set_aside(
+                &scope_text,
+                &stream_text,
+                from,
+                "differs from the hub's history past where both agree",
+            )? > from
+            {
                 library.truncate(&scope_text, &stream_text, shared)?;
             }
             Ok(())

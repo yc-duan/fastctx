@@ -16,14 +16,20 @@ impl World {
         if let Some(device) = self.device()
             && device.replica().is_some()
         {
-            return crate::device::copy_reads::timeline(device, machine, request, |machine, request| self.remote_timeline(machine, request))
-                .await;
+            return crate::device::copy_reads::timeline(device, machine, request, |machine, request| {
+                self.remote_timeline(machine, request)
+            })
+            .await;
         }
         self.remote_timeline(machine, request).await
     }
 
     /// Gets a display page without asking any other machine.
-    pub async fn timeline_preview(&self, machine: Written, resident: fastctx_types::ResidentId) -> Option<TimelineTold> {
+    pub async fn timeline_preview(
+        &self,
+        machine: Written,
+        resident: fastctx_types::ResidentId,
+    ) -> Option<TimelineTold> {
         if self.device().is_some() {
             return None;
         }

@@ -321,7 +321,7 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
     }
     for scope in scopes {
         let link = node.link_of(&scope.hub).ok_or_else(|| Failure::new(words::ROUTE))?;
-        link.refresh().await.map_err(Failure::new)?;
+        link.refresh_unless_current().await.map_err(Failure::new)?;
         // Earlier hubs never held plans; their conversations retain their former deletion behavior.
         if !link.view().conversation_plans {
             continue;
@@ -353,7 +353,10 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
             // for now — another of the name — keeps nothing there of this
             // machine's to delete.
             Err(why) if why.contains("there is no account") || why.contains(" may not act for the account ") => {
-                node.log.line(format_args!("the plan of {} at {}: {why}; nothing is left there to delete", about.id, scope.account));
+                node.log.line(format_args!(
+                    "the plan of {} at {}: {why}; nothing is left there to delete",
+                    about.id, scope.account
+                ));
             }
             Err(why) => return Err(Failure::new(why)),
         }

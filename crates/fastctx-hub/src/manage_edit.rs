@@ -1,7 +1,7 @@
 //! Management edits whose authority inputs and row identities stay unchanged.
 
 use fastctx_net::wire::Change;
-use fastctx_types::AccountName;
+use fastctx_types::{AccountName, MachineName};
 
 use crate::store::{BookEdit, Store};
 
@@ -84,6 +84,27 @@ pub(crate) fn relation(change: &Change) -> bool {
             | Change::StopActing { .. }
             | Change::ShareProject { .. }
     )
+}
+
+/// Of a configuration change (`configuration`), the accounts and machines it
+/// touches alone, when it alters what no one may see: only the views that
+/// show one of them change (`Hub::configuration_changed_for`). None for one
+/// that may touch any view, such as a hub setting or a token.
+pub(crate) fn touches(account: &AccountName, change: &Change) -> Option<(Vec<AccountName>, Vec<MachineName>)> {
+    #[cfg(feature = "change-drill")]
+    if FORCE_FULL.with(std::cell::Cell::get) {
+        return None;
+    }
+    match change {
+        Change::History { .. }
+        | Change::Collab { .. }
+        | Change::Profile { .. }
+        | Change::MemorySettings { .. }
+        | Change::Layer { .. }
+        | Change::Subagents { .. } => Some((vec![account.clone()], Vec::new())),
+        Change::Group { machine, .. } => Some((Vec::new(), vec![machine.clone()])),
+        _ => None,
+    }
 }
 
 /// Changes that cannot revoke a running call, transfer, machine or account.

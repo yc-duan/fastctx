@@ -15,7 +15,6 @@ pub mod activity;
 mod activity_book;
 mod admission;
 mod admitted;
-mod conversation_retention;
 mod adoption;
 mod afoot;
 mod again;
@@ -42,6 +41,7 @@ mod colleagues;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
+mod conversation_retention;
 pub use composer::compaction::compact_document as compact_composer_document;
 mod consent;
 pub mod context;
@@ -64,6 +64,7 @@ pub use ending::flush_log;
 mod asset_preservation;
 mod content_upkeep;
 mod conversation_store;
+mod elsewhere;
 mod facts;
 mod features;
 mod file_events;
@@ -86,6 +87,7 @@ mod history;
 mod homes;
 mod hub_arrival;
 mod hub_moving;
+mod idle_compaction;
 mod inbox;
 mod incarnations;
 mod initializing;
@@ -106,7 +108,6 @@ mod learned;
 mod leases;
 mod ledger;
 mod letters;
-mod idle_compaction;
 mod lifecycle;
 mod lifetime;
 mod limits;
@@ -215,6 +216,7 @@ mod workers;
 pub use workers::ROLES as WORKER_ROLES;
 mod world;
 mod world_format;
+mod world_holder;
 mod world_program;
 mod write;
 mod write_command;
@@ -358,6 +360,9 @@ pub(crate) struct Node {
     memory_changes: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
+    /// What the other machines last said of their agents and logins
+    /// (`elsewhere`).
+    elsewhere: elsewhere::Answers,
     /// Deletions of conversations still to be asked of hubs (`forget`).
     forget_asks: forget::Asks,
     /// What of the node's work is stuck, as it last looked at itself.
@@ -574,6 +579,15 @@ pub async fn run_replacing(
     run_prepared(fastctx_root, supervision, successor, None, None).await
 }
 
+/// Whether this node was started by the system's service manager for its
+/// fastctx service: systemd names each start of a unit, launchd the job a
+/// process runs for.
+fn started_by_service_manager() -> bool {
+    (cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some())
+        || (cfg!(target_os = "macos")
+            && std::env::var("XPC_SERVICE_NAME").is_ok_and(|job| job.starts_with("fastctx-service-node-")))
+}
+
 /// Another node serves the World already: this one ends, having taken
 /// nothing of it.
 #[derive(Debug)]
@@ -657,28 +671,25 @@ pub async fn run_prepared(
     }
     let _lock = match waits {
         // A successor prepares, then waits to be let in, then waits for the
-        // node before it to let the World go.
+        // node before it to let the World go. One the guardian keeps asks a
+        // holder nobody keeps to let it go (`world_holder`); a successor's
+        // renewal hands the World on itself.
+        true if supervision.is_some() => world_holder::take(fastctx_root, &world, None)
+            .await?
+            .expect("a wait without a deadline ends with the lock"),
         true => {
             let lock = world.node_lock();
             fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
-        // A Linux service manager starts its node again the moment one
-        // ends, as when a node hands the World to the newer program it
-        // renewed to: the one it starts waits a while for the World rather
-        // than ending at once, refused, to be started again.
-        false if cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some() => {
-            let lock = world.node_lock();
+        // A Linux service manager, or launchd, starts its node again the
+        // moment one ends, as when a node hands the World to the newer
+        // program it renewed to: the one it starts waits a while for the
+        // World rather than ending at once, refused, to be started again.
+        false if started_by_service_manager() => {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            loop {
-                let trying = lock.clone();
-                if let Some(lock) = fastctx_platform::task::blocking(move || FileLock::try_acquire(&trying)).await? {
-                    break lock;
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(AlreadyServed(world.path().to_path_buf()).into());
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
+            world_holder::take(fastctx_root, &world, Some(deadline))
+                .await?
+                .ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?
         }
         false => {
             let lock = world.node_lock();
@@ -709,6 +720,20 @@ pub async fn run_prepared(
             lock = fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&taking)).await??;
         }
     };
+    // Who holds the World, for whoever must end a holder that no longer
+    // answers (`fastctx service node hold`).
+    {
+        let holding = world.clone();
+        let recorded = fastctx_platform::task::blocking(move || -> anyhow::Result<()> {
+            let me = serde_json::to_vec(&fastctx_platform::current_identity()?).expect("identities serialize");
+            fastctx_platform::publish(&holding.node_holder(), &me, fastctx_platform::Permissions::Private)?;
+            Ok(())
+        })
+        .await;
+        if let Err(error) = recorded {
+            eprintln!("fastctx node: recording this node as the World's holder: {error:#}");
+        }
+    }
     if renewal.successor && {
         let root = fastctx_root.to_path_buf();
         fastctx_platform::task::blocking(move || fastctx_install::renewal::read(&root))
@@ -822,7 +847,9 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
-            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf())) {
+            let assets = match world::key(&world)
+                .and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf()))
+            {
                 Ok(assets) => Some(assets),
                 Err(error) => {
                     log.line(format_args!("the asset library is unavailable: {error}"));
@@ -930,6 +957,7 @@ pub async fn run_prepared(
                 world_shown: Default::default(),
                 memory_changes: tokio::sync::watch::channel(0).0,
                 facts: facts::Facts::default(),
+                elsewhere: elsewhere::Answers::default(),
                 forget_asks: forget::Asks::default(),
                 stuck: Default::default(),
                 usage: usage::Usage::default(),
@@ -1089,7 +1117,7 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             idle_compaction::start(&node);
-        conversation_retention::expiry::start(&node);
+            conversation_retention::expiry::start(&node);
             recovery::start(&node, jobs_reconciled);
             goals::start(&node);
             sentinels::start(&node);
@@ -1115,6 +1143,15 @@ pub async fn run_prepared(
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
+        }
+    });
+    // The job runners sleep until the earliest job falls due by the clock
+    // they slept by: a machine that wakes from sleep, or whose ways changed
+    // as it does, has them look again at once (codex-8cc17361).
+    let mut ways = node.ways.subscribe();
+    fastctx_platform::task::spawn(async move {
+        while ways.changed().await.is_ok() {
+            fastctx_jobs::stir_all();
         }
     });
     let jobs_node = node.clone();

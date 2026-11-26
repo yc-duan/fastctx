@@ -41,15 +41,24 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     let sentinels = node.clone();
     fastctx_platform::task::spawn(async move {
         let mut previous = Vec::new();
+        let mut ways = sentinels.ways.subscribe();
         loop {
-            let errors = crate::sentinels::deletion::recover(&sentinels).await;
+            let (errors, left) = crate::sentinels::deletion::recover(&sentinels).await;
             for error in &errors {
                 if !previous.contains(error) {
                     sentinels.log.line(error);
                 }
             }
             previous = errors;
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            // With nothing left to do this sleeps until a deletion leaves a
+            // removal, a way to a hub changes, or the hourly safety net that
+            // lets go of markers whose tombstones have since gone.
+            let wait = if left { Duration::from_secs(30) } else { Duration::from_secs(60 * 60) };
+            tokio::select! {
+                () = crate::sentinels::deletion::asked() => {}
+                changed = ways.changed() => if changed.is_err() { return },
+                () = tokio::time::sleep(wait) => {}
+            }
         }
     });
     let deleting = node.clone();

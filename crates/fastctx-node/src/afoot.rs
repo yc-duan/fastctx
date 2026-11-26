@@ -62,7 +62,10 @@ pub(crate) fn start(node: &Arc<Node>) {
 }
 
 /// What `link`'s hub hears of `reply`: the residents and jobs that work for
-/// one of its accounts, with those accounts.
+/// one of its accounts, with those accounts; a page's job, which whoever
+/// may work here sees, for the account this machine is registered under
+/// where it is logged in here, which works here whatever else does (a login
+/// here that only lends its agents to others does not see it).
 fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
     let mut afoot = Afoot::default();
     let mut working: HashMap<ResidentId, Vec<fastctx_types::AccountName>> = HashMap::new();
@@ -84,13 +87,19 @@ fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
     }
     let hub = &link.membership().id;
     for job in &reply.jobs {
-        let accounts = match (&job.account, job.owner.resident()) {
-            (Some(account), _) if account.hub == *hub => vec![account.account.clone()],
-            (Some(_), _) => Vec::new(),
-            (None, Some(owner)) if node.is_me(&owner.machine) => {
+        let accounts = match (&job.owner, &job.account) {
+            // A page's, whatever account an earlier release wrote on it.
+            (fastctx_types::run::JobOwner::Page { .. }, _) => {
+                let view = link.view();
+                let owner = view.me().and_then(|me| me.home.clone().filter(|home| me.logins.contains(home)));
+                owner.into_iter().collect()
+            }
+            (_, Some(account)) if account.hub == *hub => vec![account.account.clone()],
+            (_, Some(_)) => Vec::new(),
+            (fastctx_types::run::JobOwner::Resident(owner), None) if node.is_me(&owner.machine) => {
                 working.get(&owner.resident).cloned().unwrap_or_default()
             }
-            (None, _) => Vec::new(),
+            (fastctx_types::run::JobOwner::Resident(_), None) => Vec::new(),
         };
         if !accounts.is_empty() {
             afoot.jobs.insert(job.job.clone(), AfootJob { job: job.clone(), accounts });

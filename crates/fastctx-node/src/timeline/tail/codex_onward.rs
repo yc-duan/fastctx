@@ -62,7 +62,10 @@ fn keep(resident: &ResidentId, held: Held) {
     let mut windows = windows();
     windows.remove(resident);
     while windows.len() >= WINDOWS_MOST {
-        let Some(oldest) = windows.iter().min_by_key(|(_, held)| held.judged).map(|(resident, _)| resident.clone()) else { break };
+        let Some(oldest) = windows.iter().min_by_key(|(_, held)| held.judged).map(|(resident, _)| resident.clone())
+        else {
+            break;
+        };
         windows.remove(&oldest);
     }
     windows.insert(resident.clone(), held);
@@ -287,7 +290,8 @@ pub(super) async fn seed(
 ) {
     forget_of(resident);
     let Some(thread) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return };
-    let (library, scope, directory, stood) = (library.clone(), scope.to_string(), node.world.conversation(resident), onward::digest(kept));
+    let (library, scope, directory, stood) =
+        (library.clone(), scope.to_string(), node.world.conversation(resident), onward::digest(kept));
     let seeded = fastctx_platform::task::blocking(move || {
         let _held = producing;
         Window::seed(&library, &scope, Some(&directory), through, &recorded, &told)
@@ -336,7 +340,9 @@ pub(super) async fn advance(
         Ok(Step::Seam)
     };
     let Held { stood: stands_on, thread, mut window, judged } = held;
-    let (Some(generation), Some(heard), true) = (state.held, state.world_latest, stands_on == stood && about.session.as_deref() == Some(thread.as_str())) else {
+    let (Some(generation), Some(heard), true) =
+        (state.held, state.world_latest, stands_on == stood && about.session.as_deref() == Some(thread.as_str()))
+    else {
         return leave("a checkpoint kept otherwise");
     };
     let codex = node.codex.of(node, about)?;
@@ -356,13 +362,32 @@ pub(super) async fn advance(
     };
     let Some(placed) = assets::placed(node, about)? else { return leave("no scope") };
     let (hub, scope) = (placed.hub.clone(), placed.scope.clone());
-    let signer = node.assets.as_ref().map(|kept| kept.signer()).ok_or_else(|| Failure::new("no asset library is kept here"))?;
+    let signer =
+        node.assets.as_ref().map(|kept| kept.signer()).ok_or_else(|| Failure::new("no asset library is kept here"))?;
     let (written, window) = {
-        let (library, whose, directory, held, signer, name, expected) =
-            (library.clone(), resident.clone(), directory.clone(), producing.clone(), signer.clone(), name.to_string(), state.holding);
+        let (library, whose, directory, held, signer, name, expected) = (
+            library.clone(),
+            resident.clone(),
+            directory.clone(),
+            producing.clone(),
+            signer.clone(),
+            name.to_string(),
+            state.holding,
+        );
         fastctx_platform::task::blocking(move || -> Result<_, Failure> {
             let _held = held;
-            let written = window.write_on(&library, signer, &whose, &placed, Some(&directory), &name, generation, expected, delta, &fresh)?;
+            let written = window.write_on(
+                &library,
+                signer,
+                &whose,
+                &placed,
+                Some(&directory),
+                &name,
+                generation,
+                expected,
+                delta,
+                &fresh,
+            )?;
             Ok((written, window))
         })
         .await?
@@ -371,8 +396,20 @@ pub(super) async fn advance(
         Ok(written) => written,
         Err(why) => return leave(why),
     };
-    let (runs_version, refreshed) =
-        runs_brought(node, about, library, signer, resident, &directory, producing.clone(), state.runs_version, runs_now, window.floor(), wrote.holding).await?;
+    let (runs_version, refreshed) = runs_brought(
+        node,
+        about,
+        library,
+        signer,
+        resident,
+        &directory,
+        producing.clone(),
+        state.runs_version,
+        runs_now,
+        window.floor(),
+        wrote.holding,
+    )
+    .await?;
     let next = Following {
         version: version.to_string(),
         holding: Some(wrote.holding),
@@ -391,7 +428,17 @@ pub(super) async fn advance(
         crate::assets::committed(node, &hub, &scope);
     }
     fastctx_platform::readings::counter("timeline.onward.looks").add(1);
-    let produced = Produced { written, gone, unread: false, long_changed, verified: state.verified, handing: false, read: false, on: true };
+    let produced = Produced {
+        written,
+        gone,
+        unread: false,
+        long_changed,
+        verified: state.verified,
+        handing: false,
+        read: false,
+        on: true,
+        waits_listing: false,
+    };
     let due = judged.elapsed() >= onward::JUDGED_EVERY;
     keep(resident, Held { stood, thread, window, judged });
     if due {

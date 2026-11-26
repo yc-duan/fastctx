@@ -7,7 +7,7 @@
 
 import { keep, knownMachines, recall, remember, unreachedOf } from "./answered";
 import { indexOf, pair } from "./world-index";
-import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
+import { inShell, watchWorld, worldNow, type WorldNow, type WorldPiece } from "../world/bridge";
 import { applyChange } from "../world/change";
 import { lendTitles } from "../world/names";
 import type { Address } from "../world/events";
@@ -45,6 +45,10 @@ export interface Store {
 /** How often what is shown as so long ago moves on: the World itself comes
  *  as it changes. */
 const tick = 2000;
+/** The first pause before a refused or ended World watch is asked for
+ *  again, and the longest. */
+const REWATCH_FIRST = 1000;
+const REWATCH_MOST = 30_000;
 
 export function createStore(specimen?: () => { world: WorldNow; now: Date }): Store {
   const live = !import.meta.env.DEV || inShell();
@@ -106,9 +110,11 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
   document.addEventListener("visibilitychange", follow);
   follow();
 
+  // The watch answering stops the count of how long it has not, unless it
+  // broke again since: in the same batch, after what it answered.
   const came = (now: WorldNow) => {
     read(now);
-    waiting = null;
+    if (broken === null) waiting = null;
     moveOn();
   };
   // Why the watch broke, while it has not come back; why reading the World
@@ -122,25 +128,55 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
   // not on a reading `refresh` made meanwhile.
   let watched: WorldNow | null = null;
   const say = () => trouble.set(broken ?? failed);
-  void watchWorld((piece) => {
+  // What came in one batch, or while the page was behind, is shown once:
+  // every change is put in the World as it comes, and the World as it
+  // stands after the last of them is what every part reads, once.
+  let showing = false;
+  const showSoon = () => {
+    if (showing) return;
+    showing = true;
+    queueMicrotask(() => {
+      showing = false;
+      if (watched) came(watched);
+    });
+  };
+  const take = (piece: WorldPiece) => {
     pieces += 1;
     if (piece.kind === "world" || piece.kind === "changed") {
       if (piece.kind === "changed" && !watched) return;
       watched = piece.kind === "world" ? piece.world : (applyChange(watched, piece.change) as WorldNow);
       broken = null;
       failed = null;
+      // Answered: a break after this, in the same batch, counts from its own
+      // start.
+      waiting = null;
+      rewatchIn = REWATCH_FIRST;
       say();
-      came(watched);
+      showSoon();
       return;
     }
     broken = piece.error;
     say();
     waiting ??= piece.since;
     moveOn();
-  }, knownMachines()).catch((error: unknown) => {
-    broken = String(error);
+  };
+  // A watch the shell refused or ended is asked for again, after a pause
+  // that grows while it keeps failing: the World is never left unfollowed.
+  let rewatchIn = REWATCH_FIRST;
+  const watchAgain = (why: string) => {
+    broken = why;
     say();
-  });
+    waiting ??= Date.now();
+    moveOn();
+    window.setTimeout(begin, rewatchIn);
+    rewatchIn = Math.min(rewatchIn * 2, REWATCH_MOST);
+  };
+  const begin = () => {
+    watchWorld(take, knownMachines(), () => watchAgain("the World's watch ended; asking for it again")).catch(
+      (error: unknown) => watchAgain(String(error)),
+    );
+  };
+  begin();
   const refresh = async () => {
     const before = pieces;
     try {

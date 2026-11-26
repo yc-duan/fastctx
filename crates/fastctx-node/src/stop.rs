@@ -17,6 +17,12 @@ use fastctx_types::{JobId, Reply};
 use crate::Node;
 use crate::around::Heard;
 
+/// How long a stop asked of every machine waits for them: a stop taken is
+/// not given up, and ending a job's processes and records takes its own
+/// time (`fastctx_types::contract`, `StopJob`): one told sooner it did not
+/// stop would be told wrong (codex-580b4d87).
+const STOPPED: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Stops `job` for `by`, who works for `acting`: on `machine`, or else on
 /// the one machine it may work on that has a job with this id.
 pub async fn stop(
@@ -55,7 +61,7 @@ pub async fn stop(
                 return Err(Failure::new(format!("{here} has no job {job}")));
             }
             let machines = crate::around::reachable(node, acting, Purpose::Hands);
-            crate::around::ask_each(machines, |_| call.clone())
+            crate::around::ask_known(machines, |_| call.clone(), STOPPED)
                 .await
                 .into_iter()
                 .map(|(asked, heard)| (asked.source.written, heard))
@@ -68,7 +74,7 @@ pub async fn stop(
         match heard {
             Heard::Answered(RemoteReply::JobStopped { record: Some(record) }) => stopped.push((name, record)),
             Heard::Answered(_) | Heard::Offline(_) => {}
-            Heard::NoAnswer(reason) => failed.push(format!("{name}: {reason}")),
+            Heard::NoAnswer(reason) | Heard::Late(reason) => failed.push(format!("{name}: {reason}")),
         }
     }
     match stopped.len() {
@@ -77,7 +83,12 @@ pub async fn stop(
             Ok(Reply::JobStopped { machine: machine.name, record })
         }
         0 if failed.is_empty() => Err(Failure::new(format!("no machine that could be asked has a job {job}"))),
-        0 => Err(Failure::new(format!("no job {job} was stopped: {}", failed.join("; ")))),
+        // A machine that did not answer in time may have stopped it all the
+        // same: a stop it took is not given up (codex-580b4d87).
+        0 => Err(Failure::new(format!(
+            "no machine that answered had a job {job}; whether it was stopped is not known on: {}",
+            failed.join("; ")
+        ))),
         _ => Err(Failure::new(format!(
             "jobs named {job} were stopped on {}",
             stopped.iter().map(|(machine, _)| machine.to_string()).collect::<Vec<_>>().join(", ")

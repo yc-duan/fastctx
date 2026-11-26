@@ -222,7 +222,12 @@ impl Replica {
     /// Whether `link` is the one followed for `hub`: one replaced, or left,
     /// is not, and its follower writes nothing more.
     fn current(&self, hub: &HubId, link: &Arc<Link>) -> bool {
-        self.links.lock().expect("links").get(hub).and_then(Weak::upgrade).is_some_and(|followed| Arc::ptr_eq(&followed, link))
+        self.links
+            .lock()
+            .expect("links")
+            .get(hub)
+            .and_then(Weak::upgrade)
+            .is_some_and(|followed| Arc::ptr_eq(&followed, link))
     }
 
     fn wake(&self, hub: &HubId) -> Arc<tokio::sync::Notify> {
@@ -252,7 +257,8 @@ impl Replica {
             }
             let called = std::mem::take(self.called.lock().expect("called").entry(hub.clone()).or_default());
             let whole = called.whole || looked.is_none_or(|at| at.elapsed() >= LOOK_WHOLE);
-            let ended = if whole { self.pass_whole(&hub, &up).await } else { self.pass_moved(&hub, &up, called.moved).await };
+            let ended =
+                if whole { self.pass_whole(&hub, &up).await } else { self.pass_moved(&hub, &up, called.moved).await };
             let more = match &ended {
                 Ok(more) => *more,
                 Err(_) => false,
@@ -351,7 +357,12 @@ impl Replica {
     }
 
     /// Takes what the hub said moved of `hub`'s streams.
-    async fn pass_moved(&self, hub: &HubId, link: &Arc<Link>, moved: BTreeMap<(String, String), u64>) -> Result<bool, String> {
+    async fn pass_moved(
+        &self,
+        hub: &HubId,
+        link: &Arc<Link>,
+        moved: BTreeMap<(String, String), u64>,
+    ) -> Result<bool, String> {
         let library = &self.library;
         let theirs = hub.as_str().to_string();
         let stood = blocking(library, move |library| library.feed_owners(&theirs)).await?;
@@ -369,7 +380,8 @@ impl Replica {
                 continue;
             };
             let key_text = scope.clone();
-            let here: BTreeMap<String, u64> = blocking(library, move |library| library.streams(&key_text)).await?.into_iter().collect();
+            let here: BTreeMap<String, u64> =
+                blocking(library, move |library| library.streams(&key_text)).await?.into_iter().collect();
             for ((_, stream), next) in moved.iter().filter(|((of, _), _)| *of == scope) {
                 // A stream first heard of may stand for another the hub
                 // gives this device no more (§29, 2.4): a whole look lists

@@ -65,7 +65,8 @@ pub(crate) async fn run(
     };
     // The owner libraries go to the new hub, now that nothing here writes
     // them (`super::libraries`).
-    let sending = fastctx_platform::task::spawn(super::libraries::send(dir.to_path_buf(), outgoing.clone(), pin, log.clone()));
+    let sending =
+        fastctx_platform::task::spawn(super::libraries::send(dir.to_path_buf(), outgoing.clone(), pin, log.clone()));
     let mut record = outgoing;
     let mut failures = 0;
     // A new hub that stays away is said once, and again when that changes.

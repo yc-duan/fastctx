@@ -84,7 +84,10 @@ pub(crate) async fn brought(node: &Arc<Node>, resident: &ResidentId) -> Result<O
     let produced = match produced {
         Ok(produced) => produced,
         Err(error) => {
-            node.log.line(format_args!("{resident}'s timeline could not be brought for a viewer ({}): its sources are read", error.message));
+            node.log.line(format_args!(
+                "{resident}'s timeline could not be brought for a viewer ({}): its sources are read",
+                error.message
+            ));
             return Ok(None);
         }
     };
@@ -98,7 +101,9 @@ pub(crate) async fn brought(node: &Arc<Node>, resident: &ResidentId) -> Result<O
 /// Where the conversation's timeline read here stands now, as a version of
 /// what it holds: none where it is not read here.
 pub(crate) fn standing(node: &Node, resident: &ResidentId) -> Result<Option<u64>, Failure> {
-    let Some(held) = fastctx_platform::roles::in_place("reading a timeline", || local::held(node, resident))? else { return Ok(None) };
+    let Some(held) = fastctx_platform::roles::in_place("reading a timeline", || local::held(node, resident))? else {
+        return Ok(None);
+    };
     let timeline = <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM;
     held.library().view_revision(held.scope(), timeline).map_err(failure)
 }
@@ -132,11 +137,27 @@ pub(crate) struct Reader {
 
 impl Reader {
     pub(crate) fn forward(held: Held) -> Self {
-        Self { held, forward: true, anchor: Self::start(true), revision: None, done: false, pending: Default::default(), runs: None }
+        Self {
+            held,
+            forward: true,
+            anchor: Self::start(true),
+            revision: None,
+            done: false,
+            pending: Default::default(),
+            runs: None,
+        }
     }
 
     pub(crate) fn backward(held: Held) -> Self {
-        Self { held, forward: false, anchor: Self::start(false), revision: None, done: false, pending: Default::default(), runs: None }
+        Self {
+            held,
+            forward: false,
+            anchor: Self::start(false),
+            revision: None,
+            done: false,
+            pending: Default::default(),
+            runs: None,
+        }
     }
 
     /// Each event read given its runs' facts as `directory` holds them now.
@@ -196,7 +217,10 @@ impl Reader {
     /// once (codex-e7b1552a review-s19 P1-2) — those it keeps. One kept as
     /// an object past `WHOLE_MOST` is what is shown in its place, when
     /// something is. Call on a thread that may block.
-    pub(crate) fn next_as(&mut self, make: &mut dyn FnMut(SessionEvent) -> Option<SessionEvent>) -> Result<Next<SessionEvent>, Failure> {
+    pub(crate) fn next_as(
+        &mut self,
+        make: &mut dyn FnMut(SessionEvent) -> Option<SessionEvent>,
+    ) -> Result<Next<SessionEvent>, Failure> {
         if self.pending.is_empty() {
             match self.next_shown()? {
                 Next::Page(shown) => self.pending = shown.into(),
@@ -244,7 +268,8 @@ impl Reader {
         match shown {
             Shown::Event(encoded) => Ok(Some(serde_json::from_slice(encoded).map_err(failure)?)),
             Shown::Oversized { object, .. } => {
-                let length = u32::try_from(object.size).map_err(|_| failure("an event's object is past what one read takes"))?;
+                let length =
+                    u32::try_from(object.size).map_err(|_| failure("an event's object is past what one read takes"))?;
                 let Some(bytes) = local::object(&self.held, &object.hash, 0, length)? else { return Ok(None) };
                 Ok(Some(serde_json::from_slice(&bytes).map_err(failure)?))
             }
@@ -346,7 +371,8 @@ mod tests {
                     }
                 })
                 .collect();
-            write(&store, signer.clone(), &resident, &placed, &history, Span::Whole, &Default::default(), None).unwrap();
+            write(&store, signer.clone(), &resident, &placed, &history, Span::Whole, &Default::default(), None)
+                .unwrap();
             let held = || Held::at(store.clone(), "s".into());
             assert_eq!(encoded(&read(held(), true)), encoded(&history), "round {round}, read on");
             assert_eq!(encoded(&read(held(), false)), encoded(&history), "round {round}, read back");

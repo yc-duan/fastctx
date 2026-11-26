@@ -61,6 +61,14 @@ pub async fn connect(endpoint: &Endpoint) -> io::Result<Connection> {
     imp::connect(&endpoint.0).await
 }
 
+/// The process serving `endpoint` while the account `owner` (a SID string)
+/// holds its pipe, as the system's guardian looks for the node of the user it
+/// keeps; none when nobody listens there.
+#[cfg(windows)]
+pub fn pipe_server(endpoint: &Endpoint, owner: &str) -> io::Result<Option<fastctx_types::ProcessIdentity>> {
+    imp::pipe_server(&endpoint.0, owner)
+}
+
 trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
@@ -322,7 +330,7 @@ mod imp {
     use std::time::Duration;
 
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
-    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 
     use super::{Connection, with_place};
@@ -428,7 +436,7 @@ mod imp {
                 Err(error) => return Err(with_place(error, address)),
             }
         };
-        let owner = object_owner_sid(client.as_raw_handle())?;
+        let owner = object_owner_sid(client.as_raw_handle()).map_err(|error| step(error, "reading who holds it"))?;
         if owner != current_user_sid()? {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -439,11 +447,75 @@ mod imp {
         if unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(client.as_raw_handle(), &mut pid) }
             == 0
         {
-            return Err(io::Error::last_os_error());
+            return Err(step(io::Error::last_os_error(), "asking which process serves it"));
         }
-        let identity = crate::identity_of(pid)?;
+        // A node another logon of this user started, as a service starts one
+        // before anyone logs on, may keep its process from this logon's
+        // programs. The pipe's owner says already whose node it is, so the
+        // connection goes on without the process's identity.
+        let identity = match crate::identity_of(pid) {
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => None,
+            other => other.map_err(|error| step(error, &format!("looking at process {pid}, which serves it")))?,
+        };
         let mut connection = Connection::new(client);
         connection.server = identity;
         Ok(connection)
+    }
+
+    /// `error`, saying which step of connecting it came from.
+    fn step(error: io::Error, what: &str) -> io::Error {
+        io::Error::new(error.kind(), format!("{what}: {error}"))
+    }
+
+    /// The process serving the pipe at `address` while the account `owner`
+    /// (a SID string) holds it; none when no pipe is there or another account
+    /// holds it. For the system's guardian, whose own account holds no node
+    /// and which talks to none: it opens the pipe and says nothing.
+    pub fn pipe_server(address: &Address, owner: &str) -> io::Result<Option<fastctx_types::ProcessIdentity>> {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, GENERIC_READ, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, OPEN_EXISTING, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+        };
+        let name: Vec<u16> = address.name.encode_utf16().chain([0]).collect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let handle = loop {
+            // SAFETY: a terminated name; the handle is closed below.
+            let handle = unsafe {
+                CreateFileW(
+                    name.as_ptr(),
+                    GENERIC_READ,
+                    0,
+                    std::ptr::null(),
+                    OPEN_EXISTING,
+                    SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle != INVALID_HANDLE_VALUE {
+                break handle;
+            }
+            let error = io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(code) if code == ERROR_FILE_NOT_FOUND as i32 => return Ok(None),
+                Some(code) if code == ERROR_PIPE_BUSY as i32 && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                _ => return Err(with_place(error, address)),
+            }
+        };
+        let server = (|| {
+            if object_owner_sid(handle)? != owner {
+                return Ok(None);
+            }
+            let mut pid = 0;
+            // SAFETY: a pipe handle opened above.
+            if unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(handle, &mut pid) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            crate::identity_of(pid)
+        })();
+        // SAFETY: opened above and closed once.
+        unsafe { CloseHandle(handle) };
+        server
     }
 }

@@ -101,41 +101,108 @@ impl Link {
     ) -> Result<HistoryRevision, String> {
         self.require_history_write(account)?;
         let description = history::markdown::parse_written(name, &text)?.description;
-        let revision = HistoryRevision {
-            name: name.into(),
-            description,
-            version: expected.unwrap_or(0).checked_add(1).ok_or("history revision numbers are exhausted")?,
-            retired,
-            author,
-        };
-        let stored = Stored { revision: revision.clone(), text, submission };
+        let mut expected = expected;
+        let mut deletion_seen = false;
+        loop {
+            let revision = HistoryRevision {
+                name: name.into(),
+                description: description.clone(),
+                version: expected.unwrap_or(0).checked_add(1).ok_or("history revision numbers are exhausted")?,
+                retired,
+                deleted: false,
+                author: author.clone(),
+            };
+            let stored = Stored { revision: revision.clone(), text: text.clone(), submission: submission.clone() };
+            let response = self
+                .owned_records(
+                    account,
+                    Request::Record {
+                        conversation: conversation.clone(),
+                        request: RecordRequest::Write {
+                            kind: history::RECORD_KIND.into(),
+                            key: key(conversation, name)?,
+                            expected,
+                            body: serde_json::to_value(stored).map_err(|error| error.to_string())?,
+                        },
+                    },
+                )
+                .await?;
+            return match response {
+                // A hub put back since numbers the revision above every one
+                // written before (`number_floor`): the revision is the number
+                // it gave.
+                Response::Record { response: RecordResponse::Written { metadata } }
+                    if metadata.version >= revision.version =>
+                {
+                    self.inner.history_catalogs.invalidate(|(_, source)| {
+                        matches!(source, super::history_catalogs::Source::Conversation(address) if address.resident == conversation.resident)
+                    });
+                    Ok(HistoryRevision { version: metadata.version, ..revision })
+                }
+                // A name deleted for good is written again from its deletion,
+                // as a new document.
+                Response::Record { response: RecordResponse::Conflict { current: Some(current) } }
+                    if current.deleted && expected.is_none() && !deletion_seen =>
+                {
+                    expected = Some(current.version);
+                    deletion_seen = true;
+                    continue;
+                }
+                Response::Record { response: RecordResponse::Conflict { current: Some(current) } }
+                    if current.deleted =>
+                {
+                    Err(history::gone(name))
+                }
+                Response::Record { response: RecordResponse::Conflict { current } } => {
+                    Err(history::conflict(current.map(|metadata| metadata.version)))
+                }
+                _ => Err("the hub did not confirm the history revision".into()),
+            };
+        }
+    }
+
+    /// Deletes for good the conversation's history document `current` is
+    /// the latest revision of: its record and every version of it. A hub of
+    /// a release before deletion refuses, the document only retired there.
+    pub async fn conversation_history_delete(
+        &self,
+        account: &AccountName,
+        conversation: &Address,
+        current: &HistoryRevision,
+        author: Author,
+    ) -> Result<HistoryRevision, String> {
+        self.require_history_write(account)?;
         let response = self
             .owned_records(
                 account,
                 Request::Record {
                     conversation: conversation.clone(),
-                    request: RecordRequest::Write {
+                    request: RecordRequest::Delete {
                         kind: history::RECORD_KIND.into(),
-                        key: key(conversation, name)?,
-                        expected,
-                        body: serde_json::to_value(stored).map_err(|error| error.to_string())?,
+                        key: key(conversation, &current.name)?,
+                        expected: Some(current.version),
                     },
                 },
             )
             .await?;
         match response {
-            Response::Record { response: RecordResponse::Written { metadata } }
-                if metadata.version == revision.version =>
-            {
+            Response::Record { response: RecordResponse::Written { metadata } } => {
                 self.inner.history_catalogs.invalidate(|(_, source)| {
                     matches!(source, super::history_catalogs::Source::Conversation(address) if address.resident == conversation.resident)
                 });
-                Ok(revision)
+                Ok(HistoryRevision {
+                    name: current.name.clone(),
+                    description: current.description.clone(),
+                    version: metadata.version,
+                    retired: true,
+                    deleted: true,
+                    author,
+                })
             }
             Response::Record { response: RecordResponse::Conflict { current } } => {
                 Err(history::conflict(current.map(|metadata| metadata.version)))
             }
-            _ => Err("the hub did not confirm the history revision".into()),
+            _ => Err("the hub did not confirm the deletion".into()),
         }
     }
 }

@@ -35,12 +35,16 @@ pub(super) fn put_back(assets: &Assets) -> io::Result<Option<String>> {
         .read_now(|c| {
             let mut statement =
                 c.prepare_cached("SELECT scope, change, prefix, parked, accumulated, machine FROM recovery_receipts")?;
-            let rows = statement.query_map(params![], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))?;
+            let rows = statement.query_map(params![], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+            })?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })
         .map_err(io::Error::other)?;
     for (key, change, prefix, parked, accumulated, machine) in receipts {
-        let (Ok(prefix), Ok(accumulated)) = (<[u8; 32]>::try_from(prefix.as_slice()), <[u8; 32]>::try_from(accumulated.as_slice())) else {
+        let (Ok(prefix), Ok(accumulated)) =
+            (<[u8; 32]>::try_from(prefix.as_slice()), <[u8; 32]>::try_from(accumulated.as_slice()))
+        else {
             continue;
         };
         let head = Head { scope: key.clone(), change: change as u64, prefix, parked: parked as u64, accumulated };
@@ -58,7 +62,9 @@ pub(super) fn put_back(assets: &Assets) -> io::Result<Option<String>> {
         }
         let library = scopes::library(assets, &scope).map_err(io::Error::other)?;
         if !library.holds(&head).map_err(io::Error::other)? && !assets.closed_receipt(&head)? {
-            return Ok(Some(format!("{machine} holds the hub's receipt of {key} that the hub's history no longer holds")));
+            return Ok(Some(format!(
+                "{machine} holds the hub's receipt of {key} that the hub's history no longer holds"
+            )));
         }
     }
     Ok(None)
@@ -84,7 +90,12 @@ pub(crate) fn forget(assets: &Assets) -> io::Result<()> {
 /// What `machine` brought this time — the head it saw and the receipts it
 /// reported — was judged to show nothing put back: those alone, not what
 /// another of its sessions brought that waits to be judged (AP09).
-pub(super) fn judged(assets: &Assets, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: &[Head]) {
+pub(super) fn judged(
+    assets: &Assets,
+    machine: &fastctx_types::MachineName,
+    seen: Option<(u64, [u8; 32])>,
+    receipts: &[Head],
+) {
     let name = machine.to_string();
     let receipts = receipts.to_vec();
     let _ = assets.control.write_now(256 + receipts.len() * 128, move |c| {
@@ -107,7 +118,8 @@ pub(super) fn judged(assets: &Assets, machine: &fastctx_types::MachineName, seen
 /// was judged.
 pub(super) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
     for table in ["recovery_heads", "recovery_receipts"] {
-        let marked = c.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'judged'"))?.exists([])?;
+        let marked =
+            c.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'judged'"))?.exists([])?;
         if !marked {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN judged INTEGER NOT NULL DEFAULT 0;"))?;
         }
