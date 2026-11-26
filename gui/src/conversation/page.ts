@@ -54,7 +54,7 @@ import { ContextSheet } from "./context-sheet";
 import type { CallSpan } from "./context-steps";
 import { headline } from "./tool";
 import { ConversationView, gone, modelName } from "./view";
-import { departureOf } from "./flight";
+import { glideSent, type Glide } from "./sent-glide";
 import { detailOf } from "../app/problem";
 import { standsUnder } from "./landing";
 import { DraftFit } from "./fit-draft";
@@ -264,12 +264,8 @@ const GAP_SLOWEST = 12;
  *  is read again, at the most: past that, it is drawn as it stands. */
 const HOLD_AT_MOST_MS = 4000;
 
-/** How far below the top of the view words just sent are put, the answer
- *  coming in beneath them. */
-const SENT_AT = 24;
-
-/** How long after a send the words sent are looked for to be put at the
- *  top: words that wait in a queue instead are not, coming later. */
+/** How long after a send the words sent are looked for to glide into place:
+ *  words that wait in a queue instead are not, coming later. */
 const SENT_WITHIN_MS = 4000;
 
 /** Whether something between `target` and `region` scrolls up by itself
@@ -306,14 +302,13 @@ export class ConversationPage {
    *  conversation opens, until the reader moves the view, and after they
    *  ask for the newest: nothing else moves what they look at. */
   private following = true;
-  /** Room under the newest, so words just sent can stand at the top of the
-   *  view with the answer coming in beneath them; the answer takes it up
-   *  as it grows, and it goes once the reader has scrolled away from it. */
+  /** Where what is shown ends, beneath the newest. */
   private room: HTMLElement;
-  /** The words sent the room is kept for. */
-  private roomFor: string | null = null;
-  /** Until when words the user just sent are to be put at the top. */
+  /** Until when words the user just sent glide into place. */
   private placeUntil = 0;
+  /** Words just sent gliding into place: the view keeps to its glide rather
+   *  than to the foot until it ends (`sent-glide.ts`). */
+  private glide: Glide | null = null;
   /** A stop was asked for, its turn has not ended, and its host has not
    *  ended it within `STOP_OVERDUE_MS`: only then is the turn said to go on,
    *  with a way to stop it again. */
@@ -581,12 +576,10 @@ export class ConversationPage {
         this.following = false;
       },
       following: () => this.following,
-      // Words the user just sent stand at the top of the view.
+      // Words the user just sent glide into place at the foot.
       sent: (key) => this.sent(key),
       // Turns not held are read as the reader comes near them.
       near: (gap, side, explicit, into) => void this.fillGap(gap, side, explicit, into),
-      // Words being sent leave from where they were typed.
-      departure: () => departureOf(this.input),
       here: options.here,
       residentMachine: someone.machine,
       agent: someone.agent,
@@ -790,8 +783,7 @@ export class ConversationPage {
     // The region itself shrinks when the composer grows (an attachment, a
     // longer draft): the same holds.
     const keep = new ResizeObserver(() => {
-      this.fitRoom();
-      if (this.following && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
+      if (this.following && !this.reading() && !this.glide) this.scroller.scrollTop = this.scroller.scrollHeight;
     });
     keep.observe(main);
     keep.observe(this.scroller);
@@ -802,6 +794,8 @@ export class ConversationPage {
     // kept the newest in view, so the scroll alone cannot tell them apart.
     const reading = () => {
       this.readAt = performance.now();
+      // The view is theirs: words gliding into place stop where they are.
+      this.glide?.stop();
     };
     const up = () => {
       reading();
@@ -939,7 +933,7 @@ export class ConversationPage {
       }
       sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
-        if (this.following) this.scroller.scrollTop = scrollHeight;
+        if (this.following && !this.glide) this.scroller.scrollTop = scrollHeight;
         return;
       }
       // Whatever else moved it — a gesture or a tool of the system's that
@@ -949,8 +943,6 @@ export class ConversationPage {
         this.view.readerMoved();
         up();
       }
-      // The room goes once it is wholly below the view: nothing seen moves.
-      if (this.roomFor && this.room.offsetTop >= scrollTop + clientHeight) this.dropRoom();
       this.drawLatest();
     });
   }
@@ -988,52 +980,42 @@ export class ConversationPage {
     // rather than the held view scrolled to its empty end (codex-0fe83e04).
     this.unhold();
     this.shownAgain();
-    this.dropRoom();
+    this.glide?.stop();
     // The latest part is always held: there is nothing to read first.
     this.render();
     this.scroller.scrollTop = this.scroller.scrollHeight;
     this.drawLatest();
   }
 
-  /** The next words the user sends are put at the top of the view. */
-  private placeSent(): void {
-    this.following = false;
-    this.placeUntil = performance.now() + SENT_WITHIN_MS;
+  /** Whether the reader moves the view now: a wheel, a finger, a key, the
+   *  scroll bar, or the browser's own scroll they steer. */
+  private moving(): boolean {
+    return this.reading() || this.steering || this.pointerPaging;
   }
 
-  /** Words just sent are on the page: where the user sent them, they stand
-   *  near the top of the view, room made beneath them for the answer. */
+  /** The next words the user sends glide into place at the foot, where the
+   *  reader stands at the newest. Where they read further up, or move the
+   *  view as they send, their view is theirs: nothing moves it. */
+  private placeSent(): void {
+    this.placeUntil = this.following && !this.moving() ? performance.now() + SENT_WITHIN_MS : 0;
+  }
+
+  /** Words just sent are laid out: they rise into place from below, what
+   *  was there pushed up before them, and the view goes on at the foot. */
   private sent(key: string): void {
     if (performance.now() > this.placeUntil) return;
     this.placeUntil = 0;
-    this.roomFor = key;
-    this.following = false;
-    this.fitRoom();
+    if (!this.following || this.moving()) return;
     const words = this.view.elementOf(key);
     if (!words) return;
-    const top = words.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top + this.scroller.scrollTop;
-    this.scroller.scrollTop = Math.max(0, top - SENT_AT);
-  }
-
-  /** Keeps the room just as tall as lets the words sent stand at the top of
-   *  the view: what comes beneath them takes it up, so nothing moves. */
-  private fitRoom(): void {
-    if (!this.roomFor) return;
-    const words = this.view.elementOf(this.roomFor);
-    if (!words) {
-      this.dropRoom();
-      return;
-    }
-    const top = words.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top + this.scroller.scrollTop;
-    const end = this.room.offsetTop;
-    const room = Math.max(0, Math.round(this.scroller.clientHeight - SENT_AT - (end - top)));
-    const height = `${room}px`;
-    if (this.room.style.height !== height) this.room.style.height = height;
-  }
-
-  private dropRoom(): void {
-    this.roomFor = null;
-    if (this.room.style.height) this.room.style.height = "";
+    this.glide?.stop();
+    // Declared first: a glide with nothing to move is done before it returns.
+    let glide: Glide | null = null;
+    glide = glideSent(this.scroller, words, () => {
+      if (this.glide === glide) this.glide = null;
+      this.drawLatest();
+    });
+    this.glide = glide;
   }
 
   /** Reads the turns of a gap the reader came near, then draws them. */
@@ -1273,8 +1255,7 @@ export class ConversationPage {
     this.drawAction();
     const failure = this.options.conversation.takeReadingFailure();
     if (failure) this.say(failure);
-    if (follow && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
-    this.fitRoom();
+    if (follow && !this.reading() && !this.glide) this.scroller.scrollTop = this.scroller.scrollHeight;
     this.drawLatest();
     this.bound();
   }

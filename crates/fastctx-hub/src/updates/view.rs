@@ -5,8 +5,8 @@ use fastctx_net::directory::{Directory, Member};
 use fastctx_net::wire::{Change, Told};
 use fastctx_types::AccountName;
 use fastctx_types::update::{
-    ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Permission, Problem, Scheduled,
-    Stage, View, ViewCall, ViewReply, release,
+    ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Manifest, Permission, Problem,
+    Scheduled, Stage, View, ViewCall, ViewReply, release,
 };
 use std::sync::Arc;
 
@@ -209,6 +209,36 @@ pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &Accou
     })
 }
 
+/// The view as its reader is told it, every release in it by its version and
+/// date alone: a hundred machines each given the whole manifest of the
+/// release offered to them, every package with its signature, and the
+/// network's releases three times over, made it megabytes. What a release
+/// holds is asked for one release at a time (`ViewCall::Release`); the hub
+/// itself goes on judging what it is asked by the whole view.
+fn told(mut view: View) -> View {
+    view.stable = view.stable.map(named);
+    view.beta = view.beta.map(named);
+    view.releases = view.releases.into_iter().map(named).collect();
+    for choice in &mut view.versions {
+        choice.manifest = None;
+    }
+    for machine in &mut view.machines {
+        machine.offer = machine.offer.take().map(named);
+    }
+    view
+}
+
+/// A release by its version and date alone.
+fn named(manifest: Manifest) -> Manifest {
+    Manifest {
+        version: manifest.version,
+        notes: None,
+        pub_date: manifest.pub_date,
+        platforms: Default::default(),
+        fastctx: Default::default(),
+    }
+}
+
 /// Keeps how a version goes out and the versions withdrawn, as the super
 /// administrator `asker` set them.
 async fn change_rollout(
@@ -274,7 +304,7 @@ pub(crate) async fn request(
             }
             return Ok(Told::NetworkUpdates { reply: ViewReply::Release { choice: Box::new(choice) } });
         }
-        ViewCall::View => return Ok(Told::NetworkUpdates { reply: ViewReply::View { view: Box::new(view) } }),
+        ViewCall::View => return Ok(Told::NetworkUpdates { reply: ViewReply::View { view: Box::new(told(view)) } }),
         ViewCall::Policy { minimum, managed_auto } => {
             let mut policy = hub.store().hub.updates.clone();
             policy.minimum = minimum;

@@ -83,5 +83,7 @@ pub(super) fn prepare(
         encoded.push((Outgoing { message: Message::Binary(bytes.into()), guard }, dissolved));
     }
     hub.health.egress.wrote(name, &written);
+    let (frames, bytes) = queue.expired();
+    hub.health.egress.added(name, "dropped/expired", frames, bytes);
     Ok((encoded, last))
 }

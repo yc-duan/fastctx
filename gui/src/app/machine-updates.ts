@@ -1,6 +1,8 @@
 // The machines page's update view (`world-gui.md`, 「更新」): each login of
-// this device asks its hub which machines it may update, every few seconds
-// while the view is shown; the machines in the answers are one list, each
+// this device asks its hub which machines it may update as the view opens,
+// and again as what it shows may have changed (`followAll`): a machine's
+// update number moved, this computer's own updates did, a machine is on its
+// way to a release and how far it came is shown; the machines in the answers are one list, each
 // from the view that lets the most be done to it. Over them the ruler of
 // versions and the network's policy; what is done to the machines ticked,
 // scheduling a release, a repair or how each updates, goes to the hub whose
@@ -19,6 +21,8 @@ import type { UpdatesNow } from "./machine-list";
 import { detailOf, known } from "./problem";
 import { machinesOf } from "./reach";
 import type { Signal } from "./signals";
+import { followAll } from "./numbers";
+import { UPDATE, type Following } from "../world/topics";
 import { RolloutWindow, type RolloutHost, type RolloutNow } from "./rollout-window";
 import { rulerOf } from "./update-ruler";
 import { SwitchChanges } from "./switch-change";
@@ -53,6 +57,8 @@ export interface UpdatesHost {
   updates: UpdatesAccess;
   access: AccessWords;
   world(): WorldNow | null;
+  /** The World as it moves: the machines' update numbers in it. */
+  worlds: Signal<WorldNow | null>;
   /** Whether the view is shown on a page still on the screen. */
   shown(): boolean;
   /** Draws the page again as the World now stands; only what changed
@@ -77,10 +83,11 @@ const PREFERENCES_SINCE = "1.0.1-beta.8";
  *  also asked at once, which it takes regardless. */
 const ARRANGED_PAST_STUCK_SINCE = "1.0.1-beta.10";
 
-/** How often the view asks while it is shown, and while the page is out of
- *  sight. */
-const EVERY_MS = 2500;
-const HIDDEN_MS = 15000;
+/** How often the view asks while a machine shown is on its way to a release,
+ *  and otherwise while a machine online tells no update number (an earlier
+ *  node); one telling it is asked for as it moves. */
+const MOVING_MS = 2500;
+const UNTOLD_MS = 60_000;
 
 /** How long what scheduling a machine said stays on its row. */
 const SAID_MS = 15000;
@@ -102,7 +109,7 @@ export class MachineUpdates {
    *  latest, so an earlier answer coming later is dropped. */
   private failure: string | null = null;
   private asked = 0;
-  private timer = 0;
+  private following: Following | null = null;
   private readonly switches = new SwitchChanges();
   private readonly writingWays = new Set<string>();
   private readonly writingPolicy = new Set<string>();
@@ -134,20 +141,31 @@ export class MachineUpdates {
     return [...this.byName.values()].filter((machine) => machine.offer && machine.actions.schedule.allowed).length;
   }
 
-  /** Asks now and every few seconds while the view is shown; stops asking
-   *  once it is not. */
+  /** Asks as the view is shown and again as what it shows may have changed;
+   *  stops asking once it is not shown. */
   watch(): void {
-    clearTimeout(this.timer);
-    if (!this.host.shown()) return;
-    const read = document.hidden ? Promise.resolve() : this.ask();
-    void read.finally(() => {
-      if (!this.host.shown()) return;
-      this.timer = window.setTimeout(() => this.watch(), document.hidden ? HIDDEN_MS : EVERY_MS);
-    });
+    if (!this.host.shown()) {
+      this.stop();
+      return;
+    }
+    if (this.following) return;
+    this.following = followAll(this.host.worlds, "updates", UPDATE, () => this.ask(), () => (this.moving() ? MOVING_MS : UNTOLD_MS));
   }
 
   stop(): void {
-    clearTimeout(this.timer);
+    this.following?.();
+    this.following = null;
+  }
+
+  /** Whether a machine shown, online, is fetching, installing or repairing a
+   *  release: how far it came is asked for every few seconds. */
+  private moving(): boolean {
+    for (const machine of this.byName.values()) {
+      if (!machine.online) continue;
+      const kind = machine.stage.kind;
+      if (kind === "fetching" || kind === "installing" || kind === "renewing" || kind === "repairing") return true;
+    }
+    return false;
   }
 
   /** Each login of this device asks its hub for its update view; the
