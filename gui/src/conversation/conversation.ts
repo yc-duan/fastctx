@@ -28,6 +28,8 @@ import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
 import { Measured, before, begins, insert, member, ordinal, placeAt, removeAt, spanOf, type Place, type ReadFrom, type ReplicaPart, type ReplicaRecord, type Span } from "./replica";
+import { firstDifference, rowsOf, type Row } from "./rows";
+import { RecordedCompactions, compactionAt, itemOf, orphansOf } from "./claims";
 
 export type TimelinePosition = Place;
 
@@ -141,20 +143,6 @@ const AHEAD_FOR_MS = 10 * 60_000;
 /** The most items whose ending the timeline recorded a page remembers. */
 const RECORDED_MOST = 5000;
 
-/** The item an event told as it happens is of, by turn and id. */
-function itemOf(event: SessionEvent): string | null {
-  switch (event.event) {
-    case "began":
-    case "updated":
-    case "finished":
-      return `${event.turn}/${event.item.id}`;
-    case "grew":
-      return `${event.turn}/${event.item}`;
-    default:
-      return null;
-  }
-}
-
 /** The turn an event told as it happens is of. */
 function turnOf(event: SessionEvent): string | null {
   return "turn" in event && typeof event.turn === "string" ? event.turn : null;
@@ -162,6 +150,22 @@ function turnOf(event: SessionEvent): string | null {
 
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
+
+/** How long after its turn ended something told as it happened may still
+ *  wait for its record before the page counts it as left behind. */
+const STALE_MS = 3 * 60_000;
+
+/** What a page found of itself (`selfCheck`): `stale`, something told as
+ *  it happened still shown long after its turn ended, with no record of
+ *  it; `differs`, what it shows of its latest part is not what the same
+ *  records show folded anew. */
+export interface SelfCheck {
+  kind: "stale" | "differs";
+  /** What tells it apart from findings of other causes: kinds, no words. */
+  fingerprint: string;
+  /** The rows about it, as shown and, for `differs`, as folded anew. */
+  rows: Row[];
+}
 export class Conversation {
   searchVersion = 0;
   private searchSource = 0;
@@ -216,6 +220,13 @@ export class Conversation {
   /** The turns whose end the timeline recorded: what comes of one as it
    *  happens after that is late, and not shown. */
   private endedTurns = new Set<string>();
+  /** The items, by turn and id, a draft's end named as what it became: no
+   *  other draft stands for them (`claimOrphans`). */
+  private namedItems = new Set<string>();
+  /** The compactions the timeline recorded. A compaction shown as it
+   *  happened goes by a name of the plugin's own, which its record never
+   *  bears (`claims.ts`). */
+  private compactions = new RecordedCompactions(RECORDED_MOST);
   /** Moves when parts come and go. */
   private structure = 0;
   private folds = 0;
@@ -387,15 +398,18 @@ export class Conversation {
         if (event.item.draft) inPart.add(`${event.turn}/${event.item.draft}`);
       }
       if (event.event === "turn_ended") this.turnRecorded(event.turn);
+      this.compactions.add(event);
     }
     // An item of a turn whose end is recorded but not the item itself stays
     // shown as it came: its record is on its way, and the turn's last words
     // are not to vanish until it comes (codex-d0397b85).
+    const claimed = this.compactions.claimed(this.aheadEvents);
     this.aheadEvents = this.aheadEvents.filter((event) => {
       const item = itemOf(event);
-      return now - Date.parse(event.at) < AHEAD_FOR_MS && !!item && !inPart.has(item) && this.stillAhead(event);
+      return now - Date.parse(event.at) < AHEAD_FOR_MS && !!item && !inPart.has(item) && !claimed.has(item) && this.stillAhead(event);
     });
-    for (const event of this.aheadEvents) tail.late(event);
+    this.claimOrphans(span.events);
+    tail.lateAll(this.aheadEvents);
     // What its machine last said holds now goes on holding over the part
     // read anew, which has only its records to go by (codex-fb2e1cc5).
     const told = this.toldNow();
@@ -493,6 +507,7 @@ export class Conversation {
         ended.add(record.shown.event.turn);
         this.turnRecorded(record.shown.event.turn);
       }
+      this.compactions.add(record.shown.event);
     }
     // What came ahead goes as its own record comes, the turn's end recorded
     // or not: the end may come before its last words' record, and those
@@ -500,9 +515,11 @@ export class Conversation {
     const ahead = this.aheadEvents.length;
     if (ahead) {
       const now = Date.now();
+      const claimed = this.compactions.claimed(this.aheadEvents);
       this.aheadEvents = this.aheadEvents.filter(
         (event) =>
           !this.recordedItems.has(itemOf(event) ?? "") &&
+          !claimed.has(itemOf(event) ?? "") &&
           this.stillAhead(event) &&
           (!ended.has(turnOf(event) ?? "") || now - Date.parse(event.at) < AHEAD_FOR_MS),
       );
@@ -512,6 +529,7 @@ export class Conversation {
     const touch = (part: Held, span: Span) => {
       if (!touched.has(part)) touched.set(part, { events: this.shown(span), keys: [...span.keys] });
     };
+    let readOn = false;
     for (const record of records) {
       const key = record.record === "is" ? record.shown.key : record.key;
       // The part that held it: where it stands on as it is told anew, should
@@ -539,14 +557,18 @@ export class Conversation {
         insert(span, record.shown);
         part.fold.event(record.shown.event, record.shown.key);
         this.placed(part, span);
+        readOn = true;
         continue;
       }
       touch(part, span);
       insert(span, record.shown);
     }
+    // Drafts whose own end was lost stand for nothing their records hold.
+    const tailSpan = this.spans.get(this.tail);
+    const orphans = tailSpan ? this.claimOrphans(tailSpan.events) : 0;
     // What went of what was shown ahead leaves the latest part folded anew
     // from its records alone.
-    if (dropped && !touched.has(this.tail)) {
+    if ((dropped || orphans > 0) && !touched.has(this.tail)) {
       const span = this.spans.get(this.tail);
       if (span) touched.set(this.tail, { events: this.shown(span), keys: [...span.keys] });
     }
@@ -554,6 +576,12 @@ export class Conversation {
     if (touched.size) {
       this.parts = [...this.parts];
       this.structure += 1;
+    }
+    // Records read on at the end may tell a turn start that its machine has
+    // since said runs no more: as after folding anew, that word stands.
+    if (readOn && !touched.has(this.tail)) {
+      const now = this.toldNow();
+      if (now && !now.busy) this.tail.fold.now(now.busy, now.turn, now.kept, now.halted);
     }
   }
 
@@ -634,6 +662,8 @@ export class Conversation {
       const draft = `${event.turn}/${event.item.draft}`;
       this.aheadEvents = this.aheadEvents.filter((held) => itemOf(held) !== draft);
       this.settled(draft);
+      this.namedItems.add(item);
+      if (this.namedItems.size > RECORDED_MOST) this.namedItems.delete(this.namedItems.values().next().value as string);
       if (ended || this.recordedItems.has(item)) {
         this.live.claimed(event.turn, event.item.draft, event.item.id, this.recordedItems.has(item));
         return;
@@ -648,6 +678,15 @@ export class Conversation {
       return;
     }
     if (this.recordedItems.has(item) || ended) return;
+    // A compaction whose record came first: the record stands for it.
+    if (compactionAt(event) !== null) {
+      this.aheadEvents.push(event);
+      if (this.compactions.claimed(this.aheadEvents).has(item)) {
+        this.aheadEvents = this.aheadEvents.filter((held) => itemOf(held) !== item);
+        return;
+      }
+      this.aheadEvents.pop();
+    }
     this.live.late(event);
     // Kept as one growth for each item's part, so a long answer is shown
     // again whole however many pieces it came in, others between them or
@@ -683,9 +722,62 @@ export class Conversation {
   }
 
   /** The latest part was folded anew from its records: what was shown
-   *  ahead of them is shown again over it. */
+   *  ahead of them is shown again over it, each where it happened. */
   private reahead(): void {
-    for (const event of this.aheadEvents) this.live.late(event);
+    this.live.lateAll(this.aheadEvents);
+  }
+
+  /** What its page shows of its latest part, checked against the same
+   *  records folded anew (`self-check.ts`): none where they agree, or where
+   *  they cannot be compared yet: a turn under way, words on their way, or
+   *  what was told ahead of the records still waiting for them. */
+  selfCheck(now: number): SelfCheck | null {
+    if (!this.replica) return null;
+    const stale = this.aheadEvents.filter((event) => event.event === "finished" && this.endedTurns.has(event.turn) && now - Date.parse(event.at) > STALE_MS);
+    if (stale.length) {
+      const kinds = [...new Set(stale.map((event) => (event.event === "finished" ? event.item.kind : event.event)))].sort();
+      const rows = stale.map((event): Row => ({ id: itemOf(event) ?? "", kind: event.event === "finished" ? event.item.kind : event.event, turn: turnOf(event) ?? "", said: "stale" }));
+      return { kind: "stale", fingerprint: `stale:${kinds.join(",")}`, rows };
+    }
+    if (this.aheadEvents.length || this.live.busy() || this.live.entries.some((entry) => entry.kind === "heard" && entry.sending !== undefined)) return null;
+    const span = this.spans.get(this.tail);
+    if (!span) return null;
+    const events = this.shown(span);
+    const fresh = new Conversation();
+    fresh.thoughtWords = this.thoughts;
+    fresh.asks = [...this.asks];
+    fresh.openReplica({
+      generation: this.generation,
+      events: span.keys.map((key, at) => {
+        const deferred = span.deferred.get(key);
+        return { key, place: span.places[at]!, event: events[at]!, ...(deferred ? { deferred } : {}) };
+      }),
+      older: span.older,
+      newer: null,
+      preparing: this.making,
+    }, null);
+    const told = this.toldNow();
+    if (told) fresh.live.now(told.busy, told.turn, told.kept, told.halted);
+    const shown = rowsOf(this.live.blocks());
+    const anew = rowsOf(fresh.live.blocks());
+    const at = firstDifference(shown, anew);
+    if (at < 0) return null;
+    const near = (rows: Row[]) => rows.slice(Math.max(0, at - 2), at + 3);
+    return { kind: "differs", fingerprint: `differs:${shown[at]?.kind ?? "end"}/${anew[at]?.kind ?? "end"}`, rows: [...near(shown), ...near(anew)] };
+  }
+
+  /** Drafts shown as they streamed whose end never came here, given up for
+   *  the records that stand for them (`claims.ts`); a draft its end names
+   *  is given up as it comes (`ahead`). How many were given up. */
+  private claimOrphans(events: readonly SessionEvent[]): number {
+    const claims = orphansOf(this.aheadEvents, events, (item) => this.recordedItems.has(item), (item) => this.namedItems.has(item));
+    for (const claim of claims) {
+      const key = `${claim.turn}/${claim.draft}`;
+      this.settled(key);
+      this.aheadEvents = this.aheadEvents.filter((event) => itemOf(event) !== key);
+      this.live.claimed(claim.turn, claim.draft, claim.record, true);
+    }
+    return claims.length;
   }
 
   /** The timeline recorded how `event`'s item ended: what was shown of it

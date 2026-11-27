@@ -286,7 +286,13 @@ fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
         happened if !happened.kept() => false,
         Happened::Finished { turn, item } => {
-            crate::goals::questions::key(turn, item).is_some() || !matches!(agent, "codex" | "claude")
+            crate::goals::questions::key(turn, item).is_some()
+                || !matches!(agent, "codex" | "claude")
+                // A compaction Claude Code could not make leaves nothing of
+                // itself in Claude Code's file: the World keeps it, so it is
+                // shown read anew as it was as it happened.
+                || agent == "claude"
+                    && matches!(&item.what, fastctx_types::session::What::Other { host_kind } if host_kind == "compaction_failed")
         }
         _ => true,
     }

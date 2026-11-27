@@ -162,7 +162,9 @@ import { doctorReadings } from "./world/doctor";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
-import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
+import { conversationCheckKeep, keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
+import { Tape } from "./conversation/tape";
+import { SelfChecks } from "./conversation/self-check";
 import { PREVIEW } from "./app/preview";
 import { accountFeatures, featureAccount } from "./app/account-features";
 import { historyForProject, historyForTalk } from "./app/history-offered";
@@ -2512,6 +2514,12 @@ function liveTalk(address: Address): DeskTalk {
   // heard nothing for a while.
   let nowTold = false;
   let heardAt = Date.now();
+  // The page checks what it shows against its records whenever the
+  // conversation rests (`self-check.ts`); where the shell can keep what the
+  // page was given, it is recorded for that.
+  const keep = onComputer() ? conversationCheckKeep : null;
+  const tape = keep ? new Tape() : undefined;
+  const checks = new SelfChecks(address, conversation, tape ?? null, keep);
   const reading = watched.open(address, {
     window: (window, parts) => page.reopened(() => conversation.open(window, parts)),
     extended: (start, events) => {
@@ -2522,7 +2530,10 @@ function liveTalk(address: Address): DeskTalk {
       conversation.rebased(generation, offset, turnsAdded);
       page.update({ read: true });
     },
-    replica: (part, parts) => page.reopened(() => conversation.openReplica(part, parts)),
+    replica: (part, parts) => {
+      page.reopened(() => conversation.openReplica(part, parts));
+      checks.poke();
+    },
     preview: (part) => page.reopened(() => conversation.openReplica(part, null)),
     attached: (parts) => {
       conversation.attachReplicaSource(parts);
@@ -2536,6 +2547,7 @@ function liveTalk(address: Address): DeskTalk {
       heardAt = Date.now();
       conversation.records(generation, records);
       page.update();
+      checks.poke();
     },
     preparing: (preparing) => {
       conversation.prepares(preparing);
@@ -2554,6 +2566,7 @@ function liveTalk(address: Address): DeskTalk {
       heardAt = Date.now();
       conversation.ahead(event);
       page.update();
+      checks.poke();
     },
     happened: (at, event) => {
       heardAt = Date.now();
@@ -2580,9 +2593,10 @@ function liveTalk(address: Address): DeskTalk {
       nowTold = true;
       conversation.now(busy, turn, kept, halted);
       page.update();
+      checks.poke();
     },
     deleted: () => gone(),
-  });
+  }, tape);
   // Deleted, as its machine answers: nothing of it is watched any more, and
   // its page is kept no longer than it is in view.
   let deleted = false;
@@ -2664,6 +2678,7 @@ function liveTalk(address: Address): DeskTalk {
       named();
       running();
       stopSentinels();
+      checks.stop();
       page.leave();
       search.close();
       reading.close();

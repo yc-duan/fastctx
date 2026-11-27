@@ -34,6 +34,13 @@ import type { LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, 
  *  fingers; a release build has no such door. */
 const specimenAsked = import.meta.env.DEV && new URLSearchParams(location.search).has("specimen");
 
+/** Keeps beside the application's data, on this computer only, a recording
+ *  of what a conversation's page was given when the page found itself
+ *  showing what its records do not (`conversation/self-check.ts`). */
+export function conversationCheckKeep(name: string, text: string): Promise<void> {
+  return invoke("conversation_check_keep", { name, text });
+}
+
 /** Whether the page runs in the app's shell, with the World behind it. */
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window && !specimenAsked;

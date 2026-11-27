@@ -10,6 +10,7 @@ import { after, whyOf } from "../world/again";
 import { conversationPreview, conversationSearch, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationObject, conversationPage, conversationPart, onComputer, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 import type { ReplicaPart, ReplicaRecord } from "./replica";
+import type { Tape } from "./tape";
 
 export interface ConversationFeed {
   /** The part shown, in place of all held; `parts` reads the rest. */
@@ -62,7 +63,8 @@ export interface Reading {
 }
 
 export interface ConversationSource {
-  open(address: Address, feed: ConversationFeed): Reading;
+  /** `tape` keeps what the page is given (`tape.ts`). */
+  open(address: Address, feed: ConversationFeed, tape?: Tape): Reading;
 }
 
 /** The try a refused watch is paced as when it is asked again: within a
@@ -72,7 +74,7 @@ const REFUSED_AGAIN = 8;
 /** The World's watch: the part it opens on, then what follows; pieces that
  *  come before it wait for it. */
 export const watched: ConversationSource = {
-  open(address, feed) {
+  open(address, feed, tape) {
     let id: number | null = null;
     let reading = 0;
     let closed = false;
@@ -143,6 +145,7 @@ export const watched: ConversationSource = {
       );
     };
     const take = (piece: Piece, attempted: string | null) => {
+      tape?.put(piece, piece.kind === "replica" || piece.kind === "window");
       switch (piece.kind) {
         case "resumed":
           feed.resumed();
@@ -234,6 +237,8 @@ export const watched: ConversationSource = {
           tries = 0;
           since = null;
           authoritative = true;
+          if (started.replica) tape?.put({ kind: "replica", part: started.replica }, true);
+          else if (started.window) tape?.put({ kind: "window", window: started.window }, true);
           if (started.replica) {
             if (preview?.stamp && preview.stamp === started.replica.stamp && preview.preparing === started.replica.preparing) {
               feed.attached(parts);

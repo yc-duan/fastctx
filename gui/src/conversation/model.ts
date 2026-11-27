@@ -179,7 +179,8 @@ export type Entry = {
     }
   | { kind: "tool"; key: string; item: string; turn: string; tool: Tool; began: number; ended: { at: number; use: Use } | null }
   | { kind: "steps"; key: string; turn: string; steps: Step[]; note: string | null }
-  | { kind: "compaction"; key: string; item: string; turn: string }
+  /** `count` where several compactions in a row stand as one line. */
+  | { kind: "compaction"; key: string; item: string; turn: string; count?: number }
   | { kind: "other"; key: string; item: string; turn: string; hostKind: string }
   | { kind: "activity"; key: string; item: string; turn: string; text: string }
   | { kind: "ended"; key: string; turn: string; end: TurnEnd }
@@ -418,7 +419,8 @@ export class Fold {
   }
 
   private preferredKeys: Map<string, string> | null = null;
-  private add(entry: Entry): void {
+  /** `start`, when the thing it shows began, where the event says. */
+  private add(entry: Entry, start?: number): void {
     if ("item" in entry && "turn" in entry && typeof entry.turn === "string") entry.key = this.preferredKeys?.get(itemKey(entry.turn, entry.item)) ?? entry.key;
     if (entry.kind === "heard") entry.key = (entry.delivery ? this.preferredKeys?.get(`heard:d:${entry.delivery}`) : undefined)
       ?? (entry.messageId ? this.preferredKeys?.get(`heard:m:${entry.messageId}`) : undefined) ?? entry.key;
@@ -427,8 +429,44 @@ export class Fold {
     if (this.byKey.has(entry.key)) entry.key = this.freeKey(entry.key);
     entry.stamp = ++this.clock;
     entry.at = this.current;
-    this.entries.push(entry);
+    const when = start !== undefined && Number.isFinite(start) ? start : this.readingAt;
+    if (Number.isFinite(when)) this.startByKey.set(entry.key, when);
+    // Told late, ahead of the records this fold was made from: it stands
+    // where it happened among them, not after all of them, so what is shown
+    // as it happens is in the order its record will be.
+    const at = this.lateReading && Number.isFinite(when) ? this.placeFor(when) : this.entries.length;
+    this.entries.splice(at, 0, entry);
     this.index(entry);
+    if (at < this.entries.length - 1) {
+      if (this.batching) this.reorderPending = true;
+      else this.reorderTurns();
+    }
+  }
+
+  /** Where something that began at `when` stands among the entries: after
+   *  every one that began no later. One whose beginning is not known (words
+   *  being sent from here) is passed by nothing. */
+  private placeFor(when: number): number {
+    let at = this.entries.length;
+    while (at > 0) {
+      const began = this.startByKey.get(this.entries[at - 1]!.key);
+      if (began === undefined || began <= when) break;
+      at -= 1;
+    }
+    return at;
+  }
+
+  /** Each turn's entries in the order the fold shows them, once some were
+   *  placed among others. */
+  private reorderTurns(): void {
+    this.byTurn.clear();
+    for (const entry of this.entries) {
+      const turn = "turn" in entry ? entry.turn : null;
+      if (typeof turn !== "string") continue;
+      const list = this.byTurn.get(turn);
+      if (list) list.push(entry);
+      else this.byTurn.set(turn, [entry]);
+    }
   }
 
   /** `key`, made one no entry holds. */
@@ -502,6 +540,7 @@ export class Fold {
     this.byKey.clear();
     this.byItem.clear();
     this.byTurn.clear();
+    this.startByKey.clear();
     this.heardIn.clear();
     this.endedTurns.clear();
     this.cutUnseen.clear();
@@ -640,6 +679,7 @@ export class Fold {
     const next = new Fold(this.scope);
     next.thoughtWords = this.thoughtWords;
     next.clock = this.clock;
+    next.startByKey = new Map(this.startByKey);
     next.pagedGroups = true;
     next.title = this.title; next.context = this.context; next.answeredBy = this.answeredBy;
     next.previousGroups = new Map(this.previousGroups);
@@ -815,11 +855,42 @@ export class Fold {
       this.lateReading = false;
     }
   }
+
+  /** Events told after this fold's part, in the order they came, each read
+   *  as `late` reads it: the turns' order is put right once, after the last. */
+  lateAll(events: readonly SessionEvent[]): void {
+    this.batching = true;
+    try {
+      for (const event of events) this.late(event);
+    } finally {
+      this.batching = false;
+      if (this.reorderPending) {
+        this.reorderPending = false;
+        this.reorderTurns();
+      }
+    }
+  }
   /** What is read comes after this fold's part: it changes what is there,
    *  and adds nothing in its place. */
   private lateReading = false;
+  private batching = false;
+  private reorderPending = false;
+  /** When each entry's thing began, as its events said: what is told late
+   *  is placed among the rest by it (`add`). */
+  private startByKey = new Map<string, number>();
+  /** When the event being read happened; none outside a reading. */
+  private readingAt = Number.NaN;
 
   private read(event: SessionEvent): void {
+    this.readingAt = Date.parse(event.at);
+    try {
+      this.readEvent(event);
+    } finally {
+      this.readingAt = Number.NaN;
+    }
+  }
+
+  private readEvent(event: SessionEvent): void {
     const at = Date.parse(event.at);
     switch (event.event) {
       case "turn_started":
@@ -1243,6 +1314,11 @@ export class Fold {
     if (id && finished) this.over.add(key);
     const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
     if (said && !(id && this.find(turn, id))) this.overtaken(turn, startedAt);
+    // Thinking told late as it ended, its host silent on how long: as long
+    // as its own beginning and end say, as thinking seen here to its end is,
+    // whether or not its beginning was seen here.
+    const ownTook = this.lateReading && finished && native.kind === "thinking" && native.duration_ms === undefined && native.started_at && at >= startedAt
+      ? at - startedAt : undefined;
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions && native.kind === "message") {
@@ -1310,16 +1386,20 @@ export class Fold {
         return;
       case "other":
         if (!finished) return;
+        // What Claude Code does for itself beside a compaction, a summary
+        // made ahead or one it let be, is nothing of the conversation's.
+        if (native.host_kind === "compaction_precompute" || native.host_kind === "compaction_skipped") return;
         fresh = { kind: "other", key, stamp: 0, at: 0, item: id, turn, hostKind: native.host_kind };
         break;
     }
+    if (fresh.kind === "prose" && fresh.took === undefined && ownTook !== undefined) fresh.took = ownTook;
     if (!id) {
-      this.add(fresh);
+      this.add(fresh, startedAt);
       return;
     }
     const shown = this.find(turn, id);
     if (!shown) {
-      this.add(fresh);
+      this.add(fresh, startedAt);
       return;
     }
     if (shown.kind === "prose" && fresh.kind === "prose") {
@@ -1341,7 +1421,7 @@ export class Fold {
       const ending = shown.writing && !fresh.writing;
       // What has stopped being written does not start again.
       shown.writing = shown.writing && fresh.writing;
-      if (fresh.took !== undefined) shown.took = fresh.took;
+      if (fresh.took !== undefined && ((native.kind === "thinking" && native.duration_ms !== undefined) || shown.took === undefined)) shown.took = fresh.took;
       // Thinking seen here to its end took as long as it was seen to, until
       // its host says how long (Claude Code's says once its record is read).
       else if (ending && shown.prose === "thinking" && shown.took === undefined && shown.began !== undefined) shown.took = Math.max(0, at - shown.began);
@@ -2169,6 +2249,13 @@ export class Fold {
         if (entry.kind === "tool" && (entry.tool.does.as === "agent" || startsAgent(entry.tool))) group.agents = true;
       } else {
         group = null;
+        // Compactions with nothing shown between them are one line, saying
+        // how many there were.
+        const previous = blocks[blocks.length - 1];
+        if (entry.kind === "compaction" && previous?.kind === "compaction") {
+          blocks[blocks.length - 1] = { ...previous, count: (previous.count ?? 1) + 1, stamp: Math.max(previous.stamp, entry.stamp) };
+          continue;
+        }
         blocks.push(entry);
       }
     }
