@@ -7,6 +7,9 @@
 import { Conversation } from "../../src/conversation/conversation";
 import type { KeptWords } from "../../src/conversation/model";
 import { rowsOf, type Row } from "../../src/conversation/rows";
+import { stretchSays } from "../../src/conversation/stretch-says";
+import { groupHeading } from "../../src/conversation/tool";
+import { zh } from "../../src/words";
 import type { ReplicaPart, ReplicaRecord } from "../../src/conversation/replica";
 import type { SessionEvent } from "../../src/world/events";
 
@@ -171,6 +174,13 @@ function replayed(tape: readonly Taped[], options: { settleMs?: number; recordWi
   // what it drew before went to another stretch, and a page opened or closed
   // there is now so elsewhere, the stretch it was shut or opened again.
   let membersOf = new Map<string, Set<string>>();
+  // Each thing shown, by its parts (a run of thinking is shown as one): a
+  // part shown, gone, and shown again went from the page meanwhile; one gone
+  // a while that its timeline holds was taken from it.
+  let shownParts = new Set<string>();
+  const goneSince = new Map<string, number>();
+  // Since when each stretch's heading has named none of what it finished.
+  const forgotSince = new Map<string, number>();
   const told = new Set<string>();
   let final: ReplicaPart | null = null;
   // Since when its machine has said no turn runs: from a while after, the
@@ -247,6 +257,41 @@ function replayed(tape: readonly Taped[], options: { settleMs?: number; recordWi
       if (later && !told.has(`pile ${row.id}`)) {
         told.add(`pile ${row.id}`);
         findings.push({ law: "out-of-time", at: t, said: `${row.kind} "${row.said}" ${row.id} is drawn after ${later.kind} ${later.id}, which began ${Math.round(((times.of(later) ?? 0) - ended) / 1000)}s after it ended` });
+      }
+    }
+    const partsOf = (rows: readonly Row[]) => new Set(rows.filter((row) => row.kind !== "group-end" && row.kind !== "gap").flatMap((row) => row.id.split("+")));
+    const nowParts = partsOf(live);
+    const coldParts = partsOf(cold);
+    for (const part of shownParts) if (!nowParts.has(part) && !goneSince.has(part)) goneSince.set(part, t);
+    for (const [part, since] of goneSince) {
+      if (nowParts.has(part)) {
+        goneSince.delete(part);
+        if (t - since >= 1000 && !told.has(`back ${part} ${since}`)) {
+          told.add(`back ${part} ${since}`);
+          findings.push({ law: "vanished", at: since, said: `${part} went from the page for ${Math.round((t - since) / 1000)}s and came back` });
+        }
+      } else if (coldParts.has(part) && t - since >= settle && !told.has(`taken ${part}`)) {
+        told.add(`taken ${part}`);
+        findings.push({ law: "vanished", at: since, said: `${part} went from the page ${Math.round((t - since) / 1000)}s ago, and its timeline holds it` });
+      }
+    }
+    shownParts = nowParts;
+    // A stretch's heading names what it has finished as it goes on: a long
+    // stretch's calls are not there one moment and gone the next.
+    for (const block of conversation.blocks()) {
+      if (block.kind !== "activity-group") continue;
+      const finished = block.members.filter((member) => member.kind === "tool" && member.ended !== null);
+      const named = finished.length ? groupHeading(finished as never[], 0, zh).map((part) => part.said) : [];
+      const title = stretchSays(block, zh, () => null, () => null).title;
+      if (!named.length || named.some((said) => title.includes(said))) {
+        forgotSince.delete(block.key);
+        continue;
+      }
+      const since = forgotSince.get(block.key) ?? t;
+      forgotSince.set(block.key, since);
+      if (t - since >= 1000 && !told.has(`forgot ${block.key} ${since}`)) {
+        told.add(`forgot ${block.key} ${since}`);
+        findings.push({ law: "heading-forgot", at: since, said: `${block.key} says "${title}", none of what it did: ${named.join(", ")}` });
       }
     }
     const nextMembersOf = new Map<string, Set<string>>();

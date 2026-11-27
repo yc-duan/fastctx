@@ -221,6 +221,9 @@ export interface Activity {
   /** One of its tools started or names one of the host's own agents,
    *  which move on their own (`agentStamp`). */
   agents: boolean;
+  /** The latest stretch of the turn under way, which goes on between its
+   *  steps (`conversation.ts`, `stretch-says.ts`). */
+  going?: boolean;
 }
 
 /** Turns a page does not hold, standing where they are: before everything

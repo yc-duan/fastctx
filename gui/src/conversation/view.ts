@@ -1680,7 +1680,7 @@ export class ConversationView {
     const conversation = this.conversation;
     switch (block.kind) {
       case "activity-group":
-        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
+        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}${block.going ? 1 : 0}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
       case "prose": {
         const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
         return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}`;
@@ -1734,7 +1734,7 @@ export class ConversationView {
   private findSignature(block: Block): string {
     switch (block.kind) {
       case "activity-group":
-        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
+        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}${block.going ? 1 : 0}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns()}`;
       default:
@@ -2627,7 +2627,7 @@ export class ConversationView {
       slot.stretch = stretch;
     }
     // Its heading says how the agents its calls started stand, as they move.
-    const heading = `${group.stamp}|${group.partialBefore ? 1 : 0}${group.partialAfter ? 1 : 0}|${group.members.length}${group.agents ? `|${this.conversation.agentStamp}` : ""}`;
+    const heading = `${group.stamp}|${group.partialBefore ? 1 : 0}${group.partialAfter ? 1 : 0}${group.going ? 1 : 0}|${group.members.length}${group.agents ? `|${this.conversation.agentStamp}` : ""}`;
     if (stretch.heading !== heading) {
       stretch.heading = heading;
       this.heading(stretch, group);

@@ -229,16 +229,14 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
   }
 }
 
-/** A group's heading, in its parts: while something runs, what it is
- *  doing; once done, what the group did, by kind. */
+/** What a group's calls did, by kind, in the parts of its heading; the
+ *  step in hand is said apart (`stretch-says.ts`). */
 export function groupHeading<T extends { tool: Tool; ended: { use: Use } | null }>(
   tools: T[],
   thinking: number,
   words: Words,
   cards?: (entry: T) => Card[],
 ): TallyPart[] {
-  const running = tools.find((entry) => entry.ended === null);
-  if (running) return [{ said: headline(running.tool, null, words).action, kind: "done" }];
   const tally: Tally = { read: 0, edited: 0, ran: 0, copied: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
   // A file changed more than once is one file changed.
   const changed = new Set<string>();

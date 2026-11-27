@@ -1282,8 +1282,16 @@ export class Conversation {
    *  A fork's record begins with what it carried over: from the part that
    *  holds the point it was made at, the card there stands for all before. */
   blocks(): Block[] {
-    const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}`;
+    const running = this.live.runningTurn();
+    const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}|${running ?? ""}`;
     if (this.cache?.version === version) return this.cache.blocks;
+    const blocks = this.laidOut();
+    markGoing(blocks, running);
+    this.cache = { version, blocks };
+    return blocks;
+  }
+
+  private laidOut(): Block[] {
     const blocks: Block[] = [];
     if (this.replica) {
       let earlier: Held | null = null;
@@ -1316,7 +1324,6 @@ export class Conversation {
         }
         earlier = part;
       }
-      this.cache = { version, blocks };
       return blocks;
     }
     let end = 0;
@@ -1338,7 +1345,6 @@ export class Conversation {
       end = part.end;
       turns = part.turnsBefore + part.turns;
     }
-    this.cache = { version, blocks };
     return blocks;
   }
 
@@ -1787,5 +1793,19 @@ export class Conversation {
   event(event: SessionEvent): void {
     this.live.event(event);
     this.tail.end += 1;
+  }
+}
+
+/** Marks the latest stretch of the turn under way as going on: what follows
+ *  it, if anything, is only words sent into the turn, which stand below its
+ *  work. Its heading then keeps what it did between its steps rather than
+ *  turning from the step in hand to what it did and back. */
+function markGoing(blocks: Block[], turn: string | null): void {
+  if (turn === null) return;
+  for (let at = blocks.length - 1; at >= 0; at -= 1) {
+    const block = blocks[at]!;
+    if (block.kind === "heard" && block.sending !== undefined) continue;
+    if (block.kind === "activity-group" && block.turn === turn) blocks[at] = { ...block, going: true };
+    return;
   }
 }
