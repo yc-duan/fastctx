@@ -123,6 +123,18 @@ impl Target {
     fn installation<'a>(&self, state: &'a PluginState) -> Option<&'a Installation> {
         state.installations.iter().find(|p| p.id == self.id() && p.scope == "user")
     }
+    /// The World's plugin as the machine's managed settings provide it: the
+    /// same plugin from the World's own marketplace, which the policy owns.
+    /// Where there is no user installation it stands for one, and the World
+    /// neither installs, updates nor takes out either it or the marketplace.
+    fn provided<'a>(&self, state: &'a PluginState) -> Option<&'a Installation> {
+        self.market(state).filter(|market| self.check_market(market).is_ok())?;
+        state.installations.iter().find(|p| p.id == self.id() && p.scope == "managed")
+    }
+    /// Whether the managed copy stands in for a user installation.
+    fn provided_only(&self, state: &PluginState) -> bool {
+        self.installation(state).is_none() && self.provided(state).is_some()
+    }
     fn members<'a>(&'a self, state: &'a PluginState) -> impl Iterator<Item = &'a Installation> {
         state.installations.iter().filter(|p| p.id.ends_with(&format!("@{}", self.name)))
     }
@@ -156,10 +168,13 @@ impl Target {
         self.plugins_preflight(state)
     }
     /// The checks of `preflight` but the marketplace's source, which an
-    /// apply sets right.
+    /// apply sets right. A plugin of the World's name from another
+    /// marketplace, or in a project's or local scope, is someone else's; the
+    /// World's own one may be the user's or the machine policy's.
     fn plugins_preflight(&self, state: &PluginState) -> Result<(), String> {
         for p in &state.installations {
-            if p.id.split('@').next() == Some(&self.plugin) && (p.id != self.id() || p.scope != "user") {
+            let ours = p.id == self.id() && (p.scope == "user" || p.scope == "managed");
+            if p.id.split('@').next() == Some(&self.plugin) && !ours {
                 return Err(format!("Claude already has {} in {} scope; it was left unchanged", p.id, p.scope));
             }
         }
@@ -301,6 +316,7 @@ impl PluginApply {
             actions.push(Mutation::AddMarketplace);
         }
         match target.installation(&before) {
+            None if target.provided_only(&before) => {}
             None => actions.push(Mutation::InstallPlugin),
             Some(_) if moved => actions.push(Mutation::InstallPlugin),
             Some(plugin) if !plugin.errors.is_empty() => {
@@ -438,7 +454,10 @@ fn present(host: &mut impl PluginHost, receipt: &mut PluginReceipt, version: Opt
     receipt.target.plugins_preflight(&state)?;
     if receipt.target.market(&state).is_some_and(|market| receipt.target.check_market(market).is_err()) {
         if receipt.target.members(&state).any(|plugin| plugin.id != receipt.target.id()) {
-            return Err("The fastctx marketplace points at another source and holds another plugin; it was left unchanged".into());
+            return Err(
+                "The fastctx marketplace points at another source and holds another plugin; it was left unchanged"
+                    .into(),
+            );
         }
         state = mutate(host, receipt, Mutation::RemoveMarketplace)?;
         if receipt.target.market(&state).is_some() {
@@ -449,30 +468,35 @@ fn present(host: &mut impl PluginHost, receipt: &mut PluginReceipt, version: Opt
         state = mutate(host, receipt, Mutation::AddMarketplace)?;
         receipt.target.check_market(receipt.target.market(&state).ok_or("Claude did not add the marketplace")?)?;
     }
-    if receipt.target.installation(&state).is_some_and(|plugin| !plugin.errors.is_empty()) {
-        state = mutate(host, receipt, Mutation::UninstallPlugin)?;
-        if receipt.target.installation(&state).is_some() {
-            return Err("Claude plugin remains after uninstall".into());
+    // What the machine's policy provides is the policy's to install, enable
+    // and bring along.
+    if !receipt.target.provided_only(&state) {
+        if receipt.target.installation(&state).is_some_and(|plugin| !plugin.errors.is_empty()) {
+            state = mutate(host, receipt, Mutation::UninstallPlugin)?;
+            if receipt.target.installation(&state).is_some() {
+                return Err("Claude plugin remains after uninstall".into());
+            }
         }
-    }
-    if receipt.target.installation(&state).is_none() {
-        state = mutate(host, receipt, Mutation::InstallPlugin)?;
         if receipt.target.installation(&state).is_none() {
-            return Err("Claude did not install the plugin".into());
+            state = mutate(host, receipt, Mutation::InstallPlugin)?;
+            if receipt.target.installation(&state).is_none() {
+                return Err("Claude did not install the plugin".into());
+            }
+        }
+        if receipt.target.installation(&state).is_some_and(|plugin| !plugin.enabled) {
+            state = mutate(host, receipt, Mutation::EnablePlugin)?;
+        }
+        // Sessions read the marketplace's plugin in place; Claude Code's
+        // record of it is brought along, once for each version.
+        if let Some(version) = version
+            && receipt.target.installation(&state).is_some_and(|plugin| stale(plugin, receipt, version))
+        {
+            state = mutate(host, receipt, Mutation::UpdatePlugin)?;
+            receipt.updated = Some(version.into());
         }
     }
-    if receipt.target.installation(&state).is_some_and(|plugin| !plugin.enabled) {
-        state = mutate(host, receipt, Mutation::EnablePlugin)?;
-    }
-    // Sessions read the marketplace's plugin in place; Claude Code's record
-    // of it is brought along, once for each version.
-    if let Some(version) = version
-        && receipt.target.installation(&state).is_some_and(|plugin| stale(plugin, receipt, version))
-    {
-        state = mutate(host, receipt, Mutation::UpdatePlugin)?;
-        receipt.updated = Some(version.into());
-    }
-    receipt.target.check_plugin(receipt.target.installation(&state).ok_or("Claude plugin is missing")?)?;
+    let plugin = receipt.target.installation(&state).or_else(|| receipt.target.provided(&state));
+    receipt.target.check_plugin(plugin.ok_or("Claude plugin is missing")?)?;
     capture_current(receipt, &state);
     receipt.pending = None;
     receipt.pending_observed = false;
@@ -512,7 +536,9 @@ fn baseline(host: &mut impl PluginHost, receipt: &mut PluginReceipt, before: &Pl
             return Err("Claude plugin remains after uninstall".into());
         }
     }
-    if !wanted_marketplace && receipt.target.market(&state).is_some() {
+    // The marketplace of a plugin the machine's policy provides is the
+    // policy's: it stays.
+    if !wanted_marketplace && receipt.target.market(&state).is_some() && receipt.target.provided(&state).is_none() {
         if receipt.target.members(&state).next().is_some() {
             return Err("The fastctx marketplace contains another plugin; it was left unchanged".into());
         }
@@ -563,7 +589,7 @@ pub fn withdrawal(plan: &ClaudePlan, state: &PluginState) -> Result<Vec<PluginCo
     if installed {
         commands.push(target.command(Mutation::UninstallPlugin));
     }
-    if target.market(state).is_some() {
+    if target.market(state).is_some() && target.provided(state).is_none() {
         let others =
             target.members(state).any(|plugin| !(installed && plugin.id == target.id() && plugin.scope == "user"));
         if others {

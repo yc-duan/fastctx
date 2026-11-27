@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use fastctx_install::claude::{
-    plugins::{PluginApply, PluginState},
+    plugins::{self, PluginApply, PluginState},
     settings::{self, SettingsOutcome},
 };
 use fastctx_install::plan::ClaudePlan;
@@ -37,6 +37,45 @@ fn claude_2_1_287_public_lists() {
         assert!(PluginState::parse(wrong, b"[]").is_err());
     }
     assert!(PluginState::parse(b"[]", b"{}").is_err());
+}
+
+/// Claude Code 2.1.322 on a machine whose managed settings declare the
+/// World's marketplace and enable its plugin, as on the production servers
+/// since 2026-11-25: the listing names the plugin in `managed` scope, its
+/// record at the version it was installed at, read from the folder as it is.
+#[test]
+fn claude_2_1_322_plugin_provided_by_managed_settings() {
+    let plan = plan();
+    let listed = |id: &str, scope: &str, market: &Path| {
+        let plugins = json!([{
+            "id": id, "version": "1.0.1-beta.26", "scope": scope, "enabled": true,
+            "installPath": plan.marketplace.parent().unwrap().join("managed-cache-path"),
+            "readFromFolder": market.join("fastctx-world"), "folderVersion": plan.plugin_version,
+            "installedAt": "2026-10-24T17:28:55.803Z", "lastUpdated": "2026-11-25T06:43:25.645Z",
+            "mcpServers": {}, "projectEnabled": false
+        }]);
+        let markets = json!([{"name":"fastctx", "source":"directory", "path":market, "installLocation":market}]);
+        PluginState::parse(&serde_json::to_vec(&plugins).unwrap(), &serde_json::to_vec(&markets).unwrap()).unwrap()
+    };
+    // The policy's copy of the World's own plugin stands: nothing to install,
+    // update or take out, and its marketplace stays.
+    let provided = listed("fastctx-world@fastctx", "managed", &plan.marketplace);
+    assert!(PluginApply::prepare(&plan, provided.clone(), None).unwrap().commands().is_empty());
+    assert!(plugins::withdrawal(&plan, &provided).unwrap().is_empty());
+    // Anyone else's plugin of the World's name is still left alone, refused.
+    assert!(
+        PluginApply::prepare(&plan, listed("fastctx-world@elsewhere", "managed", &plan.marketplace), None).is_err()
+    );
+    assert!(PluginApply::prepare(&plan, listed("fastctx-world@fastctx", "project", &plan.marketplace), None).is_err());
+    // A policy pointing the World's marketplace elsewhere provides no World
+    // plugin: the World's own is put in, as anywhere else.
+    let elsewhere = plan.marketplace.parent().unwrap().join("elsewhere");
+    assert!(
+        !PluginApply::prepare(&plan, listed("fastctx-world@fastctx", "managed", &elsewhere), None)
+            .unwrap()
+            .commands()
+            .is_empty()
+    );
 }
 
 #[test]
