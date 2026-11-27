@@ -52,9 +52,16 @@ export function stretchSays(
   const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
   const thinking = group.members.filter(isThinking);
   const steps = runsOf(group.members).length;
-  const writing = thinking.find((member) => member.writing);
-  const runningTool = tools.find((tool) => tool.ended === null) ?? (group.agents ? tools.find((tool) => agents.of(tool)?.going) : undefined);
-  const running = !!runningTool || !!writing;
+  // The step in hand: what began last of what still goes, a call or an
+  // agent it started, or thinking being written. A call left running in the
+  // background long ago is not it.
+  const inHand = [...group.members].reverse().find((member) =>
+    member.kind === "tool" ? member.ended === null || (group.agents && !!agents.of(member)?.going) : isThinking(member) && member.writing,
+  );
+  const runningTool = inHand?.kind === "tool" ? inHand : undefined;
+  const writing = inHand && inHand.kind !== "tool" ? (inHand as ProseEntry) : undefined;
+  // The latest stretch of a turn under way goes on between its steps too.
+  const running = !!inHand || !!group.going;
   const only = thoughtOnly(group);
   const bare = only && !thinking.some((member) => member.text.trim());
   let title: string;
@@ -62,6 +69,8 @@ export function stretchSays(
   let figures = "";
   let added = 0;
   let removed = 0;
+  // The step in hand, as it goes.
+  let step: string | null = null;
   if (runningTool) {
     const tool = runningTool.tool;
     const line = headline(tool, null, words, attachment);
@@ -70,19 +79,28 @@ export function stretchSays(
     // A run doing things elsewhere says the command it is on there.
     const going = (tool.run?.steps ?? []).filter((step) => step.kind === "on" && step.ended === undefined).at(-1);
     const now = going?.kind === "on" ? shortCommand(going.command.split("\n").find((said) => said.trim()) ?? going.command) : null;
-    title = now ? `${words.act("command", "running")} ${now}` : [line.action, object].filter(Boolean).join(" ");
+    step = now ? `${words.act("command", "running")} ${now}` : [line.action, object].filter(Boolean).join(" ");
   } else if (writing) {
     const last = thoughtHeads([writing]).at(-1);
-    title = last ? words.thinkingAbout(last) : words.thinking;
-  } else if (only) {
-    const took = thoughtTook(thinking);
-    title = took === null ? words.thought : words.thoughtFor(took);
-    const counted = tokens(thinking);
-    if (counted !== null) figures = words.thinkingTokens(counted);
+    step = last ? words.thinkingAbout(last) : words.thinking;
+  }
+  if (only) {
+    if (step !== null) title = step;
+    else {
+      const took = thoughtTook(thinking);
+      title = took === null ? words.thought : words.thoughtFor(took);
+      const counted = tokens(thinking);
+      if (counted !== null) figures = words.thinkingTokens(counted);
+    }
   } else {
-    // Two kinds of thing at most, the weightiest; failures always.
-    const all = groupHeading(tools, thinking.length, words, cards);
+    // What it did, two kinds of thing at most, the weightiest, failures
+    // always; then the step in hand. What it did stays said from one step
+    // to the next, so the line does not turn from the one to the other and
+    // back as a long stretch goes on.
+    const done = tools.filter((tool) => tool.ended !== null);
+    const all = done.length || step === null ? groupHeading(done, thinking.length, words, cards) : [];
     parts = [...all.filter((part) => part.kind !== "failed").slice(0, KINDS), ...all.filter((part) => part.kind === "failed")];
+    if (step !== null) parts.push({ said: step, kind: "done" });
     title = parts.map((part) => part.said).join(words.tallyGap);
     for (const tool of tools) {
       for (const write of tool.tool.run?.writes ?? []) {

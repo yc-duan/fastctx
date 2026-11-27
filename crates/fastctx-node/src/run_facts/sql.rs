@@ -543,6 +543,9 @@ pub(super) fn job_source(db: &Connection, conversation: &str, update: &mut JobFa
 /// writer. The write transaction repeats identity and sequence checks.
 pub(super) fn additions(db: &Connection, conversation: &str, update: &JobFacts) -> Result<Option<JobFacts>> {
     let Some(stored) = head(db, conversation, &update.call_id)? else { return Ok(None) };
+    if !super::snapshot::belongs(&stored, update) {
+        return Ok(None);
+    }
     super::snapshot::validate(&stored, update)?;
     let members = difference(db, conversation, &update.call_id, &update.writes, &update.steps, &update.visited)?;
     let mut next = update.clone();

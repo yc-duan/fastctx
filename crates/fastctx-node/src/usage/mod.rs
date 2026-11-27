@@ -3,6 +3,7 @@ pub(crate) mod accounts;
 mod allowance;
 mod calls;
 mod checkpoint;
+mod checks;
 pub(crate) mod copied;
 pub(crate) use calls::calls;
 mod claude;
@@ -20,6 +21,7 @@ mod report;
 mod resets;
 mod tail;
 pub(crate) mod terminal_record;
+mod week_read;
 
 use crate::Node;
 pub(crate) use allowance::{after_reading, fable_line, used_up};

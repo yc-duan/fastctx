@@ -137,6 +137,9 @@ export interface Words {
   /** An open page, as the speaker of what it said. */
   aPage(name: string): string;
   compacted: string;
+  /** Several compactions with nothing shown between them. */
+  compactedTimes(count: number): string;
+  compactionFailed: string;
   /** A command the user gave the conversation: while it runs; one that
    *  did not go through, its words in the hover; one whose host did not say
    *  what came of it; one that ran with nothing else to show; a rewind,
@@ -526,6 +529,8 @@ export const zh: Words = {
   world: "Fastctx",
   aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
+  compactedTimes: (count) => `上下文已压缩 ${count} 次`,
+  compactionFailed: "上下文压缩失败",
   commandRunning: (name) =>
     ({ compact: "正在压缩…", review: "正在审查…", fork: "正在分叉…", rewind: "正在回退…", rename: "正在改名…", model: "正在换模型…" })[name] ?? `正在运行 /${name}…`,
   commandFailed: (name) => `/${name} 未成功`,
@@ -912,6 +917,8 @@ export const en: Words = {
   world: "Fastctx",
   aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
+  compactedTimes: (count) => `Context compacted ${count} times`,
+  compactionFailed: "Context compaction failed",
   commandRunning: (name) =>
     ({ compact: "Compacting…", review: "Reviewing…", fork: "Forking…", rewind: "Rewinding…", rename: "Renaming…", model: "Changing model…" })[name] ?? `Running /${name}…`,
   commandFailed: (name) => `/${name} did not go through`,

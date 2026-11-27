@@ -112,6 +112,8 @@ mod titlebar;
 #[cfg(all(unix, desktop))]
 mod unix_instance;
 
+#[cfg(desktop)]
+mod conversation_checks;
 mod conversation_files;
 mod conversation_watch;
 mod replica;
@@ -1271,6 +1273,8 @@ pub fn run() {
             remote_world::remote_close,
             #[cfg(desktop)]
             remote_world::remote_withdraw,
+            #[cfg(desktop)]
+            conversation_checks::conversation_check_keep,
             #[cfg(desktop)]
             retention::retention_read,
             #[cfg(desktop)]

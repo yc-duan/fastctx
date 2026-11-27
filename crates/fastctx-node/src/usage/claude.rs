@@ -94,8 +94,22 @@ pub(super) fn measured(
             // any sample, as of whenever its session's last answer was.
             let answered =
                 usage.get("rateLimitsAt").and_then(Value::as_str).and_then(|at| at.parse::<Timestamp>().ok());
-            changed |=
-                super::readings::record(book, path, windows, answered.unwrap_or(at), account, answered.is_some())?;
+            let read_at = answered.unwrap_or(at);
+            // What the ledger reckoned of the week just before the vendor's
+            // reading of it is taken in, to count how far the two stood.
+            // Only of the account the reading is of.
+            let reckoned = answered
+                .and_then(|_| super::reckoning::share(path, book, read_at))
+                .filter(|reckoned| reckoned.account == account);
+            let weekly = super::checks::weekly(&windows);
+            let taken = super::readings::record(book, path, windows, read_at, account, answered.is_some())?;
+            if let Some(reckoned) = reckoned.filter(|_| taken)
+                && let Some(read) = super::checks::read(book, &reckoned, weekly)
+                && let Err(error) = super::checks::note(path, read_at, &reckoned, read)
+            {
+                node.log.line(format_args!("counting how far {} stood from its reading: {error}", path.display()));
+            }
+            changed |= taken;
         }
         if counted.as_ref().is_some_and(|c| c.meter) {
             let c = counted.expect("meter report");

@@ -39,6 +39,10 @@ pub(super) struct State {
     keys: Vec<(String, Option<Timestamp>)>,
     readings: Vec<(Option<String>, Reading)>,
     resets: Vec<(Option<String>, Vec<UsageReset>)>,
+    /// None in a checkpoint made before it was kept: the week's readings are
+    /// then those of the days after it.
+    #[serde(default)]
+    week_read: Vec<(Option<String>, super::week_read::WeekRead)>,
     accounts: Vec<(Timestamp, String)>,
     recent: Vec<Charge>,
 }
@@ -107,6 +111,7 @@ fn state(book: &Book) -> State {
         keys: book.keys.iter().map(|(key, at)| (key.clone(), *at)).collect(),
         readings: book.readings.iter().map(|(account, reading)| (account.clone(), reading.clone())).collect(),
         resets: book.resets.iter().map(|(account, resets)| (account.clone(), resets.clone())).collect(),
+        week_read: book.week_read.iter().map(|(account, read)| (account.clone(), read.clone())).collect(),
         accounts: book.accounts.clone(),
         recent: book.recent.clone(),
     }
@@ -133,6 +138,7 @@ pub(super) fn adopt(book: &mut Book, state: State, now: Timestamp) {
     book.keys = state.keys.into_iter().filter(|(_, at)| at.is_none_or(|at| at >= month)).collect();
     book.readings = state.readings.into_iter().collect();
     book.resets = state.resets.into_iter().collect();
+    book.week_read = state.week_read.into_iter().collect();
     book.accounts = state.accounts;
     book.recent = state.recent.into_iter().filter(|charge| charge.at >= recent).collect();
     // As the rows make them: a session metered, or with a process whose
@@ -219,6 +225,18 @@ mod tests {
             if day % 20 == 0 {
                 row(path, &Entry::Reading { at, windows: Vec::new(), account: None, resets: Vec::new() });
             }
+            // A reading of the week each day is in, weeks of seven days
+            // ending two days from now: this week's lie either side of what
+            // the checkpoint holds.
+            let end = now + DAY * 2 - DAY * 7 * ((day + 1) / 7);
+            let weekly = fastctx_types::agents::LimitWindow {
+                name: "seven_day".into(),
+                minutes: Some(10_080),
+                used_tenths: 10 * (61 - day) as u32,
+                resets_at: Some(end),
+                since: None,
+            };
+            row(path, &Entry::Reading { at, windows: vec![weekly], account: None, resets: Vec::new() });
         }
     }
 
@@ -238,6 +256,7 @@ mod tests {
             each(&state.keys),
             each(&state.readings),
             each(&state.resets),
+            each(&state.week_read),
             each(&state.accounts),
             each(&state.recent),
             sorted(book.modern.iter().cloned().collect()),
