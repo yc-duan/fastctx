@@ -37,6 +37,13 @@ pub(crate) const MOST: Usd = Usd(10_000_000 * 1_000_000);
 /// in tenths of a percent: less, and a tenth of a point of rounding moves the
 /// figure by more than the reach.
 const ROSE: u32 = 250;
+/// How far a reading must fall below the highest of its stretch, in tenths
+/// of a point, for its vendor to have given the week's use back there: less
+/// is readings of sessions that saw the window a moment apart.
+const FELL: u32 = 50;
+/// How many readings from a fall on must all stay that far down for it to
+/// be one: a single stale reading falls too, and the next ones rise again.
+const FELL_FOR: usize = 10;
 /// The weeks looked back over for what they came to: the last four whole.
 const BACK: i64 = 5;
 const WEEKS_KEPT: usize = 26;
@@ -369,17 +376,22 @@ fn measure(
         })
         .collect();
     read.sort_by_key(|(end, at, _)| (*end, *at));
-    // What was used is summed by the hour: read again cut at each week's
+    // Each week's readings in stretches, split where its vendor gave its use
+    // back: each stretch rose from where it began.
+    let weeks: Vec<(Timestamp, Vec<(Timestamp, u32)>)> = read
+        .chunk_by(|a, b| same(a.0, b.0))
+        .map(|read| (read[0].0, read.iter().map(|(_, at, tenths)| (*at, *tenths)).collect()))
+        .collect();
+    // What was used is summed by the hour: read again cut at each stretch's
     // first reading and its last, and where the login changed account.
-    let mut cut: Vec<Timestamp> =
-        read.chunk_by(|a, b| same(a.0, b.0)).flat_map(|read| [read[0].1, read[read.len() - 1].1]).collect();
+    let mut cut: Vec<Timestamp> = weeks
+        .iter()
+        .flat_map(|(_, points)| stretches(points).into_iter().flat_map(|one| [one[0].0, one[one.len() - 1].0]))
+        .collect();
     cut.extend(owners.iter().map(|(at, _)| *at).filter(|at| *at >= since));
     let entries = days.entries(path, since, now, book.reading.as_ref(), &history, &cut)?;
-    let mut measured = Vec::new();
-    for read in read.chunk_by(|a, b| same(a.0, b.0)) {
-        let (end, first, low) = read[0];
-        let (_, last, high) = read[read.len() - 1];
-        let spent = entries
+    let spent_between = |first: Timestamp, last: Timestamp| {
+        entries
             .iter()
             .filter(|row| !matches!(row, Entry::Reading { .. } | Entry::Account { .. }))
             .filter(|row| row.at() >= first && row.at() < last && owner_at(row.at()) == *account)
@@ -388,8 +400,23 @@ fn measure(
                 let usd = usage.usd?;
                 Some(if fastctx_hosts::claude::pricing::is_fable(&usage.model) { quota_of_fable(usd) } else { usd })
             })
-            .fold(Usd::ZERO, Usd::saturating_add);
-        let rise_tenths = high.saturating_sub(low);
+            .fold(Usd::ZERO, Usd::saturating_add)
+    };
+    let mut measured = Vec::new();
+    for (end, points) in &weeks {
+        let end = *end;
+        let (mut spent, mut rise_tenths) = (Usd::ZERO, 0u32);
+        for one in stretches(points) {
+            let (first, low) = one[0];
+            let (last, _) = one[one.len() - 1];
+            let high = one.iter().map(|(_, tenths)| *tenths).max().unwrap_or(low);
+            // A stretch its readings never rose in says nothing of the week.
+            if high <= low {
+                continue;
+            }
+            spent = spent.saturating_add(spent_between(first, last));
+            rise_tenths = rise_tenths.saturating_add(high - low);
+        }
         let came_to = (rise_tenths >= ROSE)
             .then(|| Usd((u128::from(spent.0) * 1000 / u128::from(rise_tenths)).min(u128::from(u64::MAX)) as u64));
         measured.push(Measured {
@@ -398,6 +425,27 @@ fn measure(
         });
     }
     Ok(measured)
+}
+
+/// A week's readings, `(at, tenths)` in the order they came, in stretches:
+/// split where a reading fell `FELL` below the highest before it and the
+/// next readings stayed down, as where the vendor gave the week's use back.
+fn stretches(points: &[(Timestamp, u32)]) -> Vec<&[(Timestamp, u32)]> {
+    let mut stretches = Vec::new();
+    let (mut from, mut high) = (0, 0u32);
+    for at in 0..points.len() {
+        let down = |tenths: u32| tenths.saturating_add(FELL) <= high;
+        if at > from && points[at..(at + FELL_FOR).min(points.len())].iter().all(|(_, tenths)| down(*tenths)) {
+            stretches.push(&points[from..at]);
+            from = at;
+            high = 0;
+        }
+        high = high.max(points[at].1);
+    }
+    if from < points.len() {
+        stretches.push(&points[from..]);
+    }
+    stretches
 }
 
 /// What Fable's dollars used of the quota: two and a half times its price
@@ -700,8 +748,9 @@ mod tests {
         assert_eq!(weeks.iter().map(|week| week.came_to).collect::<Vec<_>>(), vec![Some(Usd(2_900_000_000)), None]);
         assert_eq!(dollars(reckoned.figure), 2900.0);
 
-        // A week whose reading fell on the way is taken from end to end: the
-        // reach holds what that makes of it.
+        // A week whose reading fell on the way and stayed down, as where its
+        // vendor gave its use back, is measured in the stretches either side:
+        // $2,700 over sixty points and thirty more.
         let fallen = tempfile::tempdir().unwrap();
         reading(fallen.path(), start - DAY * 7 + HOUR, start, 0);
         cost(fallen.path(), start - DAY * 5, "ann", "claude-opus-5-5", 1800);
@@ -712,8 +761,8 @@ mod tests {
         reading(fallen.path(), start + HOUR, end, 5);
         let book = self::book(fallen.path(), now);
         let reckoned = self::reckoned(fallen.path(), &book, "claude", now);
-        assert_eq!(reckoned.told(true, true).weeks[0].rise_tenths, 320);
-        assert_eq!(dollars(reckoned.figure), 3300.0);
+        assert_eq!(reckoned.told(true, true).weeks[0].rise_tenths, 900);
+        assert_eq!(dollars(reckoned.figure), 3000.0);
 
         // With no week before to measure, it is looked for again within the
         // hour on the week's first day, and then left; the figure meanwhile
