@@ -37,13 +37,17 @@ pub(crate) const MOST: Usd = Usd(10_000_000 * 1_000_000);
 /// in tenths of a percent: less, and a tenth of a point of rounding moves the
 /// figure by more than the reach.
 const ROSE: u32 = 250;
-/// How far a reading must fall below the highest of its stretch, in tenths
-/// of a point, for its vendor to have given the week's use back there: less
-/// is readings of sessions that saw the window a moment apart.
-const FELL: u32 = 50;
-/// How many readings from a fall on must all stay that far down for it to
-/// be one: a single stale reading falls too, and the next ones rise again.
-const FELL_FOR: usize = 10;
+/// How far what the week before came to may stand from this week's, as a
+/// part of it: a login's weeks in production stood three to seven percent
+/// apart, now and then fifteen to thirty.
+const BEFORE_OFF: f64 = 0.08;
+/// How far a reading may stand from the use it read, in tenths of a point:
+/// the vendor reads out whole points, at both ends of a rise.
+const READ_OFF: f64 = 10.0;
+/// The way the weeks before were measured: 1, in stretches split where the
+/// vendor gave the week's use back; weeks measured another way are measured
+/// again.
+const METHOD: u8 = 1;
 /// The weeks looked back over for what they came to: the last four whole.
 const BACK: i64 = 5;
 const WEEKS_KEPT: usize = 26;
@@ -58,6 +62,10 @@ const TRYING: SignedDuration = SignedDuration::from_hours(24);
 struct Kept {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     swing: Option<u8>,
+    /// How `weeks` were measured (`METHOD`); none, as before there was more
+    /// than one way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    method: Option<u8>,
     /// The start of the week the weeks before were last measured for, and the
     /// vendor's account the login was in then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,6 +244,26 @@ fn within(base: Usd, swing: u8, came_to: Option<Usd>) -> Usd {
     came_to.map_or(base, |came_to| Usd(came_to.0.clamp(low.0, high.0)))
 }
 
+/// This week's figure: what the week before came to, within reach of
+/// `base`, and what this week's own readings say (`own`: the quota dollars
+/// used while they rose, and how far they rose in tenths of a point), each
+/// weighed by how far it may be off. The week before stands where this week
+/// has risen little; this week's own, the further it rises. Within reach of
+/// `base` either way (用户 2026-11-27: 之前的和现在的都有一定的权重，以现在的为准;
+/// 依然采取10%的滑动空间).
+fn weighed(base: Usd, swing: u8, before: Option<Usd>, own: Option<(Usd, u32)>) -> Usd {
+    let prior = within(base, swing, before);
+    // What its owner expects, where no week before says, is as far off as
+    // its reach allows.
+    let prior_off = if before.is_some() { BEFORE_OFF } else { BEFORE_OFF.max(f64::from(swing) / 100.0) };
+    let Some((spent, rose)) = own.filter(|(_, rose)| *rose > 0) else { return prior };
+    let came_to = spent.0 as f64 * 1000.0 / f64::from(rose);
+    let own_off = READ_OFF / f64::from(rose);
+    let weight = prior_off * prior_off / (prior_off * prior_off + own_off * own_off);
+    let figure = prior.0 as f64 + weight * (came_to - prior.0 as f64);
+    within(base, swing, Some(Usd(figure.round().clamp(0.0, MOST.0 as f64) as u64)))
+}
+
 /// The login at `path` as it is reckoned at `now`, from what is kept beside
 /// its ledger; nothing is measured or written (`measure_due`).
 pub(super) fn of(path: &Path, book: &Book, agent: &str, now: Timestamp) -> Reckoned {
@@ -256,6 +284,8 @@ pub(super) fn of(path: &Path, book: &Book, agent: &str, now: Timestamp) -> Recko
         .filter(|one| agent == "claude" && one.account == account)
         .filter(|one| one.week.end <= week.start + SignedDuration::from_secs(120))
         .find_map(|one| one.week.came_to);
+    // What this week's own readings say, as far as they rose by now.
+    let own = (agent == "claude" && week.window).then(|| super::week_read::this_week(book, &account, week)).flatten();
     let cuts = kept
         .resets
         .iter()
@@ -264,7 +294,8 @@ pub(super) fn of(path: &Path, book: &Book, agent: &str, now: Timestamp) -> Recko
         .map(|made| (made.told.at, made.told.to.0 as f64 / made.told.from.0 as f64))
         .collect();
     let accounts = book.accounts.clone();
-    Reckoned { week, base, swing, figure: within(base, swing, came_to), trouble, account, accounts, cuts, kept }
+    let figure = weighed(base, swing, came_to, own);
+    Reckoned { week, base, swing, figure, trouble, account, accounts, cuts, kept }
 }
 
 /// Measures the weeks before this one where this week has not been measured
@@ -283,7 +314,10 @@ pub(super) fn measure_due(
     }
     let account = current(book);
     let mut kept = read(path)?;
-    if kept.through.is_some_and(|through| same(through, week.start)) && kept.through_account == account {
+    if kept.method >= Some(METHOD)
+        && kept.through.is_some_and(|through| same(through, week.start))
+        && kept.through_account == account
+    {
         return Ok((Some(week.end), false));
     }
     if let Some(tried) = kept.tried.filter(|tried| *tried >= week.start && now < *tried + RETRY) {
@@ -315,6 +349,7 @@ pub(super) fn measure_due(
         kept.through = Some(week.start);
         kept.through_account = account;
         kept.tried = None;
+        kept.method = Some(METHOD);
         week.end
     } else {
         kept.tried = Some(now);
@@ -378,15 +413,23 @@ fn measure(
     read.sort_by_key(|(end, at, _)| (*end, *at));
     // Each week's readings in stretches, split where its vendor gave its use
     // back: each stretch rose from where it began.
+    // A week's readings in the order they were read, however a moment apart
+    // they said its reset.
     let weeks: Vec<(Timestamp, Vec<(Timestamp, u32)>)> = read
         .chunk_by(|a, b| same(a.0, b.0))
-        .map(|read| (read[0].0, read.iter().map(|(_, at, tenths)| (*at, *tenths)).collect()))
+        .map(|read| {
+            let mut points: Vec<(Timestamp, u32)> = read.iter().map(|(_, at, tenths)| (*at, *tenths)).collect();
+            points.sort_by_key(|(at, _)| *at);
+            (read[0].0, points)
+        })
         .collect();
     // What was used is summed by the hour: read again cut at each stretch's
     // first reading and its last, and where the login changed account.
     let mut cut: Vec<Timestamp> = weeks
         .iter()
-        .flat_map(|(_, points)| stretches(points).into_iter().flat_map(|one| [one[0].0, one[one.len() - 1].0]))
+        .flat_map(|(_, points)| {
+            super::week_read::stretches(points).into_iter().flat_map(|one| [one[0].0, one[one.len() - 1].0])
+        })
         .collect();
     cut.extend(owners.iter().map(|(at, _)| *at).filter(|at| *at >= since));
     let entries = days.entries(path, since, now, book.reading.as_ref(), &history, &cut)?;
@@ -405,18 +448,7 @@ fn measure(
     let mut measured = Vec::new();
     for (end, points) in &weeks {
         let end = *end;
-        let (mut spent, mut rise_tenths) = (Usd::ZERO, 0u32);
-        for one in stretches(points) {
-            let (first, low) = one[0];
-            let (last, _) = one[one.len() - 1];
-            let high = one.iter().map(|(_, tenths)| *tenths).max().unwrap_or(low);
-            // A stretch its readings never rose in says nothing of the week.
-            if high <= low {
-                continue;
-            }
-            spent = spent.saturating_add(spent_between(first, last));
-            rise_tenths = rise_tenths.saturating_add(high - low);
-        }
+        let (spent, rise_tenths) = super::week_read::rose(points, spent_between);
         let came_to = (rise_tenths >= ROSE)
             .then(|| Usd((u128::from(spent.0) * 1000 / u128::from(rise_tenths)).min(u128::from(u64::MAX)) as u64));
         measured.push(Measured {
@@ -425,27 +457,6 @@ fn measure(
         });
     }
     Ok(measured)
-}
-
-/// A week's readings, `(at, tenths)` in the order they came, in stretches:
-/// split where a reading fell `FELL` below the highest before it and the
-/// next readings stayed down, as where the vendor gave the week's use back.
-fn stretches(points: &[(Timestamp, u32)]) -> Vec<&[(Timestamp, u32)]> {
-    let mut stretches = Vec::new();
-    let (mut from, mut high) = (0, 0u32);
-    for at in 0..points.len() {
-        let down = |tenths: u32| tenths.saturating_add(FELL) <= high;
-        if at > from && points[at..(at + FELL_FOR).min(points.len())].iter().all(|(_, tenths)| down(*tenths)) {
-            stretches.push(&points[from..at]);
-            from = at;
-            high = 0;
-        }
-        high = high.max(points[at].1);
-    }
-    if from < points.len() {
-        stretches.push(&points[from..]);
-    }
-    stretches
 }
 
 /// What Fable's dollars used of the quota: two and a half times its price
@@ -461,10 +472,10 @@ pub(super) fn quota(charge: &Charge) -> Usd {
     if charge.fable { quota_of_fable(charge.usd) } else { charge.usd }
 }
 
-/// What everyone has used of this week until `now` as it counts now, in
-/// quota dollars, while the login was in the account it is in (`counted`):
-/// the ledger's charges and what its meters hold not yet booked.
-fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
+/// What was used of the quota and when, in quota dollars, of the last days
+/// the ledger keeps by the charge: its charges and what its meters hold not
+/// yet booked, each as it was used, before any reset made by hand.
+pub(super) fn quota_used(book: &Book) -> impl Iterator<Item = (Timestamp, Usd)> + '_ {
     let booked = book.recent.iter().map(|charge| (charge.at, quota(charge)));
     // What the meters hold not booked yet counts as a charge of the ledger
     // would: Fable's two and a half times over (`ledger.rs`).
@@ -477,8 +488,26 @@ fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
             Some((at, if fable { quota_of_fable(usd) } else { usd }))
         })
     });
-    booked
-        .chain(held)
+    booked.chain(held)
+}
+
+/// How much of its week a Claude Code login has used by `now` as its ledger
+/// reckons it, in tenths of a point, as its owner is shown it; none where its
+/// vendor's week is not known.
+pub(super) fn share(path: &Path, book: &Book, now: Timestamp) -> Option<super::checks::Reckoned> {
+    let reckoned = of(path, book, "claude", now);
+    if !reckoned.week.window || reckoned.figure == Usd::ZERO {
+        return None;
+    }
+    let tenths = tenths(used(book, &reckoned, now), reckoned.figure);
+    Some(super::checks::Reckoned { week: reckoned.week, account: reckoned.account, tenths })
+}
+
+/// What everyone has used of this week until `now` as it counts now, in
+/// quota dollars, while the login was in the account it is in (`counted`):
+/// the ledger's charges and what its meters hold not yet booked.
+fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
+    quota_used(book)
         .filter(|(at, _)| *at >= reckoned.week.start && *at < now)
         .fold(Usd::ZERO, |sum, (at, usd)| sum.saturating_add(reckoned.counted(at, usd)))
 }
@@ -685,20 +714,22 @@ mod tests {
     }
 
     #[test]
-    fn a_weeks_figure_is_what_the_week_before_came_to_within_reach() {
+    fn a_weeks_figure_weighs_the_week_before_and_its_own_within_reach() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path();
         let now = Timestamp::from_second(1_800_000_000).unwrap();
         let end = ledger(path, now);
         let book = book(path, now);
 
-        // Nothing is measured until it is due: the figure is what is expected.
-        assert_eq!(dollars(of(path, &book, "claude", now).figure), 3000.0);
+        // Nothing is measured until it is due: what is expected, weighed
+        // with this week's own, $550 of quota over nineteen points.
+        assert_eq!(dollars(of(path, &book, "claude", now).figure), 2917.57);
         // $2,050 of quota over sixty points is $3,416.67 a week: above the
-        // reach of the default $3,000, ten of a hundred either way.
+        // reach of the default $3,000, ten of a hundred either way, it is
+        // $3,300, weighed with this week's own.
         let reckoned = reckoned(path, &book, "claude", now);
         assert_eq!((reckoned.week.end, reckoned.week.window), (end, true));
-        assert_eq!((dollars(reckoned.base), reckoned.swing, dollars(reckoned.figure)), (3000.0, 10, 3300.0));
+        assert_eq!((dollars(reckoned.base), reckoned.swing, dollars(reckoned.figure)), (3000.0, 10, 3017.16));
         let told = reckoned.told(true, true);
         assert_eq!(told.weeks.len(), 1);
         let measured = &told.weeks[0];
@@ -712,16 +743,16 @@ mod tests {
         assert!(own.weeks.is_empty() && own.resets.is_none() && told.resets == Some(Vec::new()));
 
         // A wider reach, none at all, then another expectation: the same
-        // week before, held within what its owner says now.
+        // weeks, held within what its owner says now.
         set_swing(path, 20).unwrap();
-        assert_eq!(of(path, &book, "claude", now).figure, Usd(3_416_666_666));
+        assert_eq!(of(path, &book, "claude", now).figure, Usd(3_052_400_515));
         set_swing(path, 0).unwrap();
         assert_eq!(dollars(of(path, &book, "claude", now).figure), 3000.0);
         set_swing(path, 10).unwrap();
         fastctx_platform::disk::write(path.join("week"), b"5000000000").unwrap();
         assert_eq!(dollars(of(path, &book, "claude", now).figure), 4500.0);
         fastctx_platform::disk::write(path.join("week"), b"3400000000").unwrap();
-        assert_eq!(of(path, &book, "claude", now).figure, Usd(3_416_666_666));
+        assert_eq!(dollars(of(path, &book, "claude", now).figure), 3060.0);
 
         // Codex keeps no dollars: its week is what its owner set.
         assert_eq!(dollars(of(path, &book, "codex", now).figure), 3400.0);
@@ -826,10 +857,11 @@ mod tests {
         let now = Timestamp::from_second(1_800_000_000).unwrap();
         let end = ledger(path, now);
         let book = book(path, now);
-        // $550 of quota used of a figure of $3,300: 16.7 of a hundred.
+        // $550 of quota used of a figure of $3,017.16: 18.2 of a hundred; a
+        // reset to as much or more is refused.
         let before = reckoned(path, &book, "claude", now);
         assert_eq!(dollars(used(&book, &before, now)), 550.0);
-        let refusal = reset(path, &book, "claude", now, asked("r1", Some(167))).unwrap_err();
+        let refusal = reset(path, &book, "claude", now, asked("r1", Some(183))).unwrap_err();
         assert_eq!(refusal.kind(), io::ErrorKind::InvalidInput);
         // Asked of a week that has turned since, it is refused.
         let stale = Asked { week_end: Some(end - DAY * 7), ..asked("r0", Some(80)) };
@@ -843,14 +875,14 @@ mod tests {
         reset(path, &book, "claude", now + HOUR, asked("r1", Some(87))).unwrap();
         let after = of(path, &book, "claude", now + HOUR);
         assert_eq!(after.cuts(), vec![now]);
-        // To the cent what was asked: 8.7 of a hundred of $3,300.
-        assert_eq!(dollars(used(&book, &after, now + HOUR)), 287.1);
+        // To the cent what was asked: 8.7 of a hundred of $3,017.16.
+        assert_eq!(dollars(used(&book, &after, now + HOUR)), 262.49);
         let made = &after.told(true, true).resets.unwrap()[0];
-        assert_eq!((dollars(made.figure), dollars(made.from), dollars(made.to)), (3300.0, 550.0, 287.1));
-        assert_eq!((made.from_tenths, made.to_tenths, made.by.as_deref()), (166, 87, Some("ann")));
+        assert_eq!((dollars(made.figure), dollars(made.from), dollars(made.to)), (3017.16, 550.0, 262.49));
+        assert_eq!((made.from_tenths, made.to_tenths, made.by.as_deref()), (182, 87, Some("ann")));
         // What was used before the reset counts as it; at it and after it,
         // whole; and the week before not at all.
-        assert_eq!(after.counted(now - SignedDuration::from_secs(1), Usd(550)), Usd(287));
+        assert_eq!(after.counted(now - SignedDuration::from_secs(1), Usd(550)), Usd(262));
         assert_eq!(after.counted(now, Usd(100)), Usd(100));
         assert_eq!(after.counted(now + HOUR, Usd(100)), Usd(100));
         // Its name asked for another part is not that reset.
@@ -871,7 +903,7 @@ mod tests {
         reset(path, &book, "claude", now + HOUR * 2, asked("r2", None)).unwrap();
         reset(path, &book, "claude", now + HOUR * 2, asked("r2", None)).unwrap();
         let halved = of(path, &book, "claude", now + HOUR * 2);
-        assert_eq!(dollars(used(&book, &halved, now + HOUR * 2)), 287.1);
+        assert_eq!(dollars(used(&book, &halved, now + HOUR * 2)), 262.49);
 
         // However many are made and taken back since, a reset of this week
         // in force stays.
@@ -880,7 +912,7 @@ mod tests {
             reset(path, &book, "claude", now + HOUR * 2, asked(&id, Some(1))).unwrap();
             reset(path, &book, "claude", now + HOUR * 2, asked(&id, None)).unwrap();
         }
-        assert_eq!(dollars(used(&book, &of(path, &book, "claude", now + HOUR * 3), now + HOUR * 3)), 287.1);
+        assert_eq!(dollars(used(&book, &of(path, &book, "claude", now + HOUR * 3), now + HOUR * 3)), 262.49);
         reset(path, &book, "claude", now + HOUR * 3, asked("r1", None)).unwrap();
         let undone = of(path, &book, "claude", now + HOUR * 3);
         assert_eq!(dollars(used(&book, &undone, now + HOUR * 3)), 550.0);
@@ -893,6 +925,158 @@ mod tests {
         let reckoned = of(path, &book, "claude", next);
         assert!(reckoned.cuts().is_empty());
         assert!(reset(path, &book, "claude", next, asked("r3", None)).is_err());
+    }
+
+    #[test]
+    fn a_weeks_own_readings_weigh_the_more_the_further_they_rose() {
+        let (base, before) = (Usd(3_000_000_000), Some(Usd(3_000_000_000)));
+        // This week's own use says $2,800 a week: what was used while its
+        // readings rose `rose` tenths of a point.
+        let own = |rose: u32| Some((Usd(2_800_000 * u64::from(rose)), rose));
+        assert_eq!(dollars(weighed(base, 10, before, own(100))), 2921.95);
+        assert_eq!(dollars(weighed(base, 10, before, own(200))), 2856.18);
+        assert_eq!(dollars(weighed(base, 10, before, own(400))), 2817.79);
+        // Nothing risen yet: the week before, within reach.
+        assert_eq!(dollars(weighed(base, 10, Some(Usd(3_150_000_000)), None)), 3150.0);
+        assert_eq!(dollars(weighed(base, 10, Some(Usd(9_000_000_000)), Some((Usd::ZERO, 0)))), 3300.0);
+        // However far this week's own says, the figure stays within reach.
+        assert_eq!(dollars(weighed(base, 10, before, Some((Usd(2_000_000_000), 1000)))), 2700.0);
+        // With no week before, what its owner expects, as far off as its
+        // reach allows.
+        assert_eq!(dollars(weighed(base, 10, None, own(100))), 2900.0);
+        assert_eq!(dollars(weighed(base, 0, before, own(1000))), 3000.0);
+    }
+
+    #[test]
+    fn weeks_measured_another_way_are_measured_again() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path();
+        let now = Timestamp::from_second(1_800_000_000).unwrap();
+        ledger(path, now);
+        let book = book(path, now);
+        assert!(measure_due(path, &book, "claude", now).unwrap().1);
+        assert!(!measure_due(path, &book, "claude", now).unwrap().1);
+        // As a node before there was more than one way left it.
+        let mut kept = read(path).unwrap();
+        kept.method = None;
+        write(path, &kept).unwrap();
+        assert!(measure_due(path, &book, "claude", now).unwrap().1);
+        assert_eq!(read(path).unwrap().method, Some(METHOD));
+    }
+
+    /// Series of logins' vendor readings and quota used, kept outside the
+    /// repository (`FASTCTX_QUOTA_SERIES`, a folder of `*.json` as
+    /// `scripts/quota/extract.py` or `fuzz.py` write them), replayed as a
+    /// node takes them in. Written beside each series: before each reading,
+    /// the week, the figure and what was used of it as reckoned then
+    /// (`.rust.txt`); each week as last measured (`.rust-weeks.txt`); and the
+    /// node's own count of how far it stood from the readings
+    /// (`.checks.json`), for `scripts/quota/compare.py` to hold against the
+    /// model's (`model.py`).
+    #[test]
+    #[ignore = "replays series kept outside the repository"]
+    fn replays_vendor_series() {
+        #[derive(serde::Deserialize)]
+        struct Series {
+            base: u64,
+            swing: u8,
+            readings: Vec<(i64, i64, u32, Option<String>)>,
+            uses: Vec<(i64, u64)>,
+            accounts: Vec<(i64, String)>,
+        }
+        let Some(folder) = std::env::var_os("FASTCTX_QUOTA_SERIES") else { return };
+        let moment = |ms: i64| Timestamp::from_millisecond(ms).unwrap();
+        for file in fastctx_platform::disk::read_dir(&folder).unwrap() {
+            let file = file.unwrap().path();
+            let written = file.to_string_lossy().ends_with(".checks.json");
+            if written || file.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let series: Series = serde_json::from_slice(&fastctx_platform::disk::read(&file).unwrap()).unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path();
+            fastctx_platform::disk::write(path.join("week"), series.base.to_string()).unwrap();
+            set_swing(path, series.swing).unwrap();
+            // At one moment, a reading first, as it came before what was used then.
+            let mut rows: Vec<(i64, u8, Entry)> = Vec::new();
+            for (at, end, tenths, account) in series.readings {
+                let weekly = LimitWindow {
+                    name: "seven_day".into(),
+                    minutes: Some(10_080),
+                    used_tenths: tenths,
+                    resets_at: Some(moment(end)),
+                    since: None,
+                };
+                rows.push((
+                    at,
+                    0,
+                    Entry::Reading { at: moment(at), windows: vec![weekly], account, resets: Vec::new() },
+                ));
+            }
+            for (at, account) in series.accounts {
+                rows.push((at, 1, Entry::Account { at: moment(at), account }));
+            }
+            for (at, usd) in series.uses {
+                rows.push((
+                    at,
+                    2,
+                    Entry::Cost { at: moment(at), who: None, model: "claude-opus-5-5".into(), usd: Usd(usd) },
+                ));
+            }
+            rows.sort_by_key(|(at, order, _)| (*at, *order));
+            let mut book = Book::default();
+            let mut told = String::new();
+            for (at, _, entry) in rows {
+                let now = moment(at);
+                let mut checked = None;
+                if let Entry::Reading { account, windows, .. } = &entry {
+                    measure_due(path, &book, "claude", now).unwrap();
+                    let reckoned = of(path, &book, "claude", now);
+                    let spent = used(&book, &reckoned, now);
+                    told.push_str(&format!(
+                        "{at} {} {} {} {}\n",
+                        u8::from(reckoned.week.window),
+                        reckoned.week.end.as_millisecond(),
+                        reckoned.figure.0,
+                        spent.0
+                    ));
+                    // The node's own count of how far the two stood, as
+                    // `claude::measured` keeps it.
+                    let read_as = account.clone().or_else(|| book.account_at(now));
+                    checked = share(path, &book, now)
+                        .filter(|reckoned| reckoned.account == read_as)
+                        .map(|reckoned| (reckoned, super::super::checks::weekly(windows)));
+                }
+                row(path, &entry);
+                book.apply_at(&entry, now);
+                if let Some((reckoned, weekly)) = checked
+                    && let Some(read) = super::super::checks::read(&book, &reckoned, weekly)
+                {
+                    super::super::checks::note(path, now, &reckoned, read).unwrap();
+                }
+            }
+            fastctx_platform::disk::write(file.with_extension("rust.txt"), told).unwrap();
+            // And each week as last measured: end, account, spent, rise, came to.
+            let weeks: String = read(path)
+                .unwrap()
+                .weeks
+                .iter()
+                .map(|one| {
+                    format!(
+                        "{} {} {} {} {}\n",
+                        one.week.end.as_millisecond(),
+                        one.account.as_deref().unwrap_or("-"),
+                        one.week.spent.0,
+                        one.week.rise_tenths,
+                        one.week.came_to.map_or(-1, |usd| usd.0 as i64)
+                    )
+                })
+                .collect();
+            fastctx_platform::disk::write(file.with_extension("rust-weeks.txt"), weeks).unwrap();
+            if let Ok(checks) = fastctx_platform::disk::read(path.join("checks.json")) {
+                fastctx_platform::disk::write(file.with_extension("checks.json"), checks).unwrap();
+            }
+        }
     }
 
     #[test]

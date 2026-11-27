@@ -232,6 +232,8 @@ pub(super) struct Book {
     /// When each account's windows were last read (`readings::Heard`).
     pub heard: HashMap<Option<String>, super::readings::Heard>,
     pub resets: HashMap<Option<String>, Vec<UsageReset>>,
+    /// Each account's 7-day readings of the latest week read (`week_read`).
+    pub week_read: HashMap<Option<String>, super::week_read::WeekRead>,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -360,6 +362,9 @@ impl Book {
                     if let Some(legacy) = self.resets.remove(&None) {
                         self.resets.insert(Some(account.clone()), legacy);
                     }
+                    if let Some(legacy) = self.week_read.remove(&None) {
+                        self.week_read.insert(Some(account.clone()), legacy);
+                    }
                 }
                 self.accounts.push((*at, account.clone()));
                 self.accounts.sort_by_key(|(at, _)| *at);
@@ -367,6 +372,7 @@ impl Book {
             }
             Entry::Reading { at, windows, account, resets } => {
                 let account = account.clone().or_else(|| self.account_at(*at));
+                super::week_read::take(&mut self.week_read, account.clone(), *at, windows);
                 let old = self.readings.get(&account);
                 let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
                 if old.is_none_or(|(seen, _)| *seen <= *at) {
