@@ -499,19 +499,17 @@ export class Conversation {
     this.searchVersion += 1;
     // A turn the timeline recorded the end of stands as recorded: what was
     // shown of it ahead goes, whatever names its items had as they happened.
-    const ended = new Set<string>();
     for (const record of records) {
       if (record.record !== "is") continue;
       this.recorded(record.shown.event);
-      if (record.shown.event.event === "turn_ended") {
-        ended.add(record.shown.event.turn);
-        this.turnRecorded(record.shown.event.turn);
-      }
+      if (record.shown.event.event === "turn_ended") this.turnRecorded(record.shown.event.turn);
       this.compactions.add(record.shown.event);
     }
     // What came ahead goes as its own record comes, the turn's end recorded
     // or not: the end may come before its last words' record, and those
-    // words are not to vanish meanwhile (codex-d0397b85).
+    // words are not to vanish meanwhile (codex-d0397b85). Of any turn whose
+    // end is recorded, in this batch or an earlier one, what no record took
+    // goes a while after it happened.
     const ahead = this.aheadEvents.length;
     if (ahead) {
       const now = Date.now();
@@ -521,7 +519,7 @@ export class Conversation {
           !this.recordedItems.has(itemOf(event) ?? "") &&
           !claimed.has(itemOf(event) ?? "") &&
           this.stillAhead(event) &&
-          (!ended.has(turnOf(event) ?? "") || now - Date.parse(event.at) < AHEAD_FOR_MS),
+          (!this.endedTurns.has(turnOf(event) ?? "") || now - Date.parse(event.at) < AHEAD_FOR_MS),
       );
     }
     const dropped = ahead > 0 && this.aheadEvents.length < ahead;
