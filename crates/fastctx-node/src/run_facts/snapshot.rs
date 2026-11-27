@@ -22,6 +22,14 @@ pub(super) fn terminal(state: &fastctx_types::run::RunState) -> bool {
     !matches!(state, fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. })
 }
 
+/// Whether `update` is facts of the call `stored` holds. Facts that name
+/// another turn than their call's are not its to take: they apply to
+/// nothing, rather than failing each delivery of them again, which would
+/// keep the job's end from its owner.
+pub(super) fn belongs(stored: &StoredCall, update: &JobFacts) -> bool {
+    update.turn.is_none() || stored.facts.turn.is_none() || update.turn == stored.facts.turn
+}
+
 pub(super) fn validate(stored: &StoredCall, update: &JobFacts) -> StoredResult<()> {
     if stored.call_id != update.call_id {
         return Err(fastctx_storage::Error::new("call fact identity changed"));
@@ -81,6 +89,9 @@ pub(super) fn receive_in(
     notes: Option<&Reference>,
 ) -> StoredResult<bool> {
     let Some(mut stored) = sql::head(db, conversation, &update.call_id)? else { return Ok(false) };
+    if !belongs(&stored, update) {
+        return Ok(false);
+    }
     // Sequence orders a job's state, not the membership of its facts: an
     // earlier frame can still carry steps absent from a later one.
     let before = db.total_changes();

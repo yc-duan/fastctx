@@ -62,6 +62,9 @@ pub(super) fn receive_at(
             .write_relaxed_now_at(priority, bytes, move |db| {
                 crate::conversation_store::check(db, &scope)?;
                 let Some(mut head) = sql::head(db, &scope, &saved.call_id)? else { return Ok(None) };
+                if !snapshot::belongs(&head, &saved) {
+                    return Ok(None);
+                }
                 snapshot::validate(&head, &saved)?;
                 let before = db.total_changes();
                 if head.facts.turn.is_none() && saved.turn.is_some() {
