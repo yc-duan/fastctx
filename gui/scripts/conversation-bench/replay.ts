@@ -167,6 +167,10 @@ function replayed(tape: readonly Taped[], options: { settleMs?: number; recordWi
   // Rows shown since when, by id: what stays on the page unheld by its
   // timeline longer than `settle` is a finding, once.
   const unheldSince = new Map<string, number>();
+  // What each stretch's key drew: a key drawing next what shares nothing with
+  // what it drew before went to another stretch, and a page opened or closed
+  // there is now so elsewhere, the stretch it was shut or opened again.
+  let membersOf = new Map<string, Set<string>>();
   const told = new Set<string>();
   let final: ReplicaPart | null = null;
   // Since when its machine has said no turn runs: from a while after, the
@@ -245,6 +249,20 @@ function replayed(tape: readonly Taped[], options: { settleMs?: number; recordWi
         findings.push({ law: "out-of-time", at: t, said: `${row.kind} "${row.said}" ${row.id} is drawn after ${later.kind} ${later.id}, which began ${Math.round(((times.of(later) ?? 0) - ended) / 1000)}s after it ended` });
       }
     }
+    const nextMembersOf = new Map<string, Set<string>>();
+    for (const block of conversation.blocks()) {
+      if (block.kind === "activity-group") nextMembersOf.set(block.key, new Set(block.members.map((member) => member.key)));
+    }
+    // A draft gives way to its record under another name: a stretch that
+    // drew drafts alone drew nothing a jump could take from it.
+    const draft = (member: string) => /\[".+",\d+,\d+,"[a-z]+"\]$/.test(member);
+    for (const [key, members] of nextMembersOf) {
+      const was = [...(membersOf.get(key) ?? [])].filter((member) => !draft(member));
+      if (!was.length || was.some((member) => members.has(member)) || told.has(`jumped ${key} ${t}`)) continue;
+      told.add(`jumped ${key} ${t}`);
+      findings.push({ law: "stretch-key-jumped", at: t, said: `${key} drew ${was[0]}, now ${[...members][0]}` });
+    }
+    membersOf = nextMembersOf;
     for (const [a, b] of crossed(live, cold)) {
       if (told.has(`crossed ${a} ${b}`)) continue;
       told.add(`crossed ${a} ${b}`);

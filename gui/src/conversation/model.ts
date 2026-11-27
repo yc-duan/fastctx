@@ -2260,21 +2260,57 @@ export class Fold {
       }
     }
     blocks.push(...below);
-    if (this.pagedGroups) {
-      const reused = new Set<string>();
-      const next = new Map<string, string>();
-      for (const block of blocks) {
-        if (block.kind !== "activity-group") continue;
-        const known = block.members.map((member) => this.previousGroups.get(member.key)).find((key) => key !== undefined && !reused.has(key));
-        if (known) block.key = known;
-        reused.add(block.key);
-        for (const member of block.members) next.set(member.key, block.key);
-      }
-      this.previousGroups = next;
-    }
+    if (this.pagedGroups) this.previousGroups = keepStretchKeys(blocks, this.previousGroups);
     this.blocksCache = { clock: this.clock, blocks };
     return blocks;
   }
+}
+
+/** Gives each stretch of `blocks` the key it was drawn under before, by the
+ *  stretch `drawn` says each member was in: a key goes to the stretch now
+ *  holding most of what it drew, the earlier where as many, so that a stretch
+ *  split, or with something put into it late, keeps its key and draws the
+ *  rest anew rather than taking the key of the stretch after it (a reader's
+ *  open stretch would close, another open). A stretch none of whose members
+ *  was drawn before keeps the key it was given, unless a stretch still drawn
+ *  holds that; then it has one of its own first member's. Where each member
+ *  is drawn now. */
+function keepStretchKeys(blocks: readonly Block[], drawn: ReadonlyMap<string, string>): Map<string, string> {
+  const stretches = blocks.filter((block): block is Activity => block.kind === "activity-group");
+  const claims: { stretch: Activity; key: string; held: number; at: number }[] = [];
+  stretches.forEach((stretch, at) => {
+    const held = new Map<string, number>();
+    for (const member of stretch.members) {
+      const key = drawn.get(member.key);
+      if (key !== undefined) held.set(key, (held.get(key) ?? 0) + 1);
+    }
+    for (const [key, count] of held) claims.push({ stretch, key, held: count, at });
+  });
+  claims.sort((a, b) => b.held - a.held || a.at - b.at);
+  const given = new Map<Activity, string>();
+  const taken = new Set<string>();
+  for (const claim of claims) {
+    if (given.has(claim.stretch) || taken.has(claim.key)) continue;
+    given.set(claim.stretch, claim.key);
+    taken.add(claim.key);
+  }
+  for (const stretch of stretches) {
+    const kept = given.get(stretch);
+    if (kept !== undefined) {
+      stretch.key = kept;
+      continue;
+    }
+    if (taken.has(stretch.key)) {
+      const own = `group-${stretch.turn}-${stretch.members[0]!.key}`;
+      let key = own;
+      for (let again = 1; taken.has(key); again += 1) key = `${own}~${again}`;
+      stretch.key = key;
+    }
+    taken.add(stretch.key);
+  }
+  const next = new Map<string, string>();
+  for (const stretch of stretches) for (const member of stretch.members) next.set(member.key, stretch.key);
+  return next;
 }
 
 /** The last of `list` that `test` takes. */
