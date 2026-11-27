@@ -264,7 +264,12 @@ impl Printer {
             Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
             Happened::Finished { turn, item } => match &item.what {
                 What::Message { text } => {
-                    if let Some(written) = self.streamed.remove(&(turn.clone(), item.id.clone()))
+                    // Claude's reply streams as a draft and ends under the
+                    // name its record gives it, naming the draft.
+                    let written = self.streamed.remove(&(turn.clone(), item.id.clone())).or_else(|| {
+                        item.draft.as_ref().and_then(|draft| self.streamed.remove(&(turn.clone(), draft.clone())))
+                    });
+                    if let Some(written) = written
                         && let Some(rest) = text.strip_prefix(&written)
                     {
                         print!("{rest}");
