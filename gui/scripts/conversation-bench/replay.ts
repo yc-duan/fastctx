@@ -125,8 +125,34 @@ class Times {
   }
 }
 
-/** Runs `tape` through a conversation model, checking as it goes. */
+/** The moment by the wall clock a tape's piece came at: the tape counts from
+ *  when it began, its events say when they happened, and its first live
+ *  event ties the two. */
+function wallOf(tape: readonly Taped[]): (t: number) => number {
+  for (const { t, piece } of tape) {
+    if (piece.kind !== "live") continue;
+    const at = Date.parse(piece.event.at);
+    if (Number.isFinite(at)) return (when) => at + (when - t);
+  }
+  const began = Date.now();
+  return (when) => began + when;
+}
+
+/** Runs `tape` through a conversation model, checking as it goes. The model
+ *  reads the clock, and reads the tape's: as the page did when it came. */
 export function replay(tape: readonly Taped[], options: { settleMs?: number; recordWithinMs?: number } = {}): Report {
+  const wall = wallOf(tape);
+  let current = 0;
+  const realNow = Date.now;
+  Date.now = () => wall(current);
+  try {
+    return replayed(tape, options, (t) => (current = t));
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+function replayed(tape: readonly Taped[], options: { settleMs?: number; recordWithinMs?: number }, at: (t: number) => void): Report {
   const settle = options.settleMs ?? 10_000;
   const recordWithin = options.recordWithinMs ?? 90_000;
   const times = new Times();
@@ -150,6 +176,7 @@ export function replay(tape: readonly Taped[], options: { settleMs?: number; rec
   // is told again as the watch opens.
   let broken = false;
   for (const { t, piece } of tape) {
+    at(t);
     if (piece.kind === "final") {
       final = piece.part;
       continue;
