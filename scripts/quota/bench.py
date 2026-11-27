@@ -4,7 +4,7 @@ reads out. The vendor's 7-day readings are the reference: at every one of
 them, the share the ledger reckons at that moment is compared with it.
 
 Run it on the machine that keeps the ledgers; it only reads them:
-    python3 scripts/quota_bench.py [USAGE_DIR]
+    python3 scripts/quota/bench.py [USAGE_DIR]
 USAGE_DIR defaults to ~/.fastctx/world/usage; every `claude-*` ledger in it
 is replayed. What it prints are counts and figures, never words.
 
